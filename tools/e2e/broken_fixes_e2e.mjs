@@ -1,5 +1,5 @@
 // Multi-Bus Gateway — multi-protocol Modbus/HTTP/MQTT acquisition gateway.
-// Copyright (C) 2024-2026 Stefan Maldaianu <sm26449@diysolar.ro>  — AGPL-3.0-or-later
+// Copyright (C) 2024-2026 Stefan Maldaianu <stefan@multibus.dev>  — AGPL-3.0-or-later
 //
 // What the 2026-10-21 UI audit found broken (section B), as a user meets it,
 // against the same throwaway gateway as unchanged_save_e2e.mjs (its fixture):
@@ -8,6 +8,7 @@
 //
 //   CHROMIUM_PATH=… MBG_URL=http://127.0.0.1:8097 node tools/e2e/broken_fixes_e2e.mjs
 import { chromium } from 'playwright';
+import { openAdd, pickModel, fill, next } from './lib/add-device.mjs';
 import { watchDialogs } from './lib/dialogs.mjs';
 
 const BASE = process.env.MBG_URL || 'http://127.0.0.1:8097';
@@ -53,14 +54,22 @@ try {
 
   // ── the wizard shows and uses the configured topic pattern ──
   const pattern = (await api('/api/config/mqtt')).default_topic_pattern;
-  await page.evaluate(() => window.app.openDeviceWizard());
-  await page.waitForTimeout(400);
+  // since ADR-0026 (e7315e4) the placeholder follows the id being typed;
+  // since L3.9 it is Name & save's MQTT chip (an HTTP model on a LAN host:
+  // nothing answers, Next goes on without a check)
   const expect = pattern.replace('{device}', 'em24-hala');
-  await page.evaluate(() => { window.app._devWiz.step = 3; window.app._devWizRender(); });
-  await page.waitForSelector('#devWizTopic');
-  check('wizard: the topic placeholder is the gateway pattern', (await page.getAttribute('#devWizTopic', 'placeholder')) === expect,
-        `${await page.getAttribute('#devWizTopic', 'placeholder')} vs ${expect}`);
-  await page.evaluate(() => window.app.closeModal('deviceWizardModal'));
+  await openAdd(page);
+  await pickModel(page, 'fronius solar api', 'fronius_solar_api_inverter');
+  await fill(page, 'HttpHost', '192.168.1.250');
+  await fill(page, 'HttpId', '1');
+  await next(page);
+  await next(page);
+  await page.waitForSelector('#adOutPrefix', { state: 'attached' });
+  await page.fill('#adId', 'em24-hala');
+  await page.locator('#adId').dispatchEvent('input');
+  check('Add: the topic placeholder is the gateway pattern', (await page.getAttribute('#adOutPrefix', 'placeholder')) === expect,
+        `${await page.getAttribute('#adOutPrefix', 'placeholder')} vs ${expect}`);
+  await page.evaluate(() => { window.app._ad.done = true; window.app.closeModal('addDeviceModal'); });
 
   // ── Disable / Enable a rule from its card ──
   await page.evaluate(() => window.app.navigateTo('rules'));

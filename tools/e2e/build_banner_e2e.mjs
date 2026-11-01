@@ -1,5 +1,5 @@
 // Multi-Bus Gateway — multi-protocol Modbus/HTTP/MQTT acquisition gateway.
-// Copyright (C) 2024-2026 Stefan Maldaianu <sm26449@diysolar.ro>  — AGPL-3.0-or-later
+// Copyright (C) 2024-2026 Stefan Maldaianu <stefan@multibus.dev>  — AGPL-3.0-or-later
 //
 // A page left open across a deploy runs the old code (FINDINGS PROD-6): it
 // says so with a bar, never reloads by itself, and "Later" holds until the

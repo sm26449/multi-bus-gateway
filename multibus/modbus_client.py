@@ -1,5 +1,5 @@
 # Multi-Bus Gateway — multi-protocol Modbus/HTTP/MQTT acquisition gateway.
-# Copyright (C) 2024-2026 Stefan Maldaianu <sm26449@diysolar.ro>
+# Copyright (C) 2024-2026 Stefan Maldaianu <stefan@multibus.dev>
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU Affero General Public License as published by
@@ -28,6 +28,7 @@ from pymodbus import FramerType
 from pymodbus.client import ModbusSerialClient, ModbusTcpClient, ModbusUdpClient
 
 from . import bus_trace
+from . import bridge_guard
 from . import role as gateway_role
 from .config import (BUS_OVER_TCP_PROTOCOLS, SERIAL_PROTOCOLS, WIRE_FRAMING, ModbusConfig,
                      PollGroup, SelectedRegister, store_key)
@@ -242,6 +243,9 @@ class _EndpointTransport:
         self.client = None
         self.connected = False
         self.users = 0
+        # The pause after every (re)connect (connect_settle_s). Like the gap,
+        # it belongs to the access point: the most cautious unit wins.
+        self.settle_s = 0.0
 
 
 _TRANSPORTS: Dict[str, _EndpointTransport] = {}
@@ -252,7 +256,8 @@ def lane_key(host: str, port: int, lane: int) -> str:
     return f"{host}:{port}#{lane}"
 
 
-def transport_for(host: str, port: int, shared: bool, lane: int = 0) -> _EndpointTransport:
+def transport_for(host: str, port: int, shared: bool, lane: int = 0,
+                  settle_s: float = 0.0) -> _EndpointTransport:
     """The socket holder for one LANE of an access point.
 
     An access point may be served by several sockets, and each unit sticks to
@@ -266,15 +271,25 @@ def transport_for(host: str, port: int, shared: bool, lane: int = 0) -> _Endpoin
 
     ``shared`` False (or no host — a directly-attached serial line) hands back a
     private lane, so a device that owns its transport behaves as it always has.
+
+    ``settle_s`` is this unit's pause after connecting; the transport keeps the
+    largest any of its users declared (ADR-0015).
     """
+    settle_s = max(0.0, float(settle_s or 0.0))
     if not shared or not host:
-        return _EndpointTransport()
+        tp = _EndpointTransport()
+        tp.settle_s = settle_s
+        return tp
     key = lane_key(host, port, lane)
     with _TRANSPORTS_LOCK:
         tp = _TRANSPORTS.get(key)
         if tp is None:
             tp = _TRANSPORTS[key] = _EndpointTransport(key)
         tp.users += 1
+        # the same rule as endpoint_min_gap_s: a second unit on the same
+        # gateway cannot quietly shorten the first one's pause
+        if settle_s > tp.settle_s:
+            tp.settle_s = settle_s
         return tp
 
 
@@ -372,6 +387,14 @@ logging.getLogger("pymodbus").setLevel(logging.CRITICAL)
 logger = logging.getLogger(__name__)
 
 
+def _sleep(seconds: float) -> None:
+    """Every pause the Modbus client takes (connect settle, retry backoff,
+    write gap): `time.sleep`, resolved at call time. A test patches this
+    one name to see only the client's own sleeps — never another thread's
+    on the shared `time` module (FLK-3)."""
+    time.sleep(seconds)
+
+
 def coil_truthy(v) -> bool:
     """Coerce an API value to a coil bool. Strings '0'/'false'/'off'/'no'/'' and
     0/False/None are OFF; everything else is ON. Plain bool(v) is wrong here —
@@ -457,7 +480,8 @@ def _classify_error(obj) -> str:
 class ModbusConnection:
     """Modbus connection (TCP or RTU serial) with thread-safe access."""
 
-    def __init__(self, config: ModbusConfig, trace_label: str = ""):
+    def __init__(self, config: ModbusConfig, trace_label: str = "",
+                 settle_default: float = 0.0):
         self.config = config
         self.trace_label = trace_label or _endpoint(config)
         # the bus this unit's questions travel on — what the monitor filters by
@@ -477,13 +501,21 @@ class ModbusConnection:
         # and the units spread evenly when there is more than one.
         _lanes = 1 if _serial else max(1, int(getattr(config, 'max_connections', 1) or 1))
         self.lane = (int(getattr(config, 'unit_id', 0) or 0) % _lanes) if _shared else 0
+        # The pause after connecting: the connection's own word, else the
+        # template's protocol default, else none. The transport may hold a
+        # larger one from a sibling — that is the one that runs.
+        _own = getattr(config, 'connect_settle_s', None)
+        self.settle_s = float(settle_default or 0.0) if _own is None else float(_own)
         if _serial:
-            self._tp = transport_for(f"serial:{getattr(config, 'serial_port', '') or ''}", 0,
-                                     _shared and bool(getattr(config, 'serial_port', '')), 0)
+            # keyed by the line itself, so an alias shares it (ADD-15)
+            from .bus_claims import canonical_serial
+            self._tp = transport_for(f"serial:{canonical_serial(getattr(config, 'serial_port', ''))}", 0,
+                                     _shared and bool(getattr(config, 'serial_port', '')), 0,
+                                     self.settle_s)
         else:
             # datagrams to host:port are not the stream to host:port
             self._tp = transport_for(f"udp:{config.host}" if _proto == 'udp' else config.host,
-                                     config.port, _shared, self.lane)
+                                     config.port, _shared, self.lane, self.settle_s)
         self.lock = self._tp.lock
         self.successful_reads = 0
         self.failed_reads = 0
@@ -571,6 +603,25 @@ class ModbusConnection:
             held = time.perf_counter() - _t0
             self._arbiter.release(held)
             self._wire.add(held)
+
+    @contextlib.contextmanager
+    def transaction(self, label: Optional[str] = None):
+        """One turn on the wire for a caller that sends its own request (the
+        read preview, preview.py): the endpoint's turn, then the transport
+        lock, then a connected client — the very order read_registers keeps,
+        so a preview takes turns with the devices on the bus and keeps the
+        access point's gap. Yields the client, or None when no turn came or
+        the bus could not be opened (nothing was sent). ``label``: what the
+        bus monitor calls this traffic (the connection's own label else)."""
+        with self._endpoint_gate() as turn, self.lock:
+            if not turn or self._retired or not self._ensure_connected():
+                yield None
+                return
+            client = self.client
+            try:
+                yield client
+            finally:
+                bus_trace.trace.commit(client, label or self.trace_label, self.bus)
 
     def _note_bus_busy(self) -> None:
         """One event per episode of endpoint congestion — the operator needs to
@@ -704,10 +755,14 @@ class ModbusConnection:
                 if not gateway_role.wire_allowed():       # a standby never opens a device's wire
                     self.client, self.connected = None, False
                     return False
+                if not self._bus_is_still_ours():
+                    self.client, self.connected = None, False
+                    return False
                 self.client = self._new_client()
                 self.connected = self.client.connect()
                 if self.connected:
                     logger.info(f"Modbus connected to {_endpoint(self.config)}")
+                    self._settle()
                 return self.connected
             except Exception as e:
                 logger.error(f"Modbus connection error: {e}")
@@ -826,7 +881,7 @@ class ModbusConnection:
                         retry_sleep = self.config.retry_delay
 
             if retry_sleep:
-                time.sleep(retry_sleep)   # lock RELEASED → a realtime read can slip in
+                _sleep(retry_sleep)   # lock RELEASED → a realtime read can slip in
 
         self.record_event('error', 'batch_failed',
                           f'{count} registers at {address} failed after '
@@ -886,9 +941,47 @@ class ModbusConnection:
                     self.client.close()
                 except Exception:  # noqa: BLE001
                     pass
+            if not self._bus_is_still_ours():
+                self.client, self.connected = None, False
+                return False
             self.client = self._new_client()
             self.connected = self.client.connect()
+            if self.connected:
+                self._settle()
         return self.connected
+
+    def _bus_is_still_ours(self) -> bool:
+        """Through our serial bridge: does its port still carry the adapter
+        this bus was bound to? Asked before every fresh connect, never per
+        read (bridge_guard.py). A refusal keeps the device off the wire — it
+        must never read, or write, another bus — and says so once."""
+        ok = bridge_guard.allow(self.config)
+        st = bridge_guard.state(self.config.host, self.config.port) or {}
+        status = st.get("status", "ok") if st else "ok"
+        if status in ("unbound",):
+            status = "ok"
+        prev = getattr(self, '_guard_status', "ok")
+        if status == prev:                 # one event per episode, not per connect
+            return ok
+        self._guard_status = status
+        if status == "ok":
+            self.record_event("info", "bus_verified", st.get("detail", "bus verified"))
+        elif status == "unverified":
+            self.record_event("warn", "bus_unverified", st.get("detail", "bus not verified"))
+        else:
+            self.record_event("error", f"bus_{status}",
+                              st.get("detail", "the bridge serves another adapter on this port"))
+        return ok
+
+    def _settle(self) -> None:
+        """The transport's pause after a fresh connect (connect_settle_s).
+        Caller holds the transport lock and keeps it through the pause: a
+        sibling unit on the same socket must not send into a gateway that is
+        still waking up. Once per connect, never per read."""
+        s = self._tp.settle_s
+        if s > 0:
+            logger.debug("%ssettling %.1fs after connect", self._tag_or_empty(), s)
+            _sleep(s)
 
     def read_bits(self, address: int, count: int,
                   register_type: str = "coil",
@@ -936,7 +1029,7 @@ class ModbusConnection:
                     if attempt < self.config.retry_attempts - 1:
                         retry_sleep = self.config.retry_delay
             if retry_sleep:
-                time.sleep(retry_sleep)   # lock RELEASED → another group can slip in
+                _sleep(retry_sleep)   # lock RELEASED → another group can slip in
         # Same failure tail as read_registers (external audit: this path had
         # NO wedge backstop — a coil-only device on a wedged-but-open link
         # never forced a reopen — and declared unreachable on EVERY failed
@@ -997,7 +1090,7 @@ class ModbusConnection:
             with self.__dict__.setdefault('_write_gap_lock', threading.Lock()):
                 wait = getattr(self, '_last_write_mono', 0.0) + gap - time.monotonic()
                 if wait > 0:
-                    time.sleep(min(wait, gap))
+                    _sleep(min(wait, gap))
                 try:
                     return self._write_now(address, register_type=register_type, values=values,
                                            coils=coils, prefer_fc6=prefer_fc6)
@@ -1549,7 +1642,7 @@ class ModbusClient:
                  byte_order: str = "big", device_id: str = "",
                  setup_steps: Optional[List[Dict]] = None, setup_gate: Optional[Callable] = None,
                  min_write_gap_s: float = 0.0, max_read: int = 0,
-                 single_writes: bool = False):
+                 single_writes: bool = False, connect_settle_s: float = 0.0):
         """
         Initialize Modbus client.
 
@@ -1571,7 +1664,10 @@ class ModbusClient:
 
         self.byte_order = byte_order
         self.parser = RegisterParser(byte_order)
-        self.connection = ModbusConnection(config, trace_label=device_id)
+        # the template's protocol.connect_settle_s; the connection's own wins
+        self.connect_settle_s = float(connect_settle_s or 0)
+        self.connection = ModbusConnection(config, trace_label=device_id,
+                                           settle_default=self.connect_settle_s)
         self.min_write_gap_s = float(min_write_gap_s or 0)
         self.single_writes = bool(single_writes)
         self.max_read = int(max_read or 0)
@@ -1872,7 +1968,8 @@ class ModbusClient:
         self.connected = False
 
         # Create new connection with current config
-        self.connection = ModbusConnection(self.config, trace_label=self.device_id)
+        self.connection = ModbusConnection(self.config, trace_label=self.device_id,
+                                           settle_default=getattr(self, 'connect_settle_s', 0.0))
         self._wire_connection()
 
         # Reconnect. Start pollers UNCONDITIONALLY: they reconnect on demand

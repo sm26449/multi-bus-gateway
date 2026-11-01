@@ -1,0 +1,157 @@
+{
+ "abb_b21": [
+  "meter",
+  "template",
+  "meter"
+ ],
+ "abb_b23": [
+  "meter",
+  "template",
+  "meter"
+ ],
+ "ble_theengs_sensor": [
+  "sensor",
+  "template",
+  "sensor"
+ ],
+ "carlo_gavazzi_em24": [
+  "meter",
+  "template",
+  "meter"
+ ],
+ "delta_vfd_el": [
+  "drive",
+  "template",
+  null
+ ],
+ "deye_hybrid_1p": [
+  "inverter",
+  "template",
+  "inverter"
+ ],
+ "eastron_sdm120": [
+  "meter",
+  "template",
+  "meter"
+ ],
+ "eastron_sdm630": [
+  "meter",
+  "template",
+  "meter"
+ ],
+ "fronius_smart_meter_65a": [
+  "meter",
+  "template",
+  "meter"
+ ],
+ "fronius_solar_api_inverter": [
+  "inverter",
+  "template",
+  "inverter"
+ ],
+ "fronius_solar_api_inverter_3p": [
+  "inverter",
+  "template",
+  "inverter"
+ ],
+ "fronius_solar_api_meter": [
+  "meter",
+  "template",
+  "meter"
+ ],
+ "fronius_solar_api_site": [
+  "site",
+  "template",
+  "site"
+ ],
+ "fronius_sunspec_inverter": [
+  "inverter",
+  "template",
+  "inverter"
+ ],
+ "fronius_sunspec_meter": [
+  "meter",
+  "template",
+  "meter"
+ ],
+ "huawei_dtsu666_via_sun2000": [
+  "meter",
+  "template",
+  "meter"
+ ],
+ "huawei_luna2000": [
+  "battery",
+  "template",
+  "battery"
+ ],
+ "huawei_sun2000": [
+  "inverter",
+  "template",
+  "inverter"
+ ],
+ "janitza_umg512_pro": [
+  "meter",
+  "template",
+  "meter"
+ ],
+ "mqtt_json_generic": [
+  "other",
+  "none",
+  null
+ ],
+ "pylontech_can_inverter": [
+  "battery",
+  "template",
+  "battery"
+ ],
+ "samsung_mim_b19n": [
+  "heat_pump",
+  "template",
+  null
+ ],
+ "schneider_iem3000": [
+  "meter",
+  "template",
+  "meter"
+ ],
+ "seplos_bms_bank_mqtt": [
+  "battery",
+  "template",
+  "battery"
+ ],
+ "seplos_bms_mqtt": [
+  "battery",
+  "template",
+  "battery"
+ ],
+ "seplos_bms_v2": [
+  "battery",
+  "template",
+  "battery"
+ ],
+ "seplos_bms_v2_tap": [
+  "battery",
+  "template",
+  "battery"
+ ],
+ "seplos_bms_v3_rtu_tap": [
+  "battery",
+  "template",
+  "battery"
+ ],
+ "tasmota_generic": [
+  "other",
+  "none",
+  null
+ ],
+ "victron_gx_mqtt": [
+  "site",
+  "template",
+  "site"
+ ],
+ "zigbee2mqtt_sensor": [
+  "sensor",
+  "template",
+  "sensor"
+ ]
+}

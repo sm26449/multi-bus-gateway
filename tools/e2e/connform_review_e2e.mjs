@@ -1,5 +1,5 @@
 // Multi-Bus Gateway — multi-protocol Modbus/HTTP/MQTT acquisition gateway.
-// Copyright (C) 2024-2026 Stefan Maldaianu <sm26449@diysolar.ro>  — AGPL-3.0-or-later
+// Copyright (C) 2024-2026 Stefan Maldaianu <stefan@multibus.dev>  — AGPL-3.0-or-later
 //
 // The connection form on the paths around a save: off a gateway's bus with
 // the port it shows, Test after taking a device off a bridge and on an edited
@@ -10,7 +10,8 @@
 //
 //   CHROMIUM_PATH=… MBG_URL=http://127.0.0.1:8097 node tools/e2e/connform_review_e2e.mjs
 import { chromium } from 'playwright';
-import { openDeviceTab } from './lib/device-page.mjs';
+import { openAdd, answer, fill } from './lib/add-device.mjs';
+import { openDeviceTab, editorModalOpen, editorSettled, saveDeviceEditor } from './lib/device-page.mjs';
 import { watchDialogs } from './lib/dialogs.mjs';
 
 const BASE = process.env.MBG_URL || 'http://127.0.0.1:8097';
@@ -52,25 +53,37 @@ async function open() {
   page.on('console', m => { if (m.type() === 'error' && !/Failed to load resource/.test(m.text())) page.errs.push(m.text()); });
   page.reqs = [];
   page.on('request', r => { if (r.method() !== 'GET') page.reqs.push({ method: r.method(), url: r.url(), body: r.postData() }); });
-  await watchDialogs(page);
+  page.dlg = await watchDialogs(page);
   await page.goto(BASE + '/');
   await page.waitForLoadState('load');
   const later = page.locator('button:has-text("Later")');
   if (await later.count()) await later.first().click().catch(() => {});
   return page;
 }
-const putsTo = (page, from, id) => page.reqs.slice(from).filter(r => r.method === 'PUT' && r.url.endsWith(`/api/devices/${id}`));
+// a save of a device (never its dry run): the Edit modal's PATCH — with the connection it sent
+const putsTo = (page, from, id) => page.reqs.slice(from)
+  .filter(r => ['PUT', 'PATCH'].includes(r.method) && new URL(r.url).pathname === `/api/devices/${id}` && !/dry_run/.test(r.url))
+  .map(r => { const b = JSON.parse(r.body || '{}'); return { ...r, connection: b.sections ? b.sections.connection : b.connection }; });
 async function connTab(page, id) {
   await page.evaluate(i => window.app.openDeviceDetail(i), id);
-  await openDeviceTab(page, 'connection');
-  await page.waitForSelector('#ddvConn fieldset, [data-dpanel="connection"] #ddvName', { state: 'attached' });
+  await openDeviceTab(page, 'connection');              // the Edit modal (a meter-only device: at its Identity)
+  await page.waitForSelector('#ddvConn fieldset, #devEditModal.active #ddvName', { state: 'attached' });
+  // the connection step reads the buses and the matrix first (L3.6)
+  await page.waitForFunction(() => !document.querySelector('#ddvConn .cs-loading'));
 }
+// Save as a user does: the modal's (its footer says why nothing is sent)
 async function save(page) {
-  await page.click('#deviceDetailView [data-action="saveDeviceDetail"]');
-  await page.waitForFunction(() => (document.getElementById('ddvFeedback')?.textContent || '').trim()
-    || document.querySelector('#ddvConn [aria-invalid="true"]'), null, { timeout: 10000 });
-  await page.waitForTimeout(300);
-  return (await page.locator('#ddvFeedback').innerText().catch(() => '')).trim();
+  if (await editorModalOpen(page)) {
+    await editorSettled(page);
+    if ((await page.getAttribute('#devEditSave', 'aria-disabled')) === 'true') {
+      await page.click('#devEditSave', { force: true });
+      return (await page.locator('#devEditSummary').innerText()).trim();
+    }
+    const r = await saveDeviceEditor(page);
+    return r && r.ok() ? 'Saved' : (await page.locator('#devEditErrors').innerText().catch(() => '')).trim();
+  }
+  // (L3.11b: every device, the primary too, is edited in the modal)
+  return 'no Edit device modal open';
 }
 async function test(page) {
   const n = page.reqs.length;
@@ -89,7 +102,9 @@ try {
 
   // ── MAJOR-1: off a gateway's bus, the port shown is the port saved ──
   await connTab(page, 'gwm');
-  await page.selectOption('#ddvGw', '');
+  // the connection step (L3.6): off the gateway is the reach "directly"
+  await page.click('#ddvConn label:has(#ddvReach-address)');
+  await page.waitForSelector('#ddvPort');
   check('off the gateway bus: the port shows 502', (await page.inputValue('#ddvPort')) === '502');
   check('…and the move is said, not "starts afresh"', await page.isVisible('#ddvRouteHint')
         && /leaves the bridge/.test(await page.innerText('#ddvRouteHint')), await page.innerText('#ddvRouteHint'));
@@ -97,7 +112,7 @@ try {
   {
     const n = page.reqs.length;
     const fb = await save(page);
-    const conn = JSON.parse(putsTo(page, n, 'gwm')[0]?.body || '{}').connection || {};
+    const conn = (putsTo(page, n, 'gwm')[0] || {}).connection || {};
     check('off the gateway bus with 502 left as shown: 502 sent, the bridge said left',
           conn.port === 502 && conn.bridge === null && conn.host === '127.0.0.9' && conn.protocol === 'tcp', `${JSON.stringify(conn)} · ${fb}`);
     const st = await row('gwm');
@@ -106,7 +121,7 @@ try {
 
   // ── MAJOR-4: Test on an edited bridged device tests the edited values ──
   await connTab(page, 'hp');
-  await page.fill('#ddvUnitBr', '7');
+  await page.fill('#ddvUnit', '7');
   {
     const t = await test(page);
     const body = t.adhoc ? JSON.parse(t.adhoc.body) : {};
@@ -117,11 +132,12 @@ try {
 
   // ── MAJOR-2: Test after "Take it off the bridge" says the bridge is left ──
   await connTab(page, 'hp');
-  await page.click('#ddvConn a:has-text("Take it off the bridge")');
-  await page.waitForSelector('#ddvRtuHost');
-  await page.fill('#ddvRtuHost', '127.0.0.7');
-  await page.fill('#ddvRtuPort', '4005');
-  await page.locator('#ddvRtuPort').dispatchEvent('change');
+  await page.click('#ddvConn label:has(#ddvReach-address)');
+  await page.waitForSelector('#ddvHost');
+  await page.fill('#ddvHost', '127.0.0.7');
+  await page.fill('#ddvPort', '4005');
+  await page.locator('#ddvPort').dispatchEvent('change');
+  await page.waitForTimeout(200);
   check('off the bridge: the move is said (the rest is kept)', /leaves the bridge/.test(await page.innerText('#ddvRouteHint')));
   {
     const t = await test(page);
@@ -131,19 +147,24 @@ try {
     check('…and no "reaches its bus through bridge" refusal', !/through bridge/.test(t.text), t.text);
   }
 
-  // ── MAJOR-3: the keyboard on the segments keeps its place ──
+  // ── MAJOR-3: the keyboard on the questions keeps its place (L3.6: the
+  // arrows move the focus, Space chooses — the step is drawn again, the
+  // focus stays on the option chosen) ──
   await connTab(page, 'udp');
-  await page.focus('#ddvProto-tcp');
-  await page.keyboard.press('ArrowRight');
-  await page.waitForTimeout(200);
+  await page.focus('#ddvPortKind-ethernet');
+  await page.keyboard.press('ArrowLeft');
   let f = await page.evaluate(() => ({ id: document.activeElement?.id, on: document.activeElement?.checked }));
-  check('ArrowRight on the protocol: focus stays on the radio now chosen', f.id === 'ddvProto-rtu' && f.on, JSON.stringify(f));
-  await page.focus('#ddvConn input[name="ddvRtuMode"]:checked');
-  const from = await page.evaluate(() => document.activeElement?.id);
-  await page.keyboard.press('ArrowRight');
+  check('ArrowLeft on the port: focus on RS-485, not chosen yet', f.id === 'ddvPortKind-serial' && !f.on, JSON.stringify(f));
+  await page.keyboard.press(' ');
   await page.waitForTimeout(200);
   f = await page.evaluate(() => ({ id: document.activeElement?.id, on: document.activeElement?.checked }));
-  check('ArrowRight on the RTU mode: focus on the next mode, chosen', /^ddvRtuMode-/.test(f.id || '') && f.id !== from && f.on, JSON.stringify(f));
+  check('Space: RS-485 chosen, the focus stays on it', f.id === 'ddvPortKind-serial' && f.on, JSON.stringify(f));
+  await page.focus('#ddvReach-here');
+  await page.keyboard.press('ArrowRight');
+  await page.keyboard.press('Enter');
+  await page.waitForTimeout(200);
+  f = await page.evaluate(() => ({ id: document.activeElement?.id, on: document.activeElement?.checked }));
+  check('ArrowRight + Enter on where the bus is: the next one chosen, focused', /^ddvReach-/.test(f.id || '') && f.id !== 'ddvReach-here' && f.on, JSON.stringify(f));
 
   // ── MINOR-5: a device holding components keeps how it is reached, everywhere ──
   for (const [id, sel] of [['gwm', '#ddvGw'], ['udp', '#ddvUdp'], ['cr-tap', '#ddvTapWhere']]) {
@@ -169,11 +190,11 @@ try {
   {
     let n = page.reqs.length;
     let fb = await save(page);
-    check('local tap: an untouched Save sends nothing', !putsTo(page, n, 'cr-tap').length && /Nothing to save/.test(fb), fb);
+    check('local tap: an untouched Save sends nothing', !putsTo(page, n, 'cr-tap').length && /Nothing to save|No changes/.test(fb), fb);
     await page.selectOption('#ddvBaud', '9600');
     n = page.reqs.length;
     fb = await save(page);
-    const conn = JSON.parse(putsTo(page, n, 'cr-tap')[0]?.body || '{}').connection;
+    const conn = (putsTo(page, n, 'cr-tap')[0] || {}).connection;
     check('local tap: the baud rate, as a tap', eq(conn, { baudrate: 9600, protocol: 'rtu_tap' }), `${JSON.stringify(conn)} · ${fb}`);
     const st = await row('cr-tap');
     check('…stored, still on its serial port', st.serial?.serial_port === '/dev/ttyFAKETAP' && st.serial?.baudrate === 9600, JSON.stringify(st.serial));
@@ -184,7 +205,7 @@ try {
   {
     const n = page.reqs.length;
     const fb = await save(page);
-    check('meter-only: an untouched Save sends nothing', !putsTo(page, n, 'cr-ups').length && /Nothing to save/.test(fb), fb);
+    check('meter-only: an untouched Save sends nothing', !putsTo(page, n, 'cr-ups').length && /Nothing to save|No changes/.test(fb), fb);
   }
 
   // ── HTTP: an untouched Save sends nothing ──
@@ -192,7 +213,7 @@ try {
   {
     const n = page.reqs.length;
     const fb = await save(page);
-    check('HTTP: an untouched Save sends nothing', !putsTo(page, n, 'cr-web').length && /Nothing to save/.test(fb), fb);
+    check('HTTP: an untouched Save sends nothing', !putsTo(page, n, 'cr-web').length && /Nothing to save|No changes/.test(fb), fb);
   }
 
   // ── masked topic: the toggle is named, the reason is said ──
@@ -210,25 +231,30 @@ try {
   check('an error on the topic keeps its hints described', desc.includes('ddvMqttTopicHint') && desc.includes('-err'), desc);
 
   // ── MAJOR-5: Back in Add Device keeps a typed RTU-over-network address ──
-  await page.evaluate(() => window.app.openDeviceWizard());
-  await page.waitForSelector('#devWizConn fieldset');
-  await page.click('#deviceWizardModal label:has(input[name="devWizProto"][value="rtu"])');
-  check('wizard RTU: over the network, on the first bridge', await page.evaluate(() => window.app._cf.devWiz.M.bridge) === 'ws');
-  await page.click('#devWizConn a:has-text("scan a bridge")');
-  await page.fill('#devWizRtuHost', '127.0.0.7');
-  await page.fill('#devWizRtuPort', '4005');
-  await page.click('#devWizNext');
-  await page.waitForFunction(() => window.app._devWiz?.step === 2);
-  await page.click('#devWizBack');
-  await page.waitForSelector('#devWizConn fieldset');
-  const back = await page.evaluate(() => ({ wire: window.ConnformModel.wire(window.app._cf.devWiz.M),
-                                            host: document.getElementById('devWizRtuHost')?.value }));
+  // (L3.9: the Connection step, By connection — a converter at an address)
+  await openAdd(page);
+  await page.click('[data-ad-way="connection"]');
+  await answer(page, 'PortKind', 'serial');
+  await answer(page, 'Reach', 'address');
+  await fill(page, 'Host', '127.0.0.7');
+  await fill(page, 'Port', '4005');
+  await answer(page, 'Speaks', 'modbus:rtu').catch(() => {});
+  await answer(page, 'Role', 'poll').catch(() => {});
+  await page.click('#addDevNext');
+  await page.waitForFunction(() => document.querySelector('#addDevRail [aria-current="step"]')?.dataset.shellStep === 'what', null, { timeout: 8000 });
+  await page.click('#addDevBack');
+  await page.waitForSelector('#csAddHost');
+  const back = await page.evaluate(() => ({ wire: window.ConnformModel.wire(window.app._cf.csAdd.M),
+                                            host: document.getElementById('csAddHost')?.value }));
   check('Back: still at the typed address, never moved onto a bridge',
         !back.wire.bridge && back.wire.host === '127.0.0.7' && back.wire.port === 4005 && back.host === '127.0.0.7', JSON.stringify(back));
-  check('the "Meters only" choice is short, its meaning said below',
-        (await page.innerText('#deviceWizardModal label:has(input[value="none"])')).trim() === 'Meters only'
-        && /measured by meters/.test(await page.innerText('#devWizConn')));
-  await page.evaluate(() => window.app.closeModal('deviceWizardModal'));
+  // a device with no connection of its own is a way of its own, its meaning said
+  await page.click('[data-ad-way="model"]');
+  check('"It doesn\'t communicate" is short, its meaning said below',
+        /doesn.t communicate/.test(await page.innerText('[data-ad-way="measured"] b'))
+        && /meter on its supply/.test(await page.innerText('[data-ad-way="measured"]')));
+  page.dlg && (page.dlg.answer = true);
+  await page.evaluate(() => { window.app._ad.done = true; window.app.closeModal('addDeviceModal'); });
 
   check('no page errors', page.errs.length === 0, page.errs.join(' | '));
   await page.close();

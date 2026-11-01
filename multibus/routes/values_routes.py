@@ -1,5 +1,5 @@
 # Multi-Bus Gateway — multi-protocol Modbus/HTTP/MQTT acquisition gateway.
-# Copyright (C) 2024-2026 Stefan Maldaianu <sm26449@diysolar.ro>
+# Copyright (C) 2024-2026 Stefan Maldaianu <stefan@multibus.dev>
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU Affero General Public License as published by
@@ -40,13 +40,13 @@ def build(ctx) -> APIRouter:
         """Get all current values. ``device`` selects a non-primary device's
         live value store (Tier 2); omitted/primary = device #1 (back-compat)."""
         values = current_values
-        if device and device != config.primary_device.id:
+        if device and device != config.primary_id:
             values = registry.store_for(device) or {}
         return {
             # snapshot: returning the live dict by reference lets a poller mutate
             # it mid-serialization ("dictionary changed size during iteration")
             "values": dict(values),
-            "device": device or config.primary_device.id,
+            "device": device or config.primary_id,
             "timestamp": last_update['timestamp'],
         }
 
@@ -198,7 +198,7 @@ def build(ctx) -> APIRouter:
         # Calculated measurements are written to InfluxDB too (tag name=<name>,
         # field value) so their history is queryable by name — list them in the
         # picker as well, grouped as 'calculated'.
-        calc_did = dev.id if dev is not None else config.primary_device.id
+        calc_did = dev.id if dev is not None else config.primary_id
         for c in config.load_calculated(calc_did):
             if c.get('name'):
                 regs.append({"name": c['name'], "label": c.get('label') or c['name'],

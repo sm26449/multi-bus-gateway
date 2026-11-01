@@ -56,10 +56,23 @@ al Dispozitivului (§20).
 
 ![Monitor](img/guide/02-monitor.png)
 
-Spațiul de lucru al unui Dispozitiv are trei grupuri de tab-uri: **Live**
-(Prezentare, Istoric, Energie, Calitatea energiei), **Configurare** (Conexiune,
-Măsurători, Calculate, Comenzi, Contoare, Ieșiri, Atribute) și **Diagnostic**
-(Monitor, Jurnal) — fiecare Dispozitiv arată doar tab-urile care i se potrivesc.
+Pagina unui Dispozitiv observă și operează; nu editează. Antetul îl spune
+într-o linie tehnică (protocol · port · linie · unitate · rol · cadență), cu
+lacătul de scriere, ieșirile pornite/oprite și legături *prin* (bridge,
+dispozitiv părinte, instalație). Are patru grupuri de tab-uri: **Live**
+(Prezentare, Istoric, Energie, Calitatea energiei), **Date** (Măsurători,
+Calculate, Comenzi), **Configurare** (ce i se spune, doar în citire, pentru
+orice rol) și **Diagnostic** (Monitor, Jurnal) — fiecare Dispozitiv arată doar
+tab-urile care i se potrivesc. Editarea se deschide din meniul **⋯** (sau tasta
+**E**): Editează…, Editează conexiunea…, Interogare…, Tip… și Ieșiri… deschid
+**dialogul de editare** la secțiunea lor — o bară cu *Model · Conexiune ·
+Interogare · Identitate · Ieșiri* (pe telefon, o listă din care alegi), un
+singur **Salvează** jos, cu un rând care spune dinainte ce face (*N modificări ·
+se aplică din mers* sau *· repornește achiziția*, iar atunci butonul devine
+**Salvează și repornește achiziția**), **Arată modificările** pentru lista
+salvat → după salvare și o întrebare înainte de o schimbare de rol, de
+magistrală, de șablon sau de oprirea unei ieșiri. Măsurători…, Contoare…,
+Despre (atribute)… și celelalte își păstrează editorul lor.
 Monitorul desenează în timp real valorile alese din lista din stânga (căutare,
 grupate pe Categorie) — aici puterile active L1/L2/L3 ale contorului Janitza —
 cu zoom, **Șterge** (Clear) și **Pauză** (Pause); sub grafic, tabelul
@@ -84,8 +97,8 @@ putere) fără a deschide Grafana.
 ![Devices](img/guide/04-devices.png)
 
 Toate sursele, cu sănătatea live a fiecăreia. Sus, căutarea, filtrele pe **Tip**
-(contor, invertor, baterie/BMS, sistem/GX, convertizor, UPS), **Stare** și
-**Protocol** (HTTP, Modbus TCP, Modbus RTU tap, *Măsurat de contoarele lui*) și
+(contor, invertor, baterie/BMS, sistem/GX, convertizor, UPS și tipurile tale),
+**Etichetă**, **Stare** și **Protocol** (HTTP, Modbus TCP, Modbus RTU tap, *Măsurat de contoarele lui*) și
 comutatorul **Arbore / Listă**. Fiecare rând arată protocolul, adresa, unitatea,
 Șablonul, numărul de măsurători, rata de poll și vârsta ultimei citiri; insigna
 **folosit de N** spune ce depinde de el (un Contor virtual, o regulă, UPS-ul).
@@ -93,8 +106,12 @@ Instalațiile („Roof PV”) își grupează unitățile dedesubt, cu puterea d
 câte unități răspund.
 
 Butoanele de sus: **Descoperă dispozitive**, **Adaugă bridge**, **Adaugă
-instalație** și **Adaugă dispozitiv** (wizard-ul din §18). Pe fiecare rând:
-măsurătorile, monitorul și deschiderea spațiului de lucru (§19, §20).
+instalație** și **Adaugă dispozitiv** (dialogul din §18). Pe fiecare rând:
+măsurătorile, monitorul, deschiderea spațiului de lucru (§19, §20) și meniul
+**⋯** — același meniu ca în pagina dispozitivului (§20), cu grupurile lui fixe
+și cu motivul scris sub un element care nu poate rula acum. Ultimul lui rând,
+**Dispozitive șterse: restaurează…**, deschide lista dispozitivelor șterse.
+După o ștergere, un mesaj oferă **Anulează** timp de 10 s.
 
 ---
 
@@ -105,7 +122,8 @@ măsurătorile, monitorul și deschiderea spațiului de lucru (§19, §20).
 Catalogul din spatele Dispozitivelor, în trei tab-uri: **Hărți dispozitiv**
 (Device maps — cum se citește un echipament real: adrese, cod de funcție, ordinea
 octeților), **Emulări contor** (Meter emulations — ce poate servi un Contor
-virtual) și **Câmpuri canonice**. Filtre pe tip, producător, protocol și
+virtual), **Câmpuri canonice** și **Tipuri de dispozitive** (tipurile
+incluse și cele proprii, cu **Adaugă tip**). Filtre pe tip, producător, protocol și
 origine; fiecare card arată id-ul, protocolul, numărul de registre, versiunea și
 **Folosit de** (aici Șabloanele Fronius folosite de „Roof PV”). Pe un Șablon:
 **Vezi**, **Duplică** și descărcare. Sus: **Importă CSV**, **Importă YAML**,
@@ -189,12 +207,14 @@ folosesc la construirea unui Șablon.
 
 ![Settings MQTT](img/guide/11-settings-mqtt.png)
 
-Tab-urile Setărilor: MQTT, InfluxDB, OPC UA, Backup și restaurare, Securitate,
-Alerte, General, Site / Amplasament și Module. Aici: brokerul (adresă, port,
-utilizator/parolă), **prefixul implicit de topic** pentru Dispozitivele noi
-(`mbg/devices/{device}` — fiecare Dispozitiv își păstrează prefixul propriu),
+Tab-urile Setărilor: MQTT, InfluxDB, OPC UA, Modbus (bugetul
+previzualizării), Backup și restaurare, Securitate, Alerte, General, Amplasament
+și Module. Aici: brokerul (adresă, port, utilizator/parolă), **prefixul
+implicit de topic** pentru Dispozitivele noi (gol = cel al identității
+gateway-ului, `mbg/<gateway>/devices/{device}` sau `mbg/devices/{device}`, vezi
+§17 — fiecare Dispozitiv își păstrează prefixul propriu),
 modul de publicare (*On Change*), QoS, retain, prefixul pentru **Home Assistant
-discovery** (activat per Dispozitiv, din tab-ul Ieșiri) și TLS. **Salvează și
+discovery** (activat per Dispozitiv, din ⋯ → Ieșiri…) și TLS. **Salvează și
 aplică** reconectează live.
 
 ---
@@ -205,7 +225,9 @@ aplică** reconectează live.
 
 Conexiunea la InfluxDB (URL, token, organizație), **bucket-ul implicit** pentru
 Dispozitivele noi (`{device}` — fiecare Dispozitiv își are bucket-ul lui),
-intervalul de scriere și modul de publicare. Dacă InfluxDB pică, punctele se țin
+intervalul de scriere, modul de publicare și **Rescrie o valoare neschimbată
+la fiecare (s)** (heartbeat-ul, implicit 600 s: o valoare constantă e scrisă
+din nou, ca panourile să nu rămână goale). Dacă InfluxDB pică, punctele se țin
 într-un buffer și se rejoacă cu timestamp-ul original la reconectare (reglajele
 sunt în configurație — vezi MANUAL.ro.md).
 
@@ -278,19 +300,43 @@ probă; **Activează alertele** e bifa generală.
 lunilor în raportul de Energie, fără restart. **Culori default pentru
 widget-uri**: culorile fazelor L1/L2/L3 (implicit *Distinct*) și pe Categorie
 (temperatură, umiditate, putere, energie) — se aplică doar widget-urilor noi.
+**Identitatea gateway-ului**: **Id-ul gateway-ului** și **Cum se denumesc
+dispozitivele noi** — *Per gateway* (`mbg/<gateway>/devices/<dispozitiv>`,
+bucket `<gateway>-<dispozitiv>`) sau *Ca până acum* (`mbg/devices/<dispozitiv>`).
+Schimbarea atinge doar dispozitivele create după ea.
 
 ---
 
-## 18. Wizard Adaugă dispozitiv — pasul 1 (Conexiune)
+## 18. Adaugă dispozitiv — Ce este? · Conexiune · Verificare · Nume și salvare
 
-![Device Wizard](img/guide/18-wizard-step1-connection.png)
+![Adaugă dispozitiv — Ce este?](img/guide/18-wizard-step1-connection.png)
 
-Trei pași: **Conexiune**, **Șablon**, **Rutare date**. La pasul 1 alegi cum e
-conectat: Modbus TCP / Modbus RTU / HTTP/JSON / MQTT / **Doar contoare** (un
-Dispozitiv fără conexiune proprie, măsurat de contoare pe care le ai deja — ca
-UPS-ul din demo). Pentru Modbus TCP: host, port, Unit ID, timeout și opțiunea
-**Prin UDP**. **Testează conexiunea** verifică live înainte să treci mai departe
-cu **Înainte**.
+Un singur dialog, la care duce orice cale: butonul **Adaugă dispozitiv**, **+
+Dispozitiv** pe magistrala unui bridge, **Folosește** din descoperire și din
+**Găsite (n)**, editorul Contoare al unui contor, ⋯ → **Duplică**.
+**Ce este?** — cauți modelul (marcă, model, tip, în engleză sau română) și îl
+alegi; deasupra cardurilor, trei alte căi: *pornesc de la conexiune*, *nu
+comunică — îl măsoară alte contoare*, *mai multe la fel pe aceeași magistrală*
+(scanezi magistrala sau asculți adresele, bifezi unitățile, apoi pasul
+**Unități** le creează pe toate, fiecare cu scrierile blocate).
+**Conexiune** — portul, unde e magistrala (un port serial se alege dintr-o
+listă, cu tipul și starea lui), **rolul: Master / Listen-only**, protocolul,
+linia (moștenită și blocată pe o magistrală care are deja dispozitive; o
+schimbi pentru toate cu **Linia magistralei…**), adresa (următoarea liberă);
+o opțiune care nu se poate lua rămâne, cu motivul alături. **Verificare** — o citire de probă, doar citiri:
+valorile cu calitatea lor, identitatea raportată de dispozitiv, ce conține,
+încărcarea magistralei; nu blochează niciodată (*Înainte — fără
+verificare*). **Nume și salvare** — numele și id-ul (fix după creare),
+tipul, plăcuța, ieșirile ca cipuri (OPC UA oprit), cardul **Scrieri** (creat
+cu scrierile blocate) și banda **Ce se va crea**, din simularea gateway-ului.
+După **Creează**: *Creat · citește · scrieri blocate*, cu **Deschide-l**,
+**Adaugă încă unul la fel (unitatea N)** și **Gata**.
+
+![Conexiune: portul serial, protocolul, rolul, linia](img/guide/23-add-device-connection.png)
+
+![Verificare: citirea de probă prin conexiunea magistralei](img/guide/24-add-device-check.png)
+
+![Nume și salvare: identitatea, ieșirile, scrierile blocate](img/guide/25-add-device-save.png)
 
 ---
 
@@ -319,24 +365,45 @@ Fiecare unitate are pagina ei (aici `roof-u1`, „Inverter east”), cu firul de
 navigare Dispozitive › Roof PV › unitate. Tab-ul **Prezentare** din grupul Live:
 starea, valorile-cheie, **Citită prin** (sursa, cadența, latența, câte câmpuri
 aduce), unde publică (topicul MQTT și bucket-ul InfluxDB), apoi **Valori live**
-grupate pe Categorie, fiecare cu numele canonic alături. Grupurile Configurare și
-Diagnostic sunt cele din §2.
+grupate pe Categorie, fiecare cu numele canonic alături. Grupurile Date,
+Configurare și Diagnostic sunt cele din §2.
+
+Pagina unui dispozitiv **observă și operează**: în antet, **Test**,
+**Previzualizare** și, unde există, **Rulează comanda…** și **Scrie…**. Tot ce
+schimbă dispozitivul e în meniul **⋯**, cu grupuri fixe — Operare, Editare,
+Date, Dispozitiv, Siguranță, Pericol — și rândul de încheiere **Dispozitive
+șterse: restaurează…**; un element care nu poate rula acum e inactiv și spune
+de ce. Tasta **E** deschide editorul a ce e pe ecran. **Editează
+dispozitivul…** deschide un singur dialog (Model, Conexiune, Interogare,
+Identitate, Ieșiri) cu un singur **Salvează**; **Măsurători…** și **Comenzi și
+legări…** se deschid pe tot ecranul și întreabă înainte să pierzi ce n-ai
+salvat. Detaliile: MANUAL.ro.md §4.
+
+![Meniul ⋯: elementele care nu pot rula spun de ce](img/guide/26-device-menu.png)
+
+![Editează dispozitivul — Conexiune, cu „Fixat, și de ce”](img/guide/27-device-edit.png)
+
+![Măsurători pe tot ecranul, cu un singur Salvează](img/guide/28-measurements-editor.png)
+
+![Dispozitive șterse (restaurabile)](img/guide/29-restore-dialog.png)
 
 ---
 
-## 21. Comenzi (Configurare → Comenzi)
+## 21. Comenzi (Date → Comenzi)
 
 ![Commands](img/guide/21-unit-outputs-commands.png)
 
 Pe pompa de piscină (Delta VFD-EL). Banda de sus deschide notele Șablonului.
-**Protecție la scriere**: aici scrierile sunt permise; **Blochează** refuză orice
-scriere Modbus pe acest Dispozitiv (comutatorul general din Securitate → Scrieri
-trebuie și el pornit). **Cine o comandă** arată pe fiecare canal (motorul: run,
+**Protecție la scriere** (eticheta din antetul dispozitivului): aici
+scrierile sunt permise; un dispozitiv nou începe cu scrierile blocate; ⋯ → **Blochează scrierile**
+refuză orice scriere Modbus pe acest Dispozitiv, ⋯ → **Deblochează scrierile…**
+întreabă întâi (comutatorul general din Securitate → Scrieri trebuie și el
+pornit). **Cine o comandă** arată pe fiecare canal (motorul: run,
 stop, frecvență; `reset_fault`) cine are controlul acum — o regulă sau comenzile
 de aici, din API ori MQTT. Fiecare comandă are cardul ei: ce scrie, ce verifică
 la citirea înapoi, parametrii și topicul MQTT (`mbg/devices/pool-pump/cmd/run`).
 O comandă e **neactivată pe această unitate** până bifezi **Activată pe acest
-dispozitiv**; până atunci **Test** arată doar ce ar scrie. Aceleași comenzi
+dispozitiv** în ⋯ → **Comenzi și legări…** și salvezi; până atunci **Test** arată doar ce ar scrie. Aceleași comenzi
 merg pe MQTT și din Home Assistant; fiecare rulare e auditată.
 
 ---

@@ -1,7 +1,11 @@
 # Multi-Bus Gateway — multi-protocol Modbus/HTTP/MQTT acquisition gateway.
-# Copyright (C) 2024-2026 Stefan Maldaianu <sm26449@diysolar.ro>  — AGPL-3.0-or-later
+# Copyright (C) 2024-2026 Stefan Maldaianu <stefan@multibus.dev>  — AGPL-3.0-or-later
 """Shared test fixtures."""
+import threading
+
 import pytest
+
+_REAL_TIMER = threading.Timer          # before any test patches it
 
 
 @pytest.fixture(autouse=True)
@@ -42,6 +46,55 @@ def _stop_leaked_rules_runtimes():
                 pass
     except Exception:  # noqa: BLE001
         pass
+
+
+@pytest.fixture(autouse=True)
+def _stop_leaked_leases_and_lanes():
+    """Stop every write-lease sweeper and command dispatcher the test made.
+
+    Each create_api starts a lease sweeper; a test that armed a lease (90 s,
+    600 s) and left its app behind had that lease fire minutes later, into
+    whichever test ran then — a revert retried every 3 s against a dead
+    app's devices, its log in another test's capture (cmd-dispatch full
+    suite, 2026-10-25). No revert runs here: the app is gone, its leases with
+    it. The lanes of its dispatcher end too.
+    """
+    yield
+    try:
+        from multibus.command_dispatch import CommandDispatcher
+        from multibus.write_lease import WriteLeaseManager
+        for lm in list(WriteLeaseManager._instances):
+            try:
+                lm.stop(revert_now=False)
+                with lm._lock:
+                    lm._leases.clear()
+            except Exception:  # noqa: BLE001 — teardown must never fail a test
+                pass
+        for cd in list(CommandDispatcher._instances):
+            try:
+                cd.stop()
+            except Exception:  # noqa: BLE001
+                pass
+    except Exception:  # noqa: BLE001
+        pass
+
+
+@pytest.fixture(autouse=True)
+def _cancel_leaked_timers():
+    """Cancel every threading.Timer a test left pending (RP-15).
+
+    A command with revert_s arms a read-back series of real Timers (revert_s
+    + 5 s, …); one left by an earlier test fired inside a later test that
+    patches threading.Timer to count the series it arms — the next timer of
+    the stale series landed in its list (`[15.0, 120.0, 125.0] == [125.0]`).
+    """
+    yield
+    for t in threading.enumerate():
+        if isinstance(t, _REAL_TIMER):
+            try:
+                t.cancel()
+            except Exception:  # noqa: BLE001 — teardown must never fail a test
+                pass
 
 
 @pytest.fixture(autouse=True)

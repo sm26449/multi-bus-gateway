@@ -1,5 +1,5 @@
 # Multi-Bus Gateway — multi-protocol Modbus/HTTP/MQTT acquisition gateway.
-# Copyright (C) 2024-2026 Stefan Maldaianu <sm26449@diysolar.ro>  — AGPL-3.0-or-later
+# Copyright (C) 2024-2026 Stefan Maldaianu <stefan@multibus.dev>  — AGPL-3.0-or-later
 """One unit, several ways of reaching it.
 
 A master device offers the same slave over more than one protocol. A Fronius
@@ -129,14 +129,14 @@ class MultiSourceClient:
         the listening ones (a bus tap, an MQTT subscription) on a standby."""
         if gateway_role.wire_allowed():
             return list(self.parts)
-        return [(s, d) for s, d in self.parts if gateway_role.listens_only(getattr(s, 'protocol', ''))]
+        return [(s, d) for s, d in self.parts if gateway_role.source_listens(s)]
 
     def standby(self) -> None:
         """The gateway became standby: stop every source that talks to the
         device; the listening ones go on, and an RTU bus it polled it now
         listens to (the active partner is the master there)."""
         for src, drv in self.parts:
-            if not gateway_role.listens_only(getattr(src, 'protocol', '')):
+            if not gateway_role.source_listens(src):
                 try:
                     drv.disconnect()
                 except Exception as e:  # noqa: BLE001
@@ -170,7 +170,7 @@ class MultiSourceClient:
         again) and start the sources a standby had stopped."""
         self._stop_taps()
         for src, drv in self.parts:
-            if gateway_role.listens_only(getattr(src, 'protocol', '')):
+            if gateway_role.source_listens(src):
                 continue
             try:
                 drv.connect()
@@ -256,6 +256,16 @@ class MultiSourceClient:
                 return fn(*a, **kw)
         return False, f"device {self.device_id}: no source supports writing", None
 
+    def read_register(self, *a, **kw):
+        """A write's read-back, from the source the write went to (the first
+        that can write and read). Without it a raw write on any unit built
+        from `sources` was never verified, nor refreshed (RP-14)."""
+        for src, drv in self.parts:
+            if callable(getattr(drv, 'write_value', None)):
+                fn = getattr(drv, 'read_register', None)
+                return fn(*a, **kw) if callable(fn) else None
+        return None
+
     # ── health and telemetry ────────────────────────────────────────────────
 
     def _source_health(self, *a, **kw) -> List[Tuple[Any, Dict]]:
@@ -311,7 +321,15 @@ class MultiSourceClient:
             status = 'degraded'
         out = dict(best)
         out['status'] = status
-        out['sources'] = {src.id: h.get('status', 'down') for src, h in parts}
+        # each source's word as the unit's own is shown (client_health): a
+        # source that never connected is not ``ok`` — its driver answers ok on
+        # a cold start, and the unit row said "degraded" beside a green
+        # source (QA-R1-12)
+        drivers = {src.id: drv for src, drv in self.parts}
+        out['sources'] = {src.id: ('degraded' if h.get('status', 'down') == 'ok'
+                                   and not getattr(drivers.get(src.id), 'connected', False)
+                                   else h.get('status', 'down'))
+                          for src, h in parts}
         out['sources_down'] = [src.id for src, h in parts
                                if h.get('status') == 'down']
         return out

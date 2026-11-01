@@ -9,6 +9,8 @@
   "on-bridge": {},
   "rtu": {},
   "rtu-tcp": {},
+  "seplos-listen": {},
+  "seplos-net": {},
   "tap-bridge": {},
   "tap-local": {},
   "tcp": {},
@@ -288,6 +290,62 @@
     "influxdb": {
      "bucket": "janitza",
      "device_tag": "tap-bridge",
+     "enabled": true
+    },
+    "ha_discovery_enabled": true
+   }
+  },
+  {
+   "id": "seplos-listen",
+   "label": "pack address",
+   "payload": {
+    "unit_id": 3,
+    "protocol": "seplos_v2"
+   },
+   "body": {
+    "id": "seplos-listen",
+    "name": "Seplos V2 pack, listened to on a local port",
+    "template": "seplos_bms_v2",
+    "enabled": false,
+    "connection": {
+     "unit_id": 3,
+     "protocol": "seplos_v2"
+    },
+    "mqtt": {
+     "topic_prefix": "mbg/devices/seplos-listen",
+     "enabled": true
+    },
+    "influxdb": {
+     "bucket": "janitza",
+     "device_tag": "seplos-listen",
+     "enabled": true
+    },
+    "ha_discovery_enabled": true
+   }
+  },
+  {
+   "id": "seplos-net",
+   "label": "listen instead of poll",
+   "payload": {
+    "mode": "listen",
+    "protocol": "seplos_v2-tcp"
+   },
+   "body": {
+    "id": "seplos-net",
+    "name": "Seplos V2 pack polled through a bridge's TCP port (mode not stored)",
+    "template": "seplos_bms_v2",
+    "enabled": false,
+    "connection": {
+     "mode": "listen",
+     "protocol": "seplos_v2-tcp"
+    },
+    "mqtt": {
+     "topic_prefix": "mbg/devices/seplos-net",
+     "enabled": true
+    },
+    "influxdb": {
+     "bucket": "janitza",
+     "device_tag": "seplos-net",
      "enabled": true
     },
     "ha_discovery_enabled": true
@@ -791,6 +849,25 @@
    "unit_id": 6,
    "timeout": 3
   },
+  "seplos-listen": {
+   "protocol": "seplos_v2",
+   "serial_port": "/dev/ttyBMS0",
+   "baudrate": 9600,
+   "parity": "N",
+   "stopbits": 1,
+   "bytesize": 8,
+   "unit_id": 2,
+   "mode": "listen",
+   "timeout": 3
+  },
+  "seplos-net": {
+   "protocol": "seplos_v2-tcp",
+   "host": "192.0.2.95",
+   "port": 4198,
+   "unit_id": 0,
+   "mode": "poll",
+   "timeout": 3
+  },
   "tap-bridge": {
    "protocol": "rtu_tap",
    "bridge": "ws",
@@ -984,6 +1061,40 @@
    "influxdb": {
     "bucket": "janitza",
     "device_tag": "rtu-tcp",
+    "enabled": true
+   },
+   "ha_discovery_enabled": true
+  },
+  "seplos-listen": {
+   "id": "seplos-listen",
+   "name": "Seplos V2 pack, listened to on a local port",
+   "template": "seplos_bms_v2",
+   "enabled": false,
+   "connection": {},
+   "mqtt": {
+    "topic_prefix": "mbg/devices/seplos-listen",
+    "enabled": true
+   },
+   "influxdb": {
+    "bucket": "janitza",
+    "device_tag": "seplos-listen",
+    "enabled": true
+   },
+   "ha_discovery_enabled": true
+  },
+  "seplos-net": {
+   "id": "seplos-net",
+   "name": "Seplos V2 pack polled through a bridge's TCP port (mode not stored)",
+   "template": "seplos_bms_v2",
+   "enabled": false,
+   "connection": {},
+   "mqtt": {
+    "topic_prefix": "mbg/devices/seplos-net",
+    "enabled": true
+   },
+   "influxdb": {
+    "bucket": "janitza",
+    "device_tag": "seplos-net",
     "enabled": true
    },
    "ha_discovery_enabled": true

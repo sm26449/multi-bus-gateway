@@ -254,10 +254,17 @@ print(command("samsung-dvm", "water_out_set", value=35))
 | 401 | not logged in | `/api/auth/login` |
 | 403 | writes are off, the device is write-locked, the command is not enabled on it, or the role is too low | the message names which |
 | 404 | no such device or command | check the ids |
-| 409 | a rule owns the target (`owned by rule …`), or no Modbus source is running | `override_s`, or wait for the device |
+| 409 | a rule owns the target (`owned by rule …`), the channel's pace holds it (`held: true`, `retry_after_s`), or no Modbus source is running | `override_s`, wait `retry_after_s`, or wait for the device |
+| 409 `superseded` | a newer value of the same setting replaced it before it ran — nothing written | — the newer one is the one that runs |
+| 409 `expired` | it waited longer than the channel's `max_age_s` (30 s) for the bus — nothing written | the bus is slow or busy; send it again if still wanted |
+| 409 `cancelled` | the device was disabled or the gateway is stopping — nothing written | — |
 | 422 | the parameters are outside the command's limits | the message names the limit |
-| 429 | the write rate limit | slow down |
+| 429 | the write rate limit, or 8 commands already wait on that channel | slow down |
 | 502 | the device did not answer the write | the bus or the device |
+| 503 | the gateway is standby, or stopping | send it to the active gateway |
+| 504 | still running when the wait ended | its outcome is in the log and the audit |
+
+An answer for a command that reached its lane carries `queued_ms`: how long it waited for its bus.
 
 Every command and every rule action is in the audit log (Settings → Audit
 Trail, `/api/audit`, or `/api/commands/history` for commands), with who sent

@@ -1,5 +1,5 @@
 # Multi-Bus Gateway — multi-protocol Modbus/HTTP/MQTT acquisition gateway.
-# Copyright (C) 2024-2026 Stefan Maldaianu <sm26449@diysolar.ro>
+# Copyright (C) 2024-2026 Stefan Maldaianu <stefan@multibus.dev>
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU Affero General Public License as published by
@@ -84,6 +84,7 @@ def build(ctx) -> APIRouter:
         return {"calculated": config.load_calculated(device_id)}
 
     @r.post("/api/devices/{device_id}/calculated")
+    @ctx.device_write
     def set_calculated(device_id: str, payload: Dict = Body(...)):
         """Replace a device's calculated registers. Every expression is validated
         (safe AST) before it is saved; the runtime cache is refreshed in place."""
@@ -153,6 +154,7 @@ def build(ctx) -> APIRouter:
                 **({"warnings": warnings} if warnings else {})}
 
     @r.post("/api/devices/{device_id}/calculated/test")
+    @ctx.device_runtime
     def test_calculated(device_id: str, payload: Dict = Body(...)):
         """Evaluate an expression against the device's CURRENT live values — the
         UI's live preview. Returns the value or a helpful error + missing refs."""

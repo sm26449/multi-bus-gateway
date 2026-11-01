@@ -1,5 +1,5 @@
 # Multi-Bus Gateway — multi-protocol Modbus/HTTP/MQTT acquisition gateway.
-# Copyright (C) 2024-2026 Stefan Maldaianu <sm26449@diysolar.ro>  — AGPL-3.0-or-later
+# Copyright (C) 2024-2026 Stefan Maldaianu <stefan@multibus.dev>  — AGPL-3.0-or-later
 """Endpoint aggregates: an endpoint publishes its own output — sums for
 powers/currents, averages for voltages/frequency/temperatures, COUNTERS from
 last-known values with a complete census, power factor derived as
@@ -750,3 +750,79 @@ def test_without_a_location_or_for_meters_nothing_changes():
         assert "units_asleep" not in agg and agg["status"] == "offline"
     finally:
         _with_sun(None)
+
+
+# ── ADR-0029: an installation's totals carry the InfluxDB heartbeat too ──────
+
+def _hb_bank(gateway_hb=600, own_hb=None, outputs=None):
+    from types import SimpleNamespace
+    ix = {"bucket": "b", **({"heartbeat_interval": own_hb} if own_hb is not None else {}),
+          **({"outputs": outputs} if outputs else {})}
+    cfg = _Cfg(["u1", "u2"], endpoints=[{"id": "bank", "enabled": True, "influxdb": ix}])
+    cfg.influxdb = SimpleNamespace(heartbeat_interval=gateway_hb)
+    reg = _Reg({"u1": {1: _entry("power_active_total", 0)},
+                "u2": {1: _entry("power_active_total", 0)}})
+    inf = _Influx()
+    return EndpointAggregator(cfg, reg, lambda: None, lambda: inf), inf
+
+
+def _age_totals(ag, seconds):
+    """Every total (and output) of the aggregator was written `seconds` ago."""
+    for stamps in ag._influx_at.values():
+        for k in stamps:
+            stamps[k] -= seconds
+    for k in ag._influx_out_at:
+        ag._influx_out_at[k] -= seconds
+
+
+def _power_points(inf):
+    return [p for p, _b in inf.points if "power_active_total=" in p.to_line_protocol()]
+
+
+def test_a_steady_total_is_rewritten_after_the_gateways_heartbeat():
+    pytest.importorskip("influxdb_client")
+    ag, inf = _hb_bank(gateway_hb=600)
+    ag._publish_all()
+    assert len(_power_points(inf)) == 1
+    _age_totals(ag, 300)
+    ag._publish_all()
+    assert len(_power_points(inf)) == 1                      # 0 W all night: still quiet
+    _age_totals(ag, 301)
+    ag._publish_all()
+    assert len(_power_points(inf)) == 2                      # rewritten after 600 s
+    ag._publish_all()
+    assert len(_power_points(inf)) == 2
+
+
+def test_the_installations_own_heartbeat_comes_first_and_zero_is_off():
+    pytest.importorskip("influxdb_client")
+    ag, inf = _hb_bank(gateway_hb=600, own_hb=60)
+    ag._publish_all()
+    _age_totals(ag, 61)
+    ag._publish_all()
+    assert len(_power_points(inf)) == 2                      # its own 60 s
+    ag, inf = _hb_bank(gateway_hb=600, own_hb=0)
+    ag._publish_all()
+    _age_totals(ag, 100_000)
+    ag._publish_all()
+    assert len(_power_points(inf)) == 1                      # 0 = off, its choice
+    ag, inf = _hb_bank(gateway_hb=600, own_hb=1.5)
+    ag._publish_all()
+    _age_totals(ag, 601)
+    ag._publish_all()
+    assert len(_power_points(inf)) == 2                      # nonsense = the gateway's
+
+
+def test_an_output_is_rewritten_after_the_heartbeat_too():
+    pytest.importorskip("influxdb_client")
+    out = {"id": "legacy", "measurement": "my_pack",
+           "fields": [{"name": "total_power", "source": "power_active_total"}]}
+    ag, inf = _hb_bank(gateway_hb=600, outputs=[out])
+    ag._publish_all()
+    assert len(_lp(inf, "my_pack")) == 1
+    _age_totals(ag, 100)
+    ag._publish_all()
+    assert len(_lp(inf, "my_pack")) == 1
+    _age_totals(ag, 600)
+    ag._publish_all()
+    assert len(_lp(inf, "my_pack")) == 2

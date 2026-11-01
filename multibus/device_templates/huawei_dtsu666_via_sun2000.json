@@ -1,0 +1,379 @@
+{
+  "device_template": {
+    "schema_version": 1,
+    "id": "huawei_dtsu666_via_sun2000",
+    "name": "Huawei DTSU666-H meter (via SUN2000)",
+    "vendor": "Huawei",
+    "model": "DTSU666-H / DDSU666-H power meter behind a SUN2000",
+    "kind": "meter",
+    "version": "0.1.0",
+    "author": "Stefan Maldaianu",
+    "description": "The grid meter a Huawei SUN2000 reads on its own RS485 bus (DTSU666-H three-phase or DDSU666-H single-phase), served by the INVERTER at 37100-37137: status, phase and line voltages, phase currents, total and per-phase active power, reactive power, PF, frequency, exported/imported and reactive energy. Add it as a second device on the same connection and unit ID as the huawei_sun2000 device, only where the site has the meter. Sign: Huawei counts + as export (feed-in); this template inverts active power and phase currents with a negative scale so they follow the gateway's meter convention, + = import from the grid; register 37119 (Huawei's 'positive' energy) is the export counter, 37121 the import counter. Reactive power keeps Huawei's sign. Field notes: enable Modbus TCP on the SDongle in FusionSolar (Dongle parameters -> Modbus TCP -> Enable unrestricted); unit ID = the inverter's RS485 address (usually 1); the dongle serves ONE Modbus client only, so keep a single gateway connection and poll every 10-30 s; port 502 on the SDongle, 6607 on the inverter's own WLAN access point; Modbus RTU direct on the inverter's RS485 is 9600 8N1. The inverter is the master of its RS485 bus to the DTSU666 meter: never add a second master there, use the listen-only rtu_tap mode to watch it. SunSpec (40000) is a quick alternative without battery, meter or alarms.",
+    "source_document": "Huawei 'Solar Inverter Modbus Interface Definitions', power meter registers 37100-37137; cross-read against wlcrs/huawei-solar-lib (grid_exported_energy 37119, grid_accumulated_energy 37121, power_meter_active_power 37113). Not yet checked on hardware.",
+    "protocol": {
+      "line": {"baudrate": 9600, "parity": "N", "bytesize": 8, "stopbits": 1},
+      "transports": [
+        "tcp",
+        "rtu"
+      ],
+      "byte_order": "big",
+      "default_unit_id": 1,
+      "default_register_type": "holding",
+      "max_registers_per_read": 64,
+      "connect_settle_s": 3
+    },
+    "poll_groups": {
+      "fast": {
+        "interval": 10,
+        "description": "voltages, currents, power, PF, frequency"
+      },
+      "normal": {
+        "interval": 30,
+        "description": "status, line voltages"
+      },
+      "energy": {
+        "interval": 60,
+        "description": "energy counters"
+      },
+      "static": {
+        "interval": 3600,
+        "description": "meter type"
+      }
+    },
+    "categories": {
+      "voltage": {
+        "label": "Voltage",
+        "order": 1
+      },
+      "current": {
+        "label": "Current",
+        "order": 2
+      },
+      "power": {
+        "label": "Power",
+        "order": 3
+      },
+      "energy": {
+        "label": "Energy",
+        "order": 4
+      },
+      "status": {
+        "label": "Status",
+        "order": 5
+      }
+    },
+    "canonical": false,
+    "notes": [
+      {
+        "level": "warning",
+        "text": "Not yet checked on hardware: with the sun on and the house light, power_active_total must be negative (export) when FusionSolar shows feed-in.",
+        "fields": [
+          "power_active_total",
+          "energy_active_export",
+          "energy_active_import"
+        ]
+      },
+      {
+        "level": "info",
+        "text": "Signs: Huawei reports + for export. Active power and the phase currents are inverted here (negative scale), so + = import, as every grid meter in the gateway.",
+        "fields": [
+          "power_active_total",
+          "power_active_l1",
+          "power_active_l2",
+          "power_active_l3",
+          "current_l1",
+          "current_l2",
+          "current_l3"
+        ]
+      },
+      {
+        "level": "info",
+        "text": "Without a meter the inverter answers 0 or 'illegal data address' here; do not add this device then. Same connection as the inverter: the SDongle takes one client."
+      }
+    ],
+    "registers": [
+      {
+        "address": 37100,
+        "name": "meter_status",
+        "label": "Meter status",
+        "unit": "",
+        "data_type": "uint16",
+        "register_type": "holding",
+        "access": "RD",
+        "category": "status",
+        "poll_group": "normal",
+        "description": "37100. Meter status: 0 offline, 1 normal. Source: Huawei 'Solar Inverter Modbus Interface Definitions', cross-read against wlcrs/huawei-solar-lib.",
+        "enum": {
+          "0": "Offline",
+          "1": "Normal"
+        }
+      },
+      {
+        "address": 37101,
+        "name": "voltage_l1_n",
+        "label": "Phase A voltage",
+        "unit": "V",
+        "data_type": "int32",
+        "register_type": "holding",
+        "access": "RD",
+        "category": "voltage",
+        "poll_group": "fast",
+        "scale": 10,
+        "description": "37101. Phase A voltage, 0.1 V. Source: Huawei 'Solar Inverter Modbus Interface Definitions', cross-read against wlcrs/huawei-solar-lib."
+      },
+      {
+        "address": 37103,
+        "name": "voltage_l2_n",
+        "label": "Phase B voltage",
+        "unit": "V",
+        "data_type": "int32",
+        "register_type": "holding",
+        "access": "RD",
+        "category": "voltage",
+        "poll_group": "fast",
+        "scale": 10,
+        "description": "37103. Phase B voltage, 0.1 V. Source: Huawei 'Solar Inverter Modbus Interface Definitions', cross-read against wlcrs/huawei-solar-lib."
+      },
+      {
+        "address": 37105,
+        "name": "voltage_l3_n",
+        "label": "Phase C voltage",
+        "unit": "V",
+        "data_type": "int32",
+        "register_type": "holding",
+        "access": "RD",
+        "category": "voltage",
+        "poll_group": "fast",
+        "scale": 10,
+        "description": "37105. Phase C voltage, 0.1 V. Source: Huawei 'Solar Inverter Modbus Interface Definitions', cross-read against wlcrs/huawei-solar-lib."
+      },
+      {
+        "address": 37107,
+        "name": "current_l1",
+        "label": "Phase A current",
+        "unit": "A",
+        "data_type": "int32",
+        "register_type": "holding",
+        "access": "RD",
+        "category": "current",
+        "poll_group": "fast",
+        "scale": -100,
+        "description": "37107. Phase A current, 0.01 A. Huawei: + = export (feed-in). Inverted (negative scale) to the gateway's meter convention, + = import. Source: Huawei 'Solar Inverter Modbus Interface Definitions', cross-read against wlcrs/huawei-solar-lib."
+      },
+      {
+        "address": 37109,
+        "name": "current_l2",
+        "label": "Phase B current",
+        "unit": "A",
+        "data_type": "int32",
+        "register_type": "holding",
+        "access": "RD",
+        "category": "current",
+        "poll_group": "fast",
+        "scale": -100,
+        "description": "37109. Phase B current, 0.01 A. Huawei: + = export (feed-in). Inverted (negative scale) to the gateway's meter convention, + = import. Source: Huawei 'Solar Inverter Modbus Interface Definitions', cross-read against wlcrs/huawei-solar-lib."
+      },
+      {
+        "address": 37111,
+        "name": "current_l3",
+        "label": "Phase C current",
+        "unit": "A",
+        "data_type": "int32",
+        "register_type": "holding",
+        "access": "RD",
+        "category": "current",
+        "poll_group": "fast",
+        "scale": -100,
+        "description": "37111. Phase C current, 0.01 A. Huawei: + = export (feed-in). Inverted (negative scale) to the gateway's meter convention, + = import. Source: Huawei 'Solar Inverter Modbus Interface Definitions', cross-read against wlcrs/huawei-solar-lib."
+      },
+      {
+        "address": 37113,
+        "name": "power_active_total",
+        "label": "Active power",
+        "unit": "W",
+        "data_type": "int32",
+        "register_type": "holding",
+        "access": "RD",
+        "category": "power",
+        "poll_group": "fast",
+        "scale": -1,
+        "description": "37113. Active power, W. Huawei: + = export (feed-in). Inverted (negative scale) to the gateway's meter convention, + = import. Source: Huawei 'Solar Inverter Modbus Interface Definitions', cross-read against wlcrs/huawei-solar-lib."
+      },
+      {
+        "address": 37115,
+        "name": "power_reactive_total",
+        "label": "Reactive power",
+        "unit": "var",
+        "data_type": "int32",
+        "register_type": "holding",
+        "access": "RD",
+        "category": "power",
+        "poll_group": "fast",
+        "description": "37115. Reactive power, var, sign as Huawei reports it (not converted). Source: Huawei 'Solar Inverter Modbus Interface Definitions', cross-read against wlcrs/huawei-solar-lib."
+      },
+      {
+        "address": 37117,
+        "name": "power_factor_total",
+        "label": "Power factor",
+        "unit": "",
+        "data_type": "int16",
+        "register_type": "holding",
+        "access": "RD",
+        "category": "power",
+        "poll_group": "fast",
+        "scale": 1000,
+        "description": "37117. Power factor, 0.001. Source: Huawei 'Solar Inverter Modbus Interface Definitions', cross-read against wlcrs/huawei-solar-lib."
+      },
+      {
+        "address": 37118,
+        "name": "frequency",
+        "label": "Frequency",
+        "unit": "Hz",
+        "data_type": "int16",
+        "register_type": "holding",
+        "access": "RD",
+        "category": "power",
+        "poll_group": "fast",
+        "scale": 100,
+        "description": "37118. Grid frequency, 0.01 Hz. Source: Huawei 'Solar Inverter Modbus Interface Definitions', cross-read against wlcrs/huawei-solar-lib."
+      },
+      {
+        "address": 37119,
+        "name": "energy_active_export",
+        "label": "Exported energy",
+        "unit": "Wh",
+        "data_type": "int32",
+        "register_type": "holding",
+        "access": "RD",
+        "category": "energy",
+        "poll_group": "energy",
+        "scale": 0.1,
+        "description": "37119. Positive active energy = exported to the grid (Huawei's 'positive' is feed-in), 0.01 kWh, served in Wh. Source: Huawei 'Solar Inverter Modbus Interface Definitions', cross-read against wlcrs/huawei-solar-lib.",
+        "monotonic": true
+      },
+      {
+        "address": 37121,
+        "name": "energy_active_import",
+        "label": "Imported energy",
+        "unit": "Wh",
+        "data_type": "int32",
+        "register_type": "holding",
+        "access": "RD",
+        "category": "energy",
+        "poll_group": "energy",
+        "scale": 0.1,
+        "description": "37121. Reverse active energy = imported from the grid, 0.01 kWh, served in Wh. Source: Huawei 'Solar Inverter Modbus Interface Definitions', cross-read against wlcrs/huawei-solar-lib.",
+        "monotonic": true
+      },
+      {
+        "address": 37123,
+        "name": "energy_reactive_total",
+        "label": "Accumulated reactive energy",
+        "unit": "varh",
+        "data_type": "int32",
+        "register_type": "holding",
+        "access": "RD",
+        "category": "energy",
+        "poll_group": "energy",
+        "scale": 0.1,
+        "description": "37123. Accumulated reactive energy, 0.01 kvarh, served in varh. Source: Huawei 'Solar Inverter Modbus Interface Definitions', cross-read against wlcrs/huawei-solar-lib.",
+        "monotonic": true
+      },
+      {
+        "address": 37125,
+        "name": "meter_type",
+        "label": "Meter type",
+        "unit": "",
+        "data_type": "uint16",
+        "register_type": "holding",
+        "access": "RD",
+        "category": "status",
+        "poll_group": "static",
+        "description": "37125. Meter type: 0 single-phase, 1 three-phase. Source: Huawei 'Solar Inverter Modbus Interface Definitions', cross-read against wlcrs/huawei-solar-lib.",
+        "enum": {
+          "0": "Single-phase",
+          "1": "Three-phase"
+        },
+        "entity_category": "diagnostic"
+      },
+      {
+        "address": 37126,
+        "name": "voltage_l1_l2",
+        "label": "Line voltage A-B",
+        "unit": "V",
+        "data_type": "int32",
+        "register_type": "holding",
+        "access": "RD",
+        "category": "voltage",
+        "poll_group": "normal",
+        "scale": 10,
+        "description": "37126. Line voltage A-B, 0.1 V. Source: Huawei 'Solar Inverter Modbus Interface Definitions', cross-read against wlcrs/huawei-solar-lib."
+      },
+      {
+        "address": 37128,
+        "name": "voltage_l2_l3",
+        "label": "Line voltage B-C",
+        "unit": "V",
+        "data_type": "int32",
+        "register_type": "holding",
+        "access": "RD",
+        "category": "voltage",
+        "poll_group": "normal",
+        "scale": 10,
+        "description": "37128. Line voltage B-C, 0.1 V. Source: Huawei 'Solar Inverter Modbus Interface Definitions', cross-read against wlcrs/huawei-solar-lib."
+      },
+      {
+        "address": 37130,
+        "name": "voltage_l3_l1",
+        "label": "Line voltage C-A",
+        "unit": "V",
+        "data_type": "int32",
+        "register_type": "holding",
+        "access": "RD",
+        "category": "voltage",
+        "poll_group": "normal",
+        "scale": 10,
+        "description": "37130. Line voltage C-A, 0.1 V. Source: Huawei 'Solar Inverter Modbus Interface Definitions', cross-read against wlcrs/huawei-solar-lib."
+      },
+      {
+        "address": 37132,
+        "name": "power_active_l1",
+        "label": "Phase A active power",
+        "unit": "W",
+        "data_type": "int32",
+        "register_type": "holding",
+        "access": "RD",
+        "category": "power",
+        "poll_group": "fast",
+        "scale": -1,
+        "description": "37132. Phase A active power, W. Huawei: + = export (feed-in). Inverted (negative scale) to the gateway's meter convention, + = import. Source: Huawei 'Solar Inverter Modbus Interface Definitions', cross-read against wlcrs/huawei-solar-lib."
+      },
+      {
+        "address": 37134,
+        "name": "power_active_l2",
+        "label": "Phase B active power",
+        "unit": "W",
+        "data_type": "int32",
+        "register_type": "holding",
+        "access": "RD",
+        "category": "power",
+        "poll_group": "fast",
+        "scale": -1,
+        "description": "37134. Phase B active power, W. Huawei: + = export (feed-in). Inverted (negative scale) to the gateway's meter convention, + = import. Source: Huawei 'Solar Inverter Modbus Interface Definitions', cross-read against wlcrs/huawei-solar-lib."
+      },
+      {
+        "address": 37136,
+        "name": "power_active_l3",
+        "label": "Phase C active power",
+        "unit": "W",
+        "data_type": "int32",
+        "register_type": "holding",
+        "access": "RD",
+        "category": "power",
+        "poll_group": "fast",
+        "scale": -1,
+        "description": "37136. Phase C active power, W. Huawei: + = export (feed-in). Inverted (negative scale) to the gateway's meter convention, + = import. Source: Huawei 'Solar Inverter Modbus Interface Definitions', cross-read against wlcrs/huawei-solar-lib."
+      }
+    ]
+  }
+}

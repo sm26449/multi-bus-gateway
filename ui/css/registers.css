@@ -1,5 +1,5 @@
 /* Multi-Bus Gateway — multi-protocol Modbus/HTTP/MQTT acquisition gateway.
- * Copyright (C) 2024-2026 Stefan Maldaianu <sm26449@diysolar.ro>
+ * Copyright (C) 2024-2026 Stefan Maldaianu <stefan@multibus.dev>
  * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 /* ============================================
@@ -27,6 +27,17 @@
     padding: 12px 16px;
     text-align: left;
     border-bottom: 1px solid var(--border-light);
+}
+
+/* Templates → Device types on a phone: one card per type instead of a
+   table wider than the screen; the cells say what they hold */
+@media (max-width: 600px) {
+    .types-table thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+    .types-table tr { display: grid; grid-template-columns: 1fr auto; border-bottom: 1px solid var(--border-light); padding: 8px 12px; }
+    .types-table td { display: block; grid-column: 1 / -1; padding: 3px 0; border: 0; }
+    .types-table td:first-child { grid-column: 1; }
+    .types-table td.types-acts { grid-column: 2; grid-row: 1; }
+    .types-table td[data-label]::before { content: attr(data-label) ": "; color: var(--text-secondary); font-size: 11px; }
 }
 
 .data-table th {
@@ -527,14 +538,5 @@
 .reg-table .reg-interval { white-space: nowrap; color: var(--text-secondary); }
 .reg-lock { color: var(--text-tertiary); padding: 0 6px; }
 .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
-.reg-menu { position: relative; }
-#regMenu {
-    position: absolute; right: 0; top: calc(100% + 4px); z-index: 30;
-    display: flex; flex-direction: column; gap: 2px; min-width: 210px; padding: 6px;
-    background: var(--bg-secondary); border: 1px solid var(--border); border-radius: var(--radius-sm);
-    box-shadow: 0 8px 24px rgba(0,0,0,.18);
-}
-#regMenu[hidden] { display: none; }
-#regMenu [role=menuitem] { justify-content: flex-start; width: 100%; }
-/* a menu item hidden by the page stays hidden — .btn's display would win over the UA's [hidden] */
-#regMenu [role=menuitem][hidden] { display: none; }
+/* the map's tools in the Measurements editor (ADR-0032 §4): a row, no menu */
+.reg-tools { display: inline-flex; gap: 4px; flex-wrap: wrap; }

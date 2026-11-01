@@ -1,5 +1,267 @@
 # Changelog
 
+## 3.98.0
+
+Everything since 3.92.1. Read the upgrade notes first: nothing in an existing
+`config.yaml` is renamed or migrated, but several API calls are checked more
+strictly, two settings are written into the file on the first start, and new
+devices start write-locked.
+
+**Upgrade notes:**
+- **Two settings are written into `config.yaml` on the first start**, each
+  with one INFO log line: `influxdb.heartbeat_interval: 600` and a `preview:`
+  section (`max_requests: 4`, `listen_s: 10`). Nothing else in the file
+  changes, but it is written like a save from the UI: comments and YAML
+  anchors are dropped. `config.example.yaml` already has both. In a
+  high-availability pair, run the same version on both nodes.
+- **Existing installs keep every name.** A `config.yaml` without
+  `identity_scope` is `legacy`: every topic, bucket and Home Assistant
+  `unique_id` stays as it is, and the next save writes `identity_scope:
+  legacy` (and `gateway.id` when one is set). A **fresh** install is
+  `gateway`: new devices are `mbg/<gateway>/devices/<id>`, bucket
+  `<gateway>-<id>`. Changing the id or the scope later names new devices
+  only.
+- **A fresh install starts with no device** (no default Janitza UMG 512).
+  An existing install keeps its device #1 with its names; the next save
+  writes the new top-level `primary_device:` key. A fresh install's neutral
+  defaults are `mqtt.topic_prefix: mbg/gateway` and an empty Home Assistant
+  device name.
+- **New devices are write-locked.** A device created from the UI or the API,
+  one adopted from MQTT discovery, a new installation and a restored device
+  are stored with `write_locked: true` whatever the payload says (a restored
+  one also with every command binding off). Unlock deliberately. Devices
+  already in `config.yaml` keep their value.
+- **A bus a device only listens on is never transmitted on.** While an
+  enabled device listens on a bus (`rtu_tap`, Seplos V2 in listen mode, a
+  listen-only template), Test, the unit sweeps, the SunSpec walk, a bridge's
+  bus scan and check mode answer **409** naming the listener; a save that
+  would poll such a bus, or listen on one another device polls, is refused
+  at its field.
+- **`PATCH /api/devices/{id}`** (new) requires `If-Match`: **428** without
+  it, **412** when stale. Every other device write now honours `If-Match`
+  too (write lock, outputs, publishing, REST push, poll groups, calculated
+  values, type, meters, command bindings, channels, components, restore, the
+  PQ recorder, the measurement selection and the Energy fields); without the
+  header nothing changes. An ETag is per process: one held across a restart
+  is stale.
+- **Stricter checks on save (422 at the field):** the advanced connection
+  keys (`retry_attempts`, `retry_delay`, `stale_after_s`, `max_gap`,
+  `illegal_registers`, `startup_jitter_s`, `max_connections`,
+  `endpoint_wait_s`, `endpoint_min_gap_s`, `connect_settle_s` and the
+  switches) have ranges; the primary meter's `retries` is a whole number
+  0..10 (a stored fraction is healed at load); `POST /api/pq/config` needs
+  `poll_s` of at least 30; a REST push header renamed and sent with its
+  masked value is refused instead of storing the mask; a topic prefix that
+  is empty, has an empty level or a leading or trailing `/`, contains `+` or
+  `#`, or overlaps another device's, component's, installation's or the
+  gateway's own is refused (stored ones are logged and kept). A value
+  already stored is not judged again until a save changes it.
+- **A device keeps its protocol class** (Modbus, Seplos V2, CAN, HTTP/JSON,
+  MQTT); reach and framing may change within it. A Modbus device without a
+  template can no longer be moved to HTTP or MQTT with `PUT`: create a new
+  device.
+- **Installation roles are type ids.** A new or changed group role, or a
+  flat installation's `role`, must be a built-in kind other than `other` or
+  one of your device types. A role already stored is kept.
+- **`POST /api/devices/{id}/write` refuses in a new order:** what can never
+  be written (an HTTP device, a read-only bus such as a tap) is refused with
+  **400** before the write lock (**403**); a locked tap now answers 400
+  read-only.
+- **What a command writes is never written raw.** A register that any
+  command of the device writes (on the same slave, an overlapping word range
+  included) is refused for raw writes from Home Assistant and REST,
+  `unguarded` and admin too, and Home Assistant no longer offers such an
+  entity — use the command. `write-info` says `through_command` and
+  `channel`.
+- **Raw register writes queue per device** like commands. REST answers as
+  before plus `queued_ms`, and may now answer 409 (`superseded`, `expired`,
+  `cancelled`), 429, 503 or 504, always as `{"detail": {"errors": [...]}}`.
+- **MQTT commands complete asynchronously:** read the outcome on
+  `<prefix>/cmd/result` (every outcome, refusals included, with your
+  optional `id` echoed). The retained `cmd/<name>/state` is now only what was
+  applied; a refusal or an error no longer overwrites it. A command that is
+  not enabled has no MQTT topic.
+- **Home Assistant discovery follows the MQTT output:** turning a device's
+  MQTT output or its discovery off takes its entities back, once.
+- **The device page's tabs are Live · Data · Setup · Diagnose.** Connection,
+  Outputs, Attributes and Meters are no longer tabs; their old links
+  (`#/devices/<id>/connection`, `…/outputs`, `…/attributes`, `…/meters`)
+  open Setup at that section. Editing is in the **Edit** dialog (⋯ → Edit…,
+  or the **E** key).
+- `rules.recheck` and `commands.raw_lanes` (and `MBG_RULES_RECHECK`,
+  `MBG_RAW_LANES`) are not settings: what they switched is always on. A file
+  that holds either key loads as before, logs one INFO line, and the next
+  save drops it.
+
+**Add a device**
+- **One Add Device, in steps:** *What is it?* (search by model, brand or
+  type in English or Romanian, type chips, model cards with their notes) or
+  *start from the connection*, then **Connection**, **Check** and **Name &
+  save**. Every way in opens it: the Add button, a bridge bus's *+ Device*, a
+  scan row, discovery's *Use* and *Found (n)*, a meter's *Add equipment this
+  meter measures…*, and ⋯ *Duplicate…*.
+- **The connection, asked in order:** port (RS-485, Ethernet, CAN, Web API,
+  MQTT) → where the bus is → **Master / Listen-only** → protocol → line →
+  address. The choices come from what the server allows; one that cannot be
+  taken stays visible with its reason. On a bus with other devices the line
+  is the bus's; the address offered is the next free one.
+- **Serial ports are picked from a list**, not typed: every port of the host
+  (USB, RS-485 HAT, board UART) with its model and state (free, polled,
+  listened, busy, not mapped), stored by its stable `/dev/serial/by-id` path
+  when the container sees one; a port not mapped into the container shows
+  the compose line to add.
+- **Check — a read preview before saving:** the values with their unit and
+  quality (ok, no answer, illegal address, out of range, byte swap suspect,
+  sentinel), the identity the device reports against the model chosen (a
+  mismatch offers the right one), the components found and the load it adds
+  to the bus. Reads only: every Modbus request passes a guard that refuses
+  anything but FC3/FC4, a listened bus is only listened to, one preview per
+  bus, within a budget (Settings → Modbus). It never blocks: *Next — without
+  a check*. The device page has **Preview** for an edited connection before
+  Save.
+- **Name & save on one page:** name and id, type, where it is, labels,
+  description, the nameplate (pre-filled from SunSpec / FC43), outputs, the
+  write lock, and *What will be created* before Create. **Create and add
+  another like this** goes straight on.
+- **Many of the same on one bus:** `POST /api/bus-scan` scans a serial line,
+  a bridge port or a TCP gateway (units 1–32 by default, up to 247),
+  identifies each unit and names the device that already has its address;
+  **Listen for addresses** lists the units a master polls, without
+  transmitting. Tick the units, name them, create them in one batch (each
+  checked by a dry run first).
+- **Device types:** one catalog of built-in kinds (meter, inverter, battery,
+  site, heat pump, drive, UPS, charger, sensor, converter, other) and your
+  own types (Templates → Device types). A device has a type, templates say
+  which types they suit, and the device list filters by type and label.
+- **Identity attributes** for a device or an installation: description,
+  where it is mounted, labels, manufacturer, model, serial number,
+  firmware, installed on. The serial number is published only with
+  *publishing serial numbers* on (Settings → Privacy).
+- **Gateway identity** (Settings → General): `gateway.id` and
+  `identity_scope`, so two gateways can share a broker and an InfluxDB.
+
+**The device page**
+- **One technical line** says how the device is reached (e.g.
+  `Modbus RTU · /dev/ttySC1 · 9600 8E1 · unit 1 · Master · 2 s/10 s`), with
+  the write lock and each output in words; the device list and the bridge
+  cards say the same line.
+- **One ⋯ menu** on the page, each list row and each bridge card, for every
+  role: an action that is not available says why (writes off, no
+  credential, locked, listen-only…) instead of disappearing. A component's
+  Rename, Disable and Remove work from the list and the bridge cards too.
+  On a phone the menu is a bottom sheet. The header's Test, Preview, Run a
+  command… and Write… are held with their reason, never hidden; an output
+  pill is green only while it publishes. `GET /api/status` says
+  `writes: {enabled, credential}` and each device `writable_registers`, so a
+  client knows before a form whether a write can go through.
+- **One Edit dialog with one Save** for every kind of device — Model,
+  Connection, Polling, Identity, Outputs. A dry run says what Save will do
+  (*applies live* or *restarts acquisition*), **Show changes** lists before
+  → after, and a review is asked for what matters on a bus (Master ↔
+  Listen-only, another bus, a template change, an output going off). A
+  device changed elsewhere meanwhile is not overwritten: your edits are put
+  back over what is stored now, each conflict marked. The gateway's own
+  meter is edited the same way.
+- **Measurements and Commands & bindings** open full screen, staged, with
+  one Save; leaving with unsaved edits always asks.
+- **Edit bus line…** sets one line for every device on a serial bus (and on
+  our serial bridge's port) in one operation.
+- **Undo and Restore:** a delete ends with **Undo** for 10 s; *Deleted
+  devices: restore…* opens a Restore dialog that says beforehand what cannot
+  come back as it was.
+- Two tabs on one device no longer overwrite each other: the page sends
+  `If-Match`, and a refusal shows what changed.
+
+**Buses and protocols**
+- **CAN, listen-only** (`protocol: can`): SocketCAN through Python's
+  standard library, template rows with DBC semantics (`can_id`,
+  `start_bit`, `bit_length`, `byte_order`…). There is no transmit path; the
+  interface's own listen-only flag is read from the kernel, shown, and
+  required by Add Device (with the `ip link` command to copy). Test says
+  whether the interface exists, is up and listen-only, and what it hears in
+  2 s. `GET /api/can-interfaces` lists the host's interfaces. Template
+  `pylontech_can_inverter` (the BMS → inverter link).
+- **Seplos V2 BMS** (`seplos_v2`, or `seplos_v2-tcp` through a bridge): the
+  RS485 ASCII protocol, read-only by construction (only the read commands
+  can be encoded), `mode: poll` or `mode: listen`. Templates `seplos_bms_v2`
+  (one pack) and `seplos_bms_v2_tap` (a parallel bank's inter-pack summary,
+  heard, never asked).
+- **`connect_settle_s`:** a pause after connecting, from the template or the
+  connection (the Huawei templates use 3 s).
+- **Serial bridge:** board UARTs (a HAT's `ttySC*`, the SoC's UARTs opt-in)
+  listed beside USB adapters with a status and a stable id; per-port line
+  health measured on the bridge and turned into a diagnosis (network,
+  wiring, device silent, host overrun) on the bus and in InfluxDB. A device
+  refuses to read a bus whose adapter moved; *Follow the adapters* re-binds.
+- `GET /api/buses` (every bus with who polls, who listens, the units in use,
+  the line, the load) and `GET /api/protocols` with the invalid combinations
+  and every advanced key's default.
+
+**Commands and rules**
+- **One lane per wire** for every write a device is told (REST, groups,
+  MQTT / Home Assistant, OPC UA, sequences, refreshes, the dead-man revert):
+  a slow device delays only its own bus. A newer value of the same setting
+  replaces one still waiting (`superseded`); a command older than its
+  channel's `max_age_s` when its turn comes is `expired`, never written
+  late. `/api/status` lists a lane falling behind.
+- **A channel's pace per device:** `devices[].channels` (and
+  `groups[].channels` for an installation) override the template's
+  `min_interval_s`, `min_on_s`, `min_off_s`, `max_starts_per_h` and
+  `max_age_s`; a command's binding (`enabled`, `lease_s`, `safe`, `faces`,
+  `confirm`) is edited per device. The Commands editor groups commands by
+  channel.
+- **A rule's write is checked again just before it reaches the bus:** a
+  rule paused, outranked by another or held by the channel's pace since it
+  decided is `cancelled`, not written stale. A rule's correction after a
+  drift waits for the channel's pace; emergency wants never wait. A `steps`
+  rule with a `fast` step may not drive a paced channel (422 on save).
+- A rule's write never arms an outside controller's lease, and ends one left
+  on that command, so the lease's revert cannot write over the rule.
+- **A clean shutdown never writes a revert late** and never hangs on a busy
+  bus; an unfinished lease stays on disk for the next start.
+
+**Outputs**
+- **InfluxDB heartbeat:** in `changed` mode an unchanged value is written
+  again once it has not been written for `heartbeat_interval` seconds
+  (default 600, `0` off), so a steady value no longer disappears from a
+  dashboard. It can be set per device, installation or group; an
+  installation's totals get it too.
+- **OPC UA:** a server still starting reads `starting`, not failed.
+
+**Templates** — 31 bundled. New: `deye_hybrid_1p` (Deye single-phase hybrid,
+read-only, with the GEN port and the BMS block as the inverter sees it),
+`huawei_sun2000`, `huawei_dtsu666_via_sun2000`, `huawei_luna2000`,
+`seplos_bms_v2`, `seplos_bms_v2_tap` and `pylontech_can_inverter`. A template
+may declare `protocol.line`, `protocol.http.path`, `protocol.master_hint`,
+`protocol.sunspec` and `protocol.listen_only`; every bundled template
+declares its kind.
+
+**Fixes**
+- **A section of `config.yaml` in the wrong shape** no longer fails the whole
+  load: a gateway-level `mqtt.ha_discovery: true` is read as
+  `{enabled: true}`, and most other sections fall back to their defaults
+  with one warning naming the key. `modbus`, `mqtt`, `influxdb`, `ui` and
+  `security` in the wrong shape still refuse the load (the last good copy
+  runs), now naming the key, and a save then answers 409 with what to
+  repair.
+- **Test on a serial port that does not exist** says so, with the compose
+  line when the host has it but the container does not.
+- A tty, its `/dev/serial/by-id` link and a udev alias are one bus, not
+  three; an alias no longer opens the tty a second time.
+- A tap on a bridge stays a tap whatever the bridge's type; a template
+  written for listening cannot be put on a polling device.
+- A refused live-data WebSocket is one log line per client per minute
+  instead of two every 3 s, and the UI backs off (3 s up to 60 s) instead of
+  retrying forever.
+- `NaN` and infinity are refused for `write_interval` and
+  `heartbeat_interval`.
+- A GET then PUT of an MQTT device no longer restarts it.
+- Write protection, the listened-bus hints and the identity and privacy
+  settings say what they do; publishing serial numbers is a switch.
+- A device measured by meters shows their values in the fleet list; the
+  History chart's unit no longer sits on its top value; the Monitor names
+  its value groups.
+
 ## 3.92.1
 
 **Upgrade notes:**

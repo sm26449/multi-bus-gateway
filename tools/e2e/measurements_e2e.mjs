@@ -14,7 +14,7 @@
  * 1 and 2). It ticks and unticks one field and puts the selection back.
  */
 import { chromium } from 'playwright';
-import { openDeviceTab } from './lib/device-page.mjs';
+import { openDeviceTab, openDeviceEditor } from './lib/device-page.mjs';
 
 const BASE = process.env.MBG_URL || 'http://localhost:18087';
 const UNIT = process.env.UNIT || 'sunfield-u1';
@@ -50,6 +50,15 @@ try {
   await page.waitForTimeout(1500);
   await openDeviceTab(page, 'measurements');
   await page.waitForTimeout(3000);
+  // the tab is the view (L3.3): what is read, with no catalog and no Save;
+  // ticking and the catalog are the editor's (⋯ → Measurements…)
+  check('the Measurements tab shows what is read: no catalog, no Save, no ticks',
+        await page.locator('#selectedRegistersList').isVisible()
+        && !(await page.locator('#deviceRegTabs [data-regtab="available"]').isVisible())
+        && !(await page.locator('#saveRegistersBtn').isVisible())
+        && !(await page.locator('#selectedRegistersList td.reg-tick input').first().isVisible().catch(() => false)));
+  await openDeviceEditor(page, 'measurements');
+  await page.waitForTimeout(2000);
 
   // ---- 1. what is read comes first, and the picker states the census ----------
   check('Selected is the tab you land on',
@@ -73,13 +82,17 @@ try {
         await selList.locator('.reg-lock').count() >= 1 && await selList.locator('.btn-action.remove').count() === 0);
   check('no MONITORED / REALTIME badges', !/MONITORED|REALTIME/.test(selText));
 
-  // ---- 3. ticking in place saves at once ---------------------------------------
+  // ---- 3. ticking in place is staged: the full editor's one Save writes it
+  // (ADR-0032 §6, L3.11b) -------------------------------------------------------
   const firstRow = selList.locator('tbody tr[data-address]').first();
   const firstName = await firstRow.locator('.reg-name').innerText();
   await firstRow.locator('input[type=checkbox]').click();
+  await page.waitForTimeout(1000);
+  check('an untick is not written before Save', (await sel('solar_api')).registers.length === n);
+  await page.click('#ddvEditSave');
   await page.waitForTimeout(2000);
   const afterUntick = (await sel('solar_api')).registers;
-  check('an untick is saved immediately', afterUntick.length === n - 1 && !afterUntick.some(r => r.name === firstName), `${n} → ${afterUntick.length}`);
+  check('Save writes the untick', afterUntick.length === n - 1 && !afterUntick.some(r => r.name === firstName), `${n} → ${afterUntick.length}`);
   check('and the Selected count follows', (await page.locator('#regTabSelCount').innerText()) === `(${n - 1})`);
   await page.locator('#deviceRegTabs .config-main-tab[data-regtab="available"]').click();
   await page.waitForTimeout(800);
@@ -89,9 +102,11 @@ try {
   const row = avail.locator('tr[data-address]').filter({ hasText: firstName }).first();
   check('the unticked field is unticked in All available', !(await row.locator('input[type=checkbox]').isChecked()));
   await row.locator('input[type=checkbox]').click();
+  await page.waitForTimeout(800);
+  await page.click('#ddvEditSave');
   await page.waitForTimeout(2000);
   const afterTick = (await sel('solar_api')).registers;
-  check('a tick is saved immediately', afterTick.length === n && afterTick.some(r => r.name === firstName), `${afterTick.length}`);
+  check('a tick is written by Save', afterTick.length === n && afterTick.some(r => r.name === firstName), `${afterTick.length}`);
   check('the sunspec map was never touched', (await sel('sunspec')).registers.length > 10);
 
   // ---- 4. the source switch changes "where" and the census ---------------------
@@ -102,19 +117,12 @@ try {
   check('Query is offered for a Modbus source', await page.locator('#queryRegisterBtn').isVisible());
   check('the Selected count is the sunspec map\'s now', /\((\d+)\)/.test(await page.locator('#regTabSelCount').innerText()) && (await page.locator('#regTabSelCount').innerText()) !== `(${n})`);
 
-  // ---- 5. one menu, keyboard-reachable -------------------------------------------
-  const menuBtn = page.locator('#regMenuBtn');
-  check('the toolbar is one menu button plus Save',
-        await page.locator('#deviceRegistersView .header-actions > button, #deviceRegistersView .header-actions > .reg-menu').count() === 2);
-  await menuBtn.click(); await page.waitForTimeout(300);
-  check('the menu opens and says so', (await menuBtn.getAttribute('aria-expanded')) === 'true' && await page.locator('#regMenu:visible').count() === 1);
-  check('the menu holds import, export, raw and write', await page.locator('#regMenu [role=menuitem]:visible').count() >= 4);
-  await page.keyboard.press('Escape'); await page.waitForTimeout(200);
-  check('Escape closes it', (await menuBtn.getAttribute('aria-expanded')) === 'false');
-  await page.locator('#regSourceBar button:has-text("solar_api")').click(); await page.waitForTimeout(2000);
-  await menuBtn.click(); await page.waitForTimeout(300);
-  check('Write is not offered for a JSON source', !(await page.locator('#writeRegBtn').isVisible()));
-  await page.keyboard.press('Escape');
+  // ---- 5. no menu inside the tab: the map's tools are the editor's (ADR-0032 §4) ----
+  check('no "More" menu in the Measurements editor', !(await page.locator('#regMenuBtn').count()) && !(await page.locator('#regMenu').count()));
+  const tools = await page.locator('#deviceRegistersView .reg-tools button:visible').allInnerTexts();
+  check('the editor holds Import CSV, Upload map, Download map, Raw JSON', ['Import CSV', 'Upload map', 'Download map', 'Raw JSON']
+        .every(w => tools.some(x => x.includes(w))), tools.join(' | '));
+  check('Write is not here (it is ⋯ → Write a value…)', !(await page.locator('#writeRegBtn').count()));
 
   check('no page errors', errs.length === 0, errs.slice(0, 3).join(' | '));
 } catch (e) {

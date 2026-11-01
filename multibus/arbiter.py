@@ -1,5 +1,5 @@
 # Multi-Bus Gateway — multi-protocol Modbus/HTTP/MQTT acquisition gateway.
-# Copyright (C) 2024-2026 Stefan Maldaianu <sm26449@diysolar.ro>  — AGPL-3.0-or-later
+# Copyright (C) 2024-2026 Stefan Maldaianu <stefan@multibus.dev>  — AGPL-3.0-or-later
 """The channel referee (rules phase 3).
 
 A **channel** is what some commands of one device control together (the
@@ -16,7 +16,7 @@ from __future__ import annotations
 
 from collections import deque
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 COMBINE = ('priority', 'min', 'max')
 
@@ -59,6 +59,11 @@ class ChannelState:
         self.off_since: Optional[float] = None
         self.starts: deque = deque()
         self.last_write: Optional[float] = None
+        # the runtime's write sequence number of the last stamp or reconcile
+        # (ADR-0021 D2): a rule's job compares it with the one it saw when it
+        # decided. None = never stamped here (new, loaded, or a partner's copy)
+        # — it never equals a captured number, so the hold is asked.
+        self.seq: Optional[int] = None
 
     def starts_last_h(self, now: float) -> int:
         while self.starts and now - self.starts[0] >= 3600:
@@ -67,24 +72,49 @@ class ChannelState:
 
     def hold(self, cfg: Dict[str, Any], turns_on: Optional[bool], now: float) -> Optional[str]:
         """Why a write that leaves the channel ``turns_on`` must wait, or None."""
+        got = self.hold_s(cfg, turns_on, now)
+        return got[0] if got else None
+
+    def hold_s(self, cfg: Dict[str, Any], turns_on: Optional[bool],
+               now: float) -> Optional[Tuple[str, float]]:
+        """(why, seconds until it may) — the seconds a controller is told to
+        wait (`retry_after_s`, ADR-0018) — or None."""
         cfg = cfg or {}
         mi = float(cfg.get('min_interval_s') or 0)
         if mi and self.last_write is not None and now - self.last_write < mi:
-            return f'{int(mi - (now - self.last_write))} s to go before the next write (min_interval_s)'
+            left = mi - (now - self.last_write)
+            return f'{int(left)} s to go before the next write (min_interval_s)', left
         if turns_on is None or turns_on == self.on:
             return None
         if not turns_on:
             mo = float(cfg.get('min_on_s') or 0)
             if mo and self.on_since is not None and now - self.on_since < mo:
-                return f'minimum run time — {int(mo - (now - self.on_since))} s to go before stopping'
+                left = mo - (now - self.on_since)
+                return f'minimum run time — {int(left)} s to go before stopping', left
             return None
         mf = float(cfg.get('min_off_s') or 0)
         if mf and self.off_since is not None and now - self.off_since < mf:
-            return f'minimum stop time — {int(mf - (now - self.off_since))} s to go before starting'
+            left = mf - (now - self.off_since)
+            return f'minimum stop time — {int(left)} s to go before starting', left
         ms = int(cfg.get('max_starts_per_h') or 0)
         if ms and self.starts_last_h(now) >= ms:
-            return f'{len(self.starts)} starts in the last hour (max {ms}) — {int(3600 - (now - self.starts[0]))} s to go'
+            left = 3600 - (now - self.starts[0])
+            return f'{len(self.starts)} starts in the last hour (max {ms}) — {int(left)} s to go', left
         return None
+
+    def reconcile(self, turns_on: Optional[bool], now: float) -> bool:
+        """What the device was found to hold when nothing was written (a
+        renewal already set): an unknown on/off is learnt from it, without
+        counting a start and without stamping a write (review 10). True when
+        something was learnt."""
+        if turns_on is None or self.on is not None:
+            return False
+        self.on = turns_on
+        if turns_on:
+            self.on_since = now
+        else:
+            self.off_since = now
+        return True
 
     def note(self, turns_on: Optional[bool], now: float) -> None:
         self.last_write = now
@@ -102,7 +132,9 @@ class ChannelState:
     def export_mirror(self, now: float) -> Dict[str, Any]:
         age = (lambda t: None if t is None else now - t)
         return {'on': self.on, 'on_since': age(self.on_since), 'off_since': age(self.off_since),
-                'last_write': age(self.last_write), 'starts': [now - t for t in self.starts]}
+                'last_write': age(self.last_write),
+                # a copy first: a writer thread may stamp the channel meanwhile
+                'starts': [now - t for t in list(self.starts)]}
 
     @classmethod
     def from_mirror(cls, d: Dict[str, Any], now: float) -> 'ChannelState':

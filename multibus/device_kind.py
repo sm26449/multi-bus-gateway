@@ -1,5 +1,5 @@
 # Multi-Bus Gateway — multi-protocol Modbus/HTTP/MQTT acquisition gateway.
-# Copyright (C) 2024-2026 Stefan Maldaianu <sm26449@diysolar.ro>  — AGPL-3.0-or-later
+# Copyright (C) 2024-2026 Stefan Maldaianu <stefan@multibus.dev>  — AGPL-3.0-or-later
 """What kind of equipment a device is — one answer for every list, filter
 and attribute.
 
@@ -14,13 +14,22 @@ The kind is told, first hit wins, by:
 
 ``site`` is the API value for a system / GX (the vocabulary templates and
 attributes already use). ``other`` is never stored.
+
+These are the built-in kinds, the ones that carry behaviour. A user type
+(``device_types.py``, ADR-0027) is stored in the same place as an override
+or a group's role and is told here as its ``behaves_like``: what goes out is
+always one of these.
 """
 from __future__ import annotations
 
 from typing import Any, Optional, Tuple
 
 KINDS = ('meter', 'inverter', 'battery', 'site', 'heat_pump', 'drive',
-         'ups', 'charger', 'sensor', 'other')
+         'ups', 'charger', 'sensor', 'converter', 'other')
+# the kinds the attribute service has always published in `<dev>/meta` (a
+# heat pump or a drive was nothing to it, and stays nothing: the wire `kind`
+# of every existing device is unchanged)
+META_KINDS = ('inverter', 'meter', 'battery', 'sensor', 'site', 'ups', 'charger')
 SOURCES = ('override', 'role', 'component', 'template', 'names', 'none')
 # an override may name any kind but `other` (no override is what says that)
 OVERRIDABLE = tuple(k for k in KINDS if k != 'other')
@@ -31,8 +40,8 @@ METER_ONLY_FIRST = ('ups', 'charger', 'heat_pump', 'drive')
 METER_ONLY = METER_ONLY_FIRST + tuple(k for k in OVERRIDABLE if k not in METER_ONLY_FIRST and k != 'meter')
 # words accepted on input for the same kind
 _ALIASES = {'system': 'site', 'gx': 'site', 'heatpump': 'heat_pump', 'vfd': 'drive'}
-# bundled templates that declare no kind (their files stay untouched, so a
-# running gateway gets no "template update" notice for them)
+# bundled templates that declared no kind before 3.97 (they declare it now;
+# a user copy saved from an older file may still lack it)
 _BY_TEMPLATE = {'delta_vfd_el': 'drive', 'samsung_mim_b19n': 'heat_pump'}
 
 
@@ -44,6 +53,18 @@ def normalize(value: Any) -> Optional[str]:
     k = value.strip().lower().replace('-', '_').replace(' ', '_')
     k = _ALIASES.get(k, k)
     return k if k in KINDS else None
+
+
+def _resolve(value: Any) -> Tuple[Optional[str], bool]:
+    """A stored type → (its built-in kind or None, whether it is a user
+    type). A user type that behaves like ``other`` still counts as said."""
+    k = normalize(value)
+    if k is not None:
+        return k, False
+    from .device_types import builtin_of, is_user_type
+    if is_user_type(value):
+        return builtin_of(value), True
+    return None, False
 
 
 def _template_of(dev) -> str:
@@ -74,11 +95,11 @@ def device_kind(dev, templates) -> Tuple[str, str]:
     """``(kind, source)`` of a device; ``templates`` answers ``get(id)``.
     Never raises: anything it cannot read is skipped."""
     try:
-        own = normalize(getattr(dev, 'kind', ''))
-        if own and own != 'other':
+        own, user = _resolve(getattr(dev, 'kind', ''))
+        if own and (own != 'other' or user):
             return own, 'override'
-        role = normalize(getattr(dev, 'role', ''))
-        if role and role != 'other':
+        role, user = _resolve(getattr(dev, 'role', ''))
+        if role and (role != 'other' or user):
             return role, 'role'
         tid = _template_of(dev)
         tpl = templates.get(tid) if (templates is not None and tid) else None
@@ -101,9 +122,13 @@ def attribute_kind(dev, templates) -> Optional[str]:
     an override. (A hand-written role such as ``grid`` is said as written
     here; the device list, which speaks only in kinds, files that unit by
     its template.)"""
-    from .attribute_catalog import KINDS as ATTR_KINDS
     role = getattr(dev, 'role', '') or ''
     if role:
+        b, user = _resolve(role)
+        if user:
+            # a user type never goes out: its behaves_like does, and only a
+            # kind meta has always published
+            return b if b in META_KINDS else None
         return role                     # as it always was: a group's role, said as written
     k, _src = device_kind(dev, templates)
-    return k if k in ATTR_KINDS else None
+    return k if k in META_KINDS else None

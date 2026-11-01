@@ -1,5 +1,5 @@
 # Multi-Bus Gateway — multi-protocol Modbus/HTTP/MQTT acquisition gateway.
-# Copyright (C) 2024-2026 Stefan Maldaianu <sm26449@diysolar.ro>  — AGPL-3.0-or-later
+# Copyright (C) 2024-2026 Stefan Maldaianu <stefan@multibus.dev>  — AGPL-3.0-or-later
 """A device whose electricity is measured by OTHER devices.
 
 A heat pump, a boiler, a charger often has no meter of its own; a meter on
@@ -87,6 +87,18 @@ def names_for(links: List[Dict[str, Any]]) -> List[str]:
         out += list(PAIR_POWER)
         out += [n for n, x in zip(PAIR_ENERGY, (lin, lout)) if x.get('energy')]
     return out
+
+
+# what a fleet row shows of a device measured by meters, in this order: the
+# supply meter's power and energy, or what goes through it (in, out and its
+# efficiency — the device page's pair line)
+FLEET_ROW = ('power_electric', 'energy_electric', 'power_in', 'power_out', 'efficiency_pct')
+
+
+def fleet_names(links: List[Dict[str, Any]]) -> List[str]:
+    """Up to three names a fleet row shows for a device measured by meters."""
+    have = set(names_for(links))
+    return [n for n in FLEET_ROW if n in have][:3]
 
 
 def _group(config: Any, dev_cfg: Any) -> str:

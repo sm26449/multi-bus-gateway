@@ -1,5 +1,5 @@
 # Multi-Bus Gateway — standalone serial bridge for a REMOTE host.
-# Copyright (C) 2024-2026 Stefan Maldaianu <sm26449@diysolar.ro>
+# Copyright (C) 2024-2026 Stefan Maldaianu <stefan@multibus.dev>
 # SPDX-License-Identifier: AGPL-3.0-or-later
 #
 # Runs ONLY the serial bridge — on a Raspberry Pi next to the RS-485 bus, or
@@ -10,6 +10,15 @@
 #   BRIDGE_TOKEN=$(openssl rand -hex 24) docker compose -f docker-compose.bridge.yml up -d
 #
 # (keep the token in a .env next to this file; the gateway needs the same one)
+#
+# An RS-485 HAT on this host (ttySC* on SC16IS7xx HATs, a real ttyS…): its
+# device major is not known in advance, so allow exactly it first —
+#   sh ../scripts/serial-access.sh --compose docker-compose.bridge.yml
+# (writes BRIDGE_TTY_1..4 into this directory's .env; ADR-0016). USB
+# adapters and the Pi's ttyAMA UARTs need nothing. With the docker run line
+# below instead, add the rule the bridge names, e.g.
+# --device-cgroup-rule='c 509:* rmw'. The SoC's own UARTs (ttyAMA, real ttyS)
+# are served only once enabled (the gateway's Buses dialog, or BRIDGE_INCLUDE).
 #
 # SECURITY — read before exposing anything:
 #   * FIREWALL both the control port and the data ports to the gateway's IP
@@ -29,7 +38,7 @@
 # that fall outside it (loudly, in the log).
 #
 # docker run equivalent (one line):
-#   docker run -d --name mbg-serial-bridge --restart unless-stopped -e BRIDGE_TOKEN=<token> -e BRIDGE_PORT_LOW=7001 -e BRIDGE_PORT_HIGH=7016 -v /dev:/dev:ro -v /etc/hostname:/etc/host-hostname:ro -v serial-bridge-data:/data --device-cgroup-rule='c 188:* rmw' --device-cgroup-rule='c 166:* rmw' --cap-drop ALL --cap-add CHOWN --cap-add DAC_OVERRIDE --cap-add FOWNER --cap-add SETUID --cap-add SETGID --security-opt no-new-privileges:true -p 7000:7000 -p 7001-7016:7001-7016 ghcr.io/sm26449/multi-bus-gateway-serial-bridge:latest
+#   docker run -d --name mbg-serial-bridge --restart unless-stopped -e BRIDGE_TOKEN=<token> -e BRIDGE_PORT_LOW=7001 -e BRIDGE_PORT_HIGH=7016 -v /dev:/dev:ro -v /etc/hostname:/etc/host-hostname:ro -v serial-bridge-data:/data --device-cgroup-rule='c 188:* rmw' --device-cgroup-rule='c 166:* rmw' --device-cgroup-rule='c 204:* rmw' --cap-drop ALL --cap-add CHOWN --cap-add DAC_OVERRIDE --cap-add FOWNER --cap-add SETUID --cap-add SETGID --cap-add SYS_PTRACE --security-opt no-new-privileges:true -p 7000:7000 -p 7001-7016:7001-7016 ghcr.io/sm26449/multi-bus-gateway-serial-bridge:latest
 
 name: mbg-serial-bridge
 
@@ -55,9 +64,23 @@ services:
       - BRIDGE_EXCLUDE=${BRIDGE_EXCLUDE:-}
       # optional display name; default = this host's /etc/hostname (mounted below)
       - BRIDGE_HOSTNAME=${BRIDGE_HOSTNAME:-}
-    # Unprivileged access to hotplugged USB serial lines: /dev is bound
-    # READ-ONLY and only ttyUSB (major 188) / ttyACM (major 166) nodes are
-    # allowed. The process runs non-root (uid 10002, dialout).
+      # the SoC's own UARTs (ttyAMA, real ttyS…) to serve: opt-in only, since a
+      # program using one without a lock cannot be seen (ADR-0016). Same tokens
+      # as BRIDGE_EXCLUDE; or enable a port in the gateway (bridge → Buses).
+      - BRIDGE_INCLUDE=${BRIDGE_INCLUDE:-}
+      # what a port the container may not open (status no-access) tells you to run
+      - BRIDGE_ACCESS_FIX=sh ../scripts/serial-access.sh --compose docker-compose.bridge.yml
+      # the device-rule slots below (and the drivers they were written for), so
+      # the bridge can say when a kernel update left one stale
+      - BRIDGE_TTY_SLOTS=${BRIDGE_TTY_1:-188:0} ${BRIDGE_TTY_2:-188:1} ${BRIDGE_TTY_3:-188:2} ${BRIDGE_TTY_4:-188:3}
+      - BRIDGE_TTY_DRIVERS=${BRIDGE_TTY_DRIVERS:-}
+    # Unprivileged access to serial lines: /dev is bound READ-ONLY and only
+    # exact tty majors are allowed: ttyUSB (188), ttyACM (166), the Pi's PL011
+    # ttyAMA (204), plus four slots for a board's own UARTs that
+    # scripts/serial-access.sh fills in .env (an RS-485 HAT's dynamic major,
+    # e.g. 509:*). Unfilled slots name USB nodes already allowed
+    # (188:0..3), so they add nothing. Never a wildcard major
+    # (ADR-0016). The process runs non-root (uid 10002, dialout).
     volumes:
       - /dev:/dev:ro
       - /etc/hostname:/etc/host-hostname:ro
@@ -65,6 +88,11 @@ services:
     device_cgroup_rules:
       - 'c 188:* rmw'
       - 'c 166:* rmw'
+      - 'c 204:* rmw'
+      - 'c ${BRIDGE_TTY_1:-188:0} rmw'
+      - 'c ${BRIDGE_TTY_2:-188:1} rmw'
+      - 'c ${BRIDGE_TTY_3:-188:2} rmw'
+      - 'c ${BRIDGE_TTY_4:-188:3} rmw'
     # the entrypoint's root phase chowns /data and drops to uid 10002;
     # nothing after that can regain a capability
     cap_drop:
@@ -75,6 +103,14 @@ services:
       - FOWNER
       - SETUID
       - SETGID
+      # line statistics (ADR-0017): lets the unprivileged supervisor duplicate
+      # ser2net's OWN open file of a port (pidfd_getfd, its child, same uid)
+      # to read the kernel's error counters, instead of opening the line a
+      # second time. Docker's seccomp profile allows that call only with it.
+      # Without it the bridge works and reports the line counters as null.
+      # NEVER combine with `pid: host`: the processes it can reach would then
+      # include the host's own (same uid), not just its ser2net child.
+      - SYS_PTRACE
     security_opt:
       - no-new-privileges:true
     ports:

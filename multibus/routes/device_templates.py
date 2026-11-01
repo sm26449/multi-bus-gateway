@@ -1,5 +1,5 @@
 # Multi-Bus Gateway — multi-protocol Modbus/HTTP/MQTT acquisition gateway.
-# Copyright (C) 2024-2026 Stefan Maldaianu <sm26449@diysolar.ro>
+# Copyright (C) 2024-2026 Stefan Maldaianu <stefan@multibus.dev>
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU Affero General Public License as published by
@@ -80,11 +80,13 @@ def build(ctx) -> APIRouter:
     @r.get("/api/device-templates")
     def list_device_templates(q: Optional[str] = None, kind: Optional[str] = None,
                               protocol: Optional[str] = None, origin: Optional[str] = None,
-                              sort: Optional[str] = None):
+                              sort: Optional[str] = None, type: Optional[str] = None):  # noqa: A002
         """Template library (built-ins + user uploads) for the wizard picker.
-        Optional: ``q`` (search), ``kind`` (the device kind), ``protocol``
-        (modbus/http/mqtt), ``origin`` (builtin/custom) — each a comma list —
-        and ``sort`` (name, id, vendor, kind, used_by; ``-`` for descending)."""
+        Optional: ``q`` (search), ``kind`` (the device kind), ``type`` (a
+        device type: the templates of its built-in kind and the ones that
+        list it, ADR-0027), ``protocol`` (modbus/http/mqtt), ``origin``
+        (builtin/custom) — each a comma list — and ``sort`` (name, id,
+        vendor, kind, used_by; ``-`` for descending)."""
         from ..device_kind import template_kind
         used = _templates_in_use()
         pending = _pending_updates()
@@ -99,10 +101,11 @@ def build(ctx) -> APIRouter:
             s['device_kind'], s['device_kind_source'] = template_kind(t, t.id)
             rows.append((s, s['device_kind']))
         out = [s for s, _k in rows]
-        if not all(v in (None, '') for v in (q, kind, protocol, origin, sort)):
+        if not all(v in (None, '') for v in (q, kind, protocol, origin, sort, type)):
             from ..list_filters import FilterError, filter_templates
             try:
-                out = filter_templates(rows, q=q, kind=kind, protocol=protocol, origin=origin, sort=sort)
+                out = filter_templates(rows, q=q, kind=kind, protocol=protocol, origin=origin, sort=sort,
+                                       type=type)
             except FilterError as err:
                 raise HTTPException(status_code=422, detail={"errors": [str(err)], "fields": err.fields})
         return {"templates": out, "load_errors": template_registry.load_errors,
@@ -359,8 +362,8 @@ def build(ctx) -> APIRouter:
                 "restarted": _apply_protocol_change(t, old_proto), "fields": adopted}
 
     BYTE_ORDERS = ("big", "little", "badc", "dcba")
-    from ..config import MODBUS_PROTOCOLS
-    TRANSPORTS = MODBUS_PROTOCOLS + ("http", "mqtt")
+    from ..config import REGISTER_MAP_PROTOCOLS
+    TRANSPORTS = REGISTER_MAP_PROTOCOLS + ("http", "mqtt")
 
     def _protocol_from(payload: Dict, meta: Dict) -> Dict:
         """The map's protocol block from the import form (or the YAML's own

@@ -21,10 +21,10 @@ hand or through the API.
 |---|---|---|
 | **The site** | Settings → **Site** | its location; who may see the coordinates |
 | **An installation** | its page, **Attributes** | its own location if it is elsewhere; a battery bank's energy |
-| **A device** | its page, tab **Attributes** | a meter's grid connection; an inverter's PV inputs and rating; a battery's limits |
+| **A device** | its page: ⋯ → **About (attributes)…** (shown read-only in *Setup*); the identity part (description, where it is, labels, nameplate) also in Add Device → **Name & save** and in the Edit device dialog's **Identity** | a meter's grid connection; an inverter's PV inputs and rating; a battery's limits |
 
 **The location is inherited:** a device takes its installation's, else the
-plant's. The device's Attributes tab says where it comes from. Nothing else
+plant's. The device's attributes (⋯ → **About (attributes)…**, and its *Setup*) say where it comes from. Nothing else
 is inherited: for four identical inverters, use **Copy to…** (the values are
 copied, not linked).
 
@@ -37,6 +37,7 @@ copied, not linked).
 | **PV input** (one row per orientation) | MPPT input, modules, module Wp, module make and model, cell technology (mono, poly, thin film), parallel strings, kWp, facing, tilt | a device (an inverter) |
 | **Battery** | usable kWh; the system's largest charge and discharge power (kW) | a device or an installation (a bank) |
 | **Rating** | rated AC power (kW, the nameplate) | a device (an inverter) |
+| **Identity** | description (≤ 500 characters), where it is mounted (≤ 120), labels (≤ 16 slugs a-z 0-9 - _), manufacturer, model, serial number, firmware, installed on (YYYY-MM-DD) | a device or an installation |
 
 **What is offered first.** After **+**, the categories that fit the
 equipment come first; the others follow, marked "·". Nothing is blocked. The
@@ -81,6 +82,18 @@ They locate a home, so the gateway is careful with them:
 | Everyone else, and anything published | as set under **Shown to viewers and published as**: coarse (2 decimals, about 1 km, the default), exact, or not at all |
 | The audit log and the backup diff | coarse |
 | A sanitised backup | left out; importing it keeps the live coordinates |
+
+**Identity is published with care too.**
+- **Where it is mounted** (`identity.location`, "garage, cabinet 2") says
+  where someone lives as much as coordinates do: it follows the same switch.
+  With **not at all** (`location_publish: off`) it is left out of MQTT meta
+  and OPC UA; otherwise it is published as written.
+- **The serial number** is shown to every signed-in user (API, Attributes
+  tab, the audit log and the backup diff, deliberately: it is how a
+  technician finds the unit) and is published on MQTT and OPC UA only with
+  `settings.publish_serials: true` (off by default).
+- **The description and the labels** are published as written: write
+  nothing personal in them.
 
 **Saving back rounded coordinates keeps the exact ones.** If you see them
 rounded (a box without login), the form starts empty. Typing new ones
@@ -179,7 +192,7 @@ the evening light on 30 min after sunset: when: 'sun_elevation() < -4'
 
 ### Attributes in formulas
 
-`attr("umg512", "grid_connection", "max_export_kw")` reads one attribute:
+`attr("grid-meter", "grid_connection", "max_export_kw")` reads one attribute:
 three names in quotes, checked against the catalog on save. It reads only
 numbers, and only what is set on that place: unlike the sun functions, it
 does not inherit a location. It reads exact values, coordinates included;

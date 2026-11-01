@@ -1,5 +1,5 @@
 # Multi-Bus Gateway — multi-protocol Modbus/HTTP/MQTT acquisition gateway.
-# Copyright (C) 2024-2026 Stefan Maldaianu <sm26449@diysolar.ro>
+# Copyright (C) 2024-2026 Stefan Maldaianu <stefan@multibus.dev>
 # SPDX-License-Identifier: AGPL-3.0-or-later
 """The browser side of the security model: no inline script anywhere in the
 UI, so the CSP can forbid it (script-src 'self') and an injected string can

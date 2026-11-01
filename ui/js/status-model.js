@@ -1,5 +1,5 @@
 /* Multi-Bus Gateway — multi-protocol Modbus/HTTP/MQTT acquisition gateway.
- * Copyright (C) 2024-2026 Stefan Maldaianu <sm26449@diysolar.ro>
+ * Copyright (C) 2024-2026 Stefan Maldaianu <stefan@multibus.dev>
  * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 // What needs attention, judged once. Pure: no
@@ -136,6 +136,21 @@
             });
         }
 
+        // a wire whose oldest waiting command is past half its max age: the
+        // commands there are about to expire unwritten (ADR-0018 D14). The
+        // gateway lists only those; the lane names a device when it is one's
+        if (!standby) {
+            (st.command_lanes || []).forEach(l => {
+                const m = /^(?:dev:|mqtt:)([^/]+)/.exec(String(l.lane || ''));
+                const dev = m && byId.get(m[1]);
+                add('warn', 'devices', 'lane:' + l.lane, dev ? (dev.name || dev.id) : String(l.lane || '').replace(/^bus:/, ''),
+                    { k: 'status.why.laneLate', d: '{n} command(s) waiting, the oldest {s} s of its {max} s',
+                      p: { n: l.pending, s: Math.round(l.oldest_s), max: Math.round(l.max_age_s) } },
+                    { open: dev ? { method: 'openDeviceDetail', args: [dev.id] } : { method: 'statusTab', args: ['devices'] } });
+                mark('devices', 'warn');
+            });
+        }
+
         // ── installations ──
         const installations = (st.endpoints || []).map(e => {
             let word = e.enabled === false ? 'disabled' : standby ? 'standby' : (e.status || 'unknown');
@@ -268,6 +283,13 @@
                     { open: { method: 'navigateTo', args: ['rules'] } });
                 mark('automation', 'warn');
             });
+        }
+        // ADR-0022: a channel's pace has held a rule's drift for minutes
+        if (Array.isArray(st.rules_drift_held) && st.rules_drift_held.length) {
+            add('warn', 'automation', 'rules:drift-held', st.rules_drift_held.join(', '),
+                { k: 'status.why.driftHeld', d: 'the channel\'s pace has held this rule\'s correction for over 5 minutes — someone else writes the channel faster than its pace' },
+                { open: { method: 'navigateTo', args: ['rules'] } });
+            mark('automation', 'warn');
         }
 
         // ── gateway ──

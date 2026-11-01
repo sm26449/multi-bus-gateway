@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-// Copyright (C) 2024-2026 Stefan Maldaianu <sm26449@diysolar.ro>
+// Copyright (C) 2024-2026 Stefan Maldaianu <stefan@multibus.dev>
 //
 // template updates — augments JanitzaMonitor.prototype
 //
@@ -130,13 +130,23 @@ Object.assign(JanitzaMonitor.prototype, {
         const orig = btn ? btn.innerHTML : '';
         if (btn) { btn.disabled = true; btn.innerHTML = '<span class="btn-spinner"></span> …'; }
         try {
-            const r = await fetch(`${st.base}${encodeURIComponent(st.id)}/refresh-from-template${addNew ? '?add_new=true' : ''}`, { method: 'POST' });
+            const e = encodeURIComponent(st.id), qs = addNew ? '?add_new=true' : '';
+            // a device's refresh is a device write (its tag: ADR-0030); an
+            // installation's is not
+            const r = st.kind === 'endpoint'
+                ? await fetch(`/api/endpoints/${e}/refresh-from-template${qs}`, { method: 'POST' })
+                : await window.DeviceStore.devWrite(st.id, 'POST', `/api/devices/${e}/refresh-from-template${qs}`);
             const d = await r.json().catch(() => ({}));
             if (!r.ok) {
                 const det = d.detail;
                 const msgs = Array.isArray(det) ? det.map(x => x?.msg || String(x))
                     : det?.errors || [typeof det === 'string' ? det : r.statusText];
                 throw new Error(msgs.join(' · '));
+            }
+            // an installation's refresh changed its units' entries: a unit
+            // open on the device page takes its new tag (no tag on that route)
+            if (st.kind === 'endpoint' && this._devDetail?.endpoint_id === st.id) {
+                await window.DeviceStore.refresh(this._devDetail.id);
             }
             const list = d.units || [d];
             const sum = k => list.reduce((a, u) => a + (u[k] || 0), 0);

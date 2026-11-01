@@ -1,5 +1,5 @@
 # Multi-Bus Gateway — multi-protocol Modbus/HTTP/MQTT acquisition gateway.
-# Copyright (C) 2024-2026 Stefan Maldaianu <sm26449@diysolar.ro>
+# Copyright (C) 2024-2026 Stefan Maldaianu <stefan@multibus.dev>
 """Every word the page shows comes from the dictionaries: a key
 the code asks for is defined in English and in Romanian, the two hold the
 same keys (Romanian's own plural forms aside), and nothing is empty."""

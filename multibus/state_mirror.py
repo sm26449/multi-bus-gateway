@@ -1,5 +1,5 @@
 # Multi-Bus Gateway — multi-protocol Modbus/HTTP/MQTT acquisition gateway.
-# Copyright (C) 2024-2026 Stefan Maldaianu <sm26449@diysolar.ro>  — AGPL-3.0-or-later
+# Copyright (C) 2024-2026 Stefan Maldaianu <stefan@multibus.dev>  — AGPL-3.0-or-later
 """What an active gateway hands a standby partner so the partner holds it
 warm: the values of the devices it polls (the ones a standby only listens to
 it hears for itself), and — through the rules runtime — every rule's state
@@ -19,9 +19,8 @@ from . import role as gateway_role
 
 def _polled(dev_cfg) -> bool:
     """Does the device have a source a standby does not run itself?"""
-    sources = getattr(dev_cfg, 'sources', None) or []
-    protos = [getattr(s, 'protocol', '') for s in sources] or [getattr(dev_cfg, 'protocol', '')]
-    return any(not gateway_role.listens_only(p) for p in protos)
+    sources = getattr(dev_cfg, 'sources', None) or [dev_cfg]
+    return any(not gateway_role.source_listens(s) for s in sources)
 
 
 def export_values(config, registry, since: Optional[float] = None) -> Dict[str, Dict[str, Dict]]:

@@ -1,5 +1,5 @@
 # Multi-Bus Gateway — multi-protocol Modbus/HTTP/MQTT acquisition gateway.
-# Copyright (C) 2024-2026 Stefan Maldaianu <sm26449@diysolar.ro>
+# Copyright (C) 2024-2026 Stefan Maldaianu <stefan@multibus.dev>
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU Affero General Public License as published by
@@ -188,6 +188,7 @@ class VirtualMeterManager:
         # the primary device's cache), so existing meters are byte-identical.
         self.device_values = device_values if device_values is not None else {}
         self.primary_device_id = primary_device_id
+        self._no_source_warned: set = set()      # vmeters told they have no source
         self.config_path = Path(config_path)
         self.templates_dir = Path(templates_dir)
         self.meters: list[VirtualMeter] = []
@@ -242,6 +243,15 @@ class VirtualMeterManager:
         control-critical consumer must see the meter go stale (fail-safe),
         not silently receive another meter's values."""
         dev = inst.get("device")
+        if not dev and not self.primary_device_id:
+            # no source named and no device #1 to default to (ADR-0024): the
+            # primary's store stays empty, so the meter goes stale — said once,
+            # not left a silent empty meter
+            key = inst.get("template")
+            if key not in self._no_source_warned:
+                self._no_source_warned.add(key)
+                logger.warning("vmeter %s: no source device, and this gateway has no "
+                               "primary device — it serves nothing; set its device", key)
         if not dev or dev == self.primary_device_id:
             return self.current_values
         if dev in self.device_values:

@@ -1,5 +1,5 @@
 # Multi-Bus Gateway — multi-protocol Modbus/HTTP/MQTT acquisition gateway.
-# Copyright (C) 2024-2026 Stefan Maldaianu <sm26449@diysolar.ro>  — AGPL-3.0-or-later
+# Copyright (C) 2024-2026 Stefan Maldaianu <stefan@multibus.dev>  — AGPL-3.0-or-later
 """The opt-in OV tuning keys of lot C (ADR-0012): ``timing.boot_wait_s``,
 ``resume_on_boot`` and ``timing.urgent_retries`` — what each one changes,
 and that a step or an urgent want is never delayed by them."""

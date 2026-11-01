@@ -1,5 +1,5 @@
 # Multi-Bus Gateway — multi-protocol Modbus/HTTP/MQTT acquisition gateway.
-# Copyright (C) 2024-2026 Stefan Maldaianu <sm26449@diysolar.ro>  — AGPL-3.0-or-later
+# Copyright (C) 2024-2026 Stefan Maldaianu <stefan@multibus.dev>  — AGPL-3.0-or-later
 """A device publishes on its own rhythm when it says so — every reading or on
 change, its own MQTT heartbeat, its own InfluxDB interval — and on the
 gateway's (Settings → MQTT / InfluxDB) otherwise."""
@@ -36,10 +36,10 @@ def test_influxdb_follows_the_devices_mode_and_interval_else_the_gateways():
     cfg = InfluxDBConfig(enabled=False, write_interval=5)
     pub = InfluxDBPublisher(cfg, [], publish_mode="changed")
     pub.last_values[("d", 1)] = 7.0
-    pub.last_write_time[("d", 1)] = time.time() - 2
+    pub.last_write_time[("d", 1)] = time.monotonic() - 2
     assert pub._should_write(1, 8.0, "d") is False                        # 5 s not up
     assert pub._should_write(1, 8.0, "d", interval=1) is True             # its own 1 s
-    pub.last_write_time[("d", 1)] = time.time() - 10
+    pub.last_write_time[("d", 1)] = time.monotonic() - 10
     assert pub._should_write(1, 7.0, "d") is False                        # unchanged
     assert pub._should_write(1, 7.0, "d", mode="all") is True             # every reading
 

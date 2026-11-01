@@ -1,5 +1,5 @@
 // Multi-Bus Gateway — multi-protocol Modbus/HTTP/MQTT acquisition gateway.
-// Copyright (C) 2024-2026 Stefan Maldaianu <sm26449@diysolar.ro>  — AGPL-3.0-or-later
+// Copyright (C) 2024-2026 Stefan Maldaianu <stefan@multibus.dev>  — AGPL-3.0-or-later
 //
 // Finding a device or a template: the search hides and shows rows
 // without redrawing them (case and diacritics never matter, a kind is found
@@ -20,7 +20,7 @@
 // 200 devices / 100 templates is reported (targets, not gates).
 import { chromium } from 'playwright';
 import { watchDialogs } from './lib/dialogs.mjs';
-import { deviceAction } from './lib/device-page.mjs';
+import { deviceAction, saveDeviceEditor } from './lib/device-page.mjs';
 
 const BASE = process.env.MBG_URL || 'http://127.0.0.1:18087';
 const SCALE = process.env.SCALE_URL || '';
@@ -265,13 +265,17 @@ try {
   await page.waitForTimeout(6000);
   check('the 5 s status poll never rebuilds the list', await row.evaluate(el => el.isConnected));
 
-  // ── a device's kind, set by an administrator ──
-  page.dlg.answers.push({ kind: 'sensor' });
+  // ── a device's type (its kind until L2), set by an administrator ──
+  // L2 (ADR-0027) asks it in its own picker; L3.4: Type… opens the Edit
+  // modal at Identity, at the type
   await page.evaluate(() => window.app.openDeviceDetail('fa-hala'));
   await page.waitForSelector('#ddvSetKind', { state: 'attached' });
-  check('the device page names its kind and where it comes from',
-        /kind|tip/i.test(await page.locator('#ddvSetKind').innerText()) && await page.locator('[data-kind-source]').count() === 1);
+  check('the device page names its type and where it comes from',
+        /type|tip/i.test(await page.locator('#ddvSetKind').innerText()) && await page.locator('[data-kind-source]').count() === 1);
   await deviceAction(page, '#ddvSetKind');
+  await page.waitForSelector('#devEditModal.active #devEditType');
+  await page.selectOption('#devEditType', 'sensor');
+  await saveDeviceEditor(page);
   await page.waitForFunction(() => document.querySelector('[data-kind-source]')?.dataset.kindSource === 'override', null, { timeout: 8000 }).catch(() => {});
   const after = (await api('/api/devices')).body.devices.find(d => d.id === 'fa-hala');
   check('Set kind stores an override the list sees', after?.kind === 'sensor' && after?.kind_source === 'override');
@@ -322,7 +326,8 @@ try {
   // ── a viewer: finds, sorts, never sets a kind ──
   page = await open(BASE + '/#/devices/fa-hala', { role: 'viewer' });
   await page.waitForSelector('#deviceWsTabs');
-  check('viewer: no Set kind (no ⋯ menu offered)', !(await page.locator('#ddvActions').isVisible()) && !(await page.locator('#ddvSetKind').isVisible()));
+  // the ⋯ is there for every role (L3-F13); a viewer's has no Type…
+  check('viewer: no Set kind (its ⋯ offers no Type…)', await page.locator('#ddvActions').isVisible() && !(await page.locator('#ddvSetKind').count()));
   await page.close();
 
   // ── a phone: the filters fold behind one button, nothing scrolls sideways ──

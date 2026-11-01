@@ -1,5 +1,5 @@
 # Multi-Bus Gateway — multi-protocol Modbus/HTTP/MQTT acquisition gateway.
-# Copyright (C) 2024-2026 Stefan Maldaianu <sm26449@diysolar.ro>
+# Copyright (C) 2024-2026 Stefan Maldaianu <stefan@multibus.dev>
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU Affero General Public License as published by
@@ -17,6 +17,7 @@
 """REST API and WebSocket server for Janitza Monitor."""
 
 import asyncio
+import contextlib
 import copy
 import hashlib
 import hmac
@@ -41,16 +42,21 @@ from . import __version__
 from .mqtt_publisher import MQTTPublisher
 from .influxdb_publisher import InfluxDBPublisher
 from .payload import flag
+from . import write_guard as _etag_guard  # ADR-0030: one guard for every device write
 from .save_merge import (MASKED, BridgeConflict, keep_unsaid, merge_connection,
                          merge_endpoint_routes)
 from .config import (BUS_OVER_TCP_PROTOCOLS, MODBUS_PROTOCOLS, NETWORK_PROTOCOLS,
-                     SERIAL_PROTOCOLS, store_key)
+                     READ_ONLY_PROTOCOLS, SERIAL_PROTOCOLS, VIRTUAL_MAP_OVER_TCP,
+                     VIRTUAL_MAP_PROTOCOLS, VIRTUAL_MAP_SERIAL, protocol_family, store_key)
+from .config import CAN_PROTOCOLS  # noqa: E402 — CAN (can_client.py), listen-only
+from .connection_spec import METER_ONLY_TEXT
+from .config import heartbeat_seconds  # noqa: E402 — ADR-0029, the one heartbeat check
 _POLLED_MODBUS = NETWORK_PROTOCOLS + SERIAL_PROTOCOLS      # every Modbus way but listening
 # what each kind of editor may offer — one place, served to the UI
 # (/api/protocols) so a form never lists a protocol the API refuses, nor
 # loses one the API accepts
 PROTOCOLS_BY_CONTEXT = {
-    'device': MODBUS_PROTOCOLS + ('http', 'mqtt'),
+    'device': MODBUS_PROTOCOLS + VIRTUAL_MAP_PROTOCOLS + ('http', 'mqtt') + CAN_PROTOCOLS,
     'source': _POLLED_MODBUS + ('http', 'mqtt'),
     'endpoint': NETWORK_PROTOCOLS + ('rtu_tap',),
     'group': NETWORK_PROTOCOLS + ('rtu_tap', 'http'),
@@ -58,7 +64,24 @@ PROTOCOLS_BY_CONTEXT = {
     'meter_only': ('none',),
 }
 _PROTO_WORDS = {'tcp': 'Modbus TCP', 'udp': 'Modbus UDP', 'rtu-tcp': 'Modbus RTU over TCP',
-                'ascii-tcp': 'Modbus ASCII over TCP'}
+                'ascii-tcp': 'Modbus ASCII over TCP', 'seplos_v2': 'Seplos V2',
+                'seplos_v2-tcp': 'Seplos V2 over TCP'}
+_VMAP_MODES = ('poll', 'listen')
+
+
+def _vmap_mode_missing(conn: Dict, stored: Optional[Dict]) -> bool:
+    """A virtual-map connection that does not say its mode. Only a device
+    stored that way (before the mode was asked) keeps the old default, poll;
+    anything new, or moved onto this protocol, must choose."""
+    if str((conn or {}).get('mode') or '').strip():
+        return False
+    return str((stored or {}).get('protocol', '')).lower() not in VIRTUAL_MAP_PROTOCOLS
+
+
+def _vmap_mode(conn) -> str:
+    """A virtual-map bus's mode as stored (absent = poll)."""
+    raw = conn.get('mode') if isinstance(conn, dict) else getattr(conn, 'mode', '')
+    return str(raw or 'poll').lower()
 
 # a serial line named where a network address goes: "/dev/ttySEPLOS" as a TCP
 # host opened a socket to "/dev/ttySEPLOS:502" and the bank went dark
@@ -80,7 +103,7 @@ logger = logging.getLogger(__name__)
 # on fresh readings of its own, not only on its partner's copy
 TAKEOVER_WARMUP_S = 10.0
 # group keys the endpoint's group form does not edit: an edit that omits them keeps them
-GROUP_KEPT_KEYS = ('mqtt', 'influxdb', 'opcua')
+GROUP_KEPT_KEYS = ('mqtt', 'influxdb', 'opcua', 'channels')
 
 # Static assets referenced as /static/<path>?v=<token>. The token is rewritten
 # at serve time from the file's mtime (see _render_index_html) so a changed
@@ -329,6 +352,10 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
     async def lifespan(app: FastAPI):
         # Startup
         main_loop["loop"] = asyncio.get_running_loop()
+        # after uvicorn configured its loggers: a refused /ws handshake is
+        # one line per client per minute, not two per attempt (WS-LOG-1)
+        from . import ws_log
+        ws_log.install()
         logger.info("API started, event loop captured")
         rt = getattr(app.state, 'rules_runtime', None)
         if rt is not None and not getattr(app.state, 'rules_runtime_manual', False):
@@ -347,11 +374,21 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
             disc.stop()
         # Shutdown (cleanup if needed)
         logger.info("API shutting down")
+        # what waits for a bus is cancelled and nothing new is taken — but the
+        # dead-man's reverts, which main.stop() runs through the lanes next
+        # while the devices are still connected (F-28); it stops the
+        # dispatcher after them (ADR-0018 D12, CR2-8)
+        cd = getattr(app.state, 'command_dispatch', None)
+        if cd is not None:
+            cd.close()
         if rt is not None:
             rt.stop()
         hs = getattr(app.state, 'harvester_stop', None)
         if hs is not None:
             hs.set()                               # let the event harvester exit its loop
+        bd = getattr(app.state, 'bridge_diag', None)
+        if bd is not None:
+            bd.stop()                              # the bridge diagnostics poller (ADR-0017)
 
     app = FastAPI(
         title="Multi-Bus Gateway",
@@ -362,6 +399,14 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
 
     # Expose the live value cache so the virtual-meter engine can read it.
     app.state.current_values = current_values
+
+    # config.yaml failed to load: every save is refused in words (409), never
+    # an Internal Server Error (QA-D-11)
+    from .config import ConfigSaveBlocked
+
+    @app.exception_handler(ConfigSaveBlocked)
+    async def _save_blocked(_request, exc):
+        return JSONResponse(status_code=409, content={"detail": {"errors": [str(exc)], "config_blocked": True}})
 
     # CORS — the UI is same-origin so it needs no CORS; the wildcard only eases
     # read-only third-party access. Credentials are OFF (wildcard + credentials is
@@ -380,6 +425,8 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
             allow_credentials=False,
             allow_methods=["*"],
             allow_headers=["*"],
+            # a client of another origin reads the device tag (ADR-0030)
+            expose_headers=["ETag", "MBG-If-Match"],
         )
 
     # Compress responses over the LAN: the SPA payload and the 4000+-register
@@ -416,10 +463,17 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
 
     # Write-lease dead-man switch: a leased write auto-reverts to a safe value if
     # the controller stops renewing it.
-    from .write_lease import WriteLeaseManager
+    from .write_lease import WriteLeaseManager, revert_budget_s as write_lease_budget_s
     _lease_mgr = WriteLeaseManager(persist_path=config.config_path.parent / "write_leases.json")
     app.state.lease_mgr = _lease_mgr
-    _lease_mgr.start()
+    # every write a device is told goes through one dispatcher: a lane per
+    # wire, a slot per channel (ADR-0018). Built before boot recovery arms a
+    # revert, which travels through it. The sweeper itself starts at the end
+    # of create_api: a recovered lease fires at once, and its revert needs
+    # what is defined further down (_submit_raw, …) — RP-12
+    from .command_dispatch import CommandDispatcher, Job as _CmdJob
+    _cmd_dispatch = CommandDispatcher()
+    app.state.command_dispatch = _cmd_dispatch
 
     # IP allowlist (opt-in): when config.security.allowlist is non-empty, only
     # peers whose IP is in the list (or a listed CIDR) may reach the HTTP
@@ -540,6 +594,8 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
     # (devices, registers, templates, vmeters, settings, snapshots) is admin's.
     _OPERATOR_WRITE_PREFIXES = ("/api/bus-trace", "/api/diagnostics", 
                                 "/api/discover", "/api/query",
+                                "/api/previews",          # the read preview (ADR-0031 §5)
+                                "/api/bus-scan",          # the bus scan / Listen for addresses (L3.7)
                                 "/api/auth/logout", "/api/alerts/test",
                                 "/api/config/reload-registers",
                                 # self-service passkey enrollment/removal
@@ -549,7 +605,7 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
     # alerts — and reads, like a viewer
     _HA_WRITES = {"/api/role", "/api/alerts/fire", "/api/state/mirror", "/api/state/config"}
 
-    def _operator_may_write(path: str) -> bool:
+    def _operator_may_write(path: str, method: str = "POST") -> bool:
         # Segment-anchored, not raw prefix/suffix: a prefix must end at a path
         # boundary (so /api/bus-trace never matches /api/bus-trace-anything), and
         # a device live-action must be exactly /api/devices/<id>/<action> (so a
@@ -571,7 +627,7 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
             return True
         if (len(parts) == 5 and parts[1] == "api" and parts[2] == "devices"
                 and parts[3] and parts[3] != "restorable"      # not the admin forget sub-tree
-                and parts[4] in ("write", "test", "payload-sample")):
+                and parts[4] in ("write", "test", "payload-sample", "preview")):
             return True
         # live TEST actions one level deeper — fire-once, change nothing:
         # /api/devices/<id>/rest-push/test and /api/devices/<id>/calculated/test
@@ -588,8 +644,9 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
         # fan-out route stays admin-only (blast radius).
         # /api/devices/<id>/commands/<name> and .../commands/<name>/dry-run,
         # plus the 3.72.0 aliases /api/devices/<id>/actions/power_limit
+        # (POST only: PUT …/commands/<name> configures the binding — admin's)
         if (len(parts) == 6 and parts[1] == "api" and parts[2] == "devices"
-                and parts[3] and parts[3] != "restorable"
+                and parts[3] and parts[3] != "restorable" and method == "POST"
                 and ((parts[4] == "commands" and parts[5])
                      or (parts[4] == "actions" and parts[5] == "power_limit"))):
             return True
@@ -648,6 +705,7 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
     _STANDBY_REFUSED = _re.compile(
         r"^/api/(discover/(modbus|sunspec)(/|$)|query/|diagnostics/probe$|meters(/|$)"
         r"|devices/test$|devices/[^/]+/test$|endpoints/[^/]+/test$|devices/[^/]+/rest-push/test$"
+        r"|previews$|devices/[^/]+/preview$|bus-scan$"
         r"|bridges/[^/]+/(scan|probe|ports/[^/]+/scan)$|device-templates/identify-test$)")
 
     @app.middleware("http")
@@ -675,7 +733,7 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
             request.state.user = f"token:{_svc[0]}"
             request.state.service_token = _svc[0]
             if _svc[1] != "admin" and request.method not in ("GET", "HEAD", "OPTIONS"):
-                if not (_svc[1] == "operator" and _operator_may_write(path)) \
+                if not (_svc[1] == "operator" and _operator_may_write(path, request.method)) \
                         and not (_svc[1] == "ha" and path in _HA_WRITES) \
                         and path not in _open_writes:
                     return JSONResponse({"detail": f"the token's role ({_svc[1]}) cannot do this"},
@@ -707,7 +765,7 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
             if request.url.path not in _open_writes:
                 return JSONResponse({"detail": "read-only account"}, status_code=403)
         if role == "operator" and request.method not in ("GET", "HEAD", "OPTIONS"):
-            if not _operator_may_write(path):
+            if not _operator_may_write(path, request.method):
                 return JSONResponse(
                     {"detail": "the operator account cannot change configuration"},
                     status_code=403)
@@ -730,7 +788,7 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
     from .device_registry import (DeviceRegistry, client_health,
                                   client_is_live)
     from .modbus_client import endpoint_bus_stats
-    registry = DeviceRegistry(config.primary_device.id, current_values)
+    registry = DeviceRegistry(config.primary_id, current_values)
     for dev_cfg, _client in (devices or []):
         registry.register(dev_cfg, _client)
     app.state.registry = registry
@@ -836,9 +894,10 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
             mp = {k: v for k, v in (('mode', cur.mqtt_publish_mode or None),
                                     ('heartbeat', cur.mqtt_heartbeat_s)) if v is not None}
             ip = {k: v for k, v in (('mode', cur.influxdb_publish_mode or None),
-                                    ('interval', cur.influxdb_write_interval_s)) if v is not None}
+                                    ('interval', cur.influxdb_write_interval_s),
+                                    ('heartbeat', cur.influxdb_heartbeat_s)) if v is not None}
             return cur.mqtt_enabled, cur.influxdb_enabled, mp, ip
-        calc_key = config.primary_device.id if (device_cfg is None or device_cfg.primary) else device_cfg.id
+        calc_key = config.primary_id if (device_cfg is None or device_cfg.primary) else device_cfg.id
 
         def data_callback(poll_group: str, data: Dict[int, Dict]):
             """Callback from a Modbus poller to update values and publish."""
@@ -1328,11 +1387,12 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
     # deliberately do NOT snapshot — they change devices, not config files.
     _SNAP_PREFIXES = ("/api/devices", "/api/config/", "/api/registers/selected",
                       "/api/device-templates", "/api/virtual-meters",
-                      "/api/calculated", "/api/energy/fields", "/api/poll-groups")
+                      "/api/calculated", "/api/energy/fields", "/api/poll-groups",
+                      "/api/device-types", "/api/buses")
     _SNAP_EXCLUDE = ("/test", "/write", "/payload-sample", "/api/config/import",
                      "/api/device-templates/check", "/identify-test",
                      "/api/config/reload-registers", "/api/config/snapshots",
-                     "/components/discover")
+                     "/components/discover", "/preview")
 
     @app.middleware("http")
     async def _snapshot_trigger(request: Request, call_next):
@@ -1341,7 +1401,9 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
             if (request.method in ("POST", "PUT", "PATCH", "DELETE")
                     and response.status_code < 400):
                 p = request.url.path
-                if p.startswith(_SNAP_PREFIXES) and not any(x in p for x in _SNAP_EXCLUDE):
+                # a dry run stores nothing: there is nothing to snapshot
+                _dry = str(request.query_params.get('dry_run', '')).lower() in ('1', 'true', 'yes', 'on')
+                if p.startswith(_SNAP_PREFIXES) and not _dry and not any(x in p for x in _SNAP_EXCLUDE):
                     snapshot_store.schedule(f"{request.method} {p}",
                                             user=getattr(request.state, "user", "") or "")
         except Exception:  # noqa: BLE001 — never fail the request over a snapshot
@@ -1357,6 +1419,24 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
     from .attributes import AttributeService
     from .device_template import mppt_count_of as _mppt_count_of
     from .device_kind import attribute_kind as _attribute_kind, device_kind as _device_kind
+
+    def _device_type_of(dev):
+        """(type, its English label) of a device, as `<dev>/meta` and the
+        device list say it (ADR-0027); None for no such device."""
+        if dev is None:
+            return None
+        from . import device_types as _dtypes
+        t_ = _dtypes.device_type(dev, template_registry)
+        return t_, _dtypes.label(t_)
+
+    def _req_user(request) -> str:
+        """Who asked, for an audit line (a call from inside the gateway: '-')."""
+        if request is None:
+            return '-'
+        return getattr(request.state, "user", None) or ("api-key" if _api_key else "anon")
+
+    def _req_ip(request) -> str:
+        return (request.client.host if request is not None and request.client else '-')
 
     def _attr_devices():
         out = []
@@ -1375,7 +1455,8 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
         devices=_attr_devices,
         installations=lambda: [str(p.get('id')) for p in config.endpoints if p.get('id')],
         audit=audit_log,
-        on_change=lambda trigger, who: snapshot_store.schedule(trigger, user=who or ''))
+        on_change=lambda trigger, who: snapshot_store.schedule(trigger, user=who or ''),
+        device_type=lambda did: _device_type_of(config.get_device(did)))
     try:
         attributes.store.ensure()         # a bundle always carries the file
     except Exception:  # noqa: BLE001 — a read-only config dir must not stop the gateway
@@ -1519,30 +1600,44 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
     def _make_lease_revert(dev, rt, addr, dt, sc, sv, off=0.0):
         """Build the dead-man revert: resolve the *current* device client at
         revert time (surviving device restarts) and write the safe value. Used by
-        both the live write path and boot recovery, so they behave identically."""
+        both the live write path and boot recovery, so they behave identically.
+        A lane `revert` job (ADR-0022 D8): the head of its lane, never
+        superseded, `is_current()` asked again under the bus lock (RD-4). A
+        clean shutdown's revert waits only within its budget (RC-5, review
+        HIGH 1)."""
         def _revert(is_current):
             # Re-check right before the (blocking) write: if the lease was renewed
-            # while we waited on the Modbus lock, abort so we don't clobber the
-            # fresh setpoint.
+            # while we waited, abort so we don't clobber the fresh setpoint.
             if not is_current():
                 return
             _i, _c, c = _find_device(dev)
-            if c is None:
+            if c is None or _c is None:
                 # device gone/restarting — raise so the dead-man retries instead
                 # of silently dropping the lease with a live setpoint
                 raise RuntimeError(f"device {dev} not running; cannot revert to safe")
-            rok, rerr, _w = c.write_value(addr, rt, dt, sv, scale=sc, offset=off)
-            logger.warning("MODBUS WRITE (lease-revert) %s: device=%s addr=%s safe=%r%s",
-                           "OK" if rok else "FAILED", dev, addr, sv, "" if rok else f" err={rerr}")
-            try:                                          # audited like every write (F-11, 3.83.0)
-                audit_log.append(user="lease", ip="-", action="modbus write",
-                                 target=f"{dev} {rt}@{addr}", status="ok" if rok else "failed",
-                                 detail={"value": sv, "data_type": dt, "words": list(_w) if _w else None,
-                                         "via": "lease-revert"})
-            except Exception:  # noqa: BLE001
-                pass
-            if not rok:
-                raise RuntimeError(f"lease-revert write failed: {rerr}")
+            ctx = {'dev': _c, 'rtype': rt, 'address': int(addr), 'data_type': dt, 'scale': float(sc),
+                   'offset': float(off or 0.0), 'value': sv, 'via': 'lease-revert', 'who': 'lease', 'ip': '-',
+                   'is_revert': True, 'is_current': is_current, 'deadline': _budget_deadline()}
+            job = _submit_raw(ctx, c)
+            left = None if ctx['deadline'] is None else max(0.0, ctx['deadline'] - time.monotonic())
+            got = job.wait(left)
+            if got is None:
+                # past the budget: withdrawn if it has not started; one that
+                # runs gives up at the same deadline. Either way the lease
+                # stays on disk for boot recovery
+                if _cmd_dispatch.withdraw(job, 'the shutdown budget ran out before the bus was free '
+                                               '— left for boot recovery'):
+                    raise TimeoutError(f"device {dev}: the bus stayed busy past the shutdown budget; "
+                                       "left for boot recovery")
+                got = job.wait(0)
+                if got is None:
+                    raise TimeoutError(f"device {dev}: the revert still runs past the shutdown budget; "
+                                       "left for boot recovery")
+            code, res = got
+            if res.get('lease_renewed'):
+                return
+            if res.get('status') not in ('success', 'mismatch', 'unverified'):
+                raise RuntimeError(f"lease-revert failed: {res.get('reason') or res.get('status')}")
         return _revert
 
     def _make_command_lease_revert(dev, cmd_name):
@@ -1562,8 +1657,12 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
             c = _find_command(_c, cmd_name)
             if c is None or not c['def'].safe:
                 raise RuntimeError(f"device {dev} no longer offers command {cmd_name} with a safe recipe")
+            # at the head of its lane, never superseded; is_current() is asked
+            # again there, under the bus lock (ADR-0018 D3)
             st, r = _run_named_command(_c, cl, cmd_name, dict(c['def'].safe),
-                                       who='lease', ip='-', via='lease-revert')
+                                       who='lease', ip='-', via='lease-revert', is_current=is_current)
+            if r.get('lease_renewed'):
+                return
             if r.get('status') not in ('success', 'mismatch'):
                 raise RuntimeError(f"lease-revert failed: {r.get('reason')}")
         return _revert
@@ -1622,6 +1721,34 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
                     return r
         return None
 
+    def _declared_writes(dev_cfg) -> int:
+        """How many registers an operator may write through /write: declared
+        writable holdings and coils, as _write_rule finds them (the first
+        template wins an address), less what /write refuses even so — a
+        register a command writes (ADR-0022 D4) or one scaled by a live
+        factor — and nothing for a device written over MQTT (commands only)."""
+        if _writes_by_mqtt(dev_cfg):
+            return 0
+        tids = [dev_cfg.template] if dev_cfg.template else []
+        tids += [s.template for s in (dev_cfg.sources or [])
+                 if s.template and str(s.protocol or 'tcp').lower() in _POLLED_MODBUS + ('mqtt',)]
+        seen = set()
+        for tid in dict.fromkeys(tids):
+            tpl = template_registry.get(tid) if template_registry else None
+            for r in (getattr(tpl, 'registers', None) or []):
+                rtype = r.register_type or 'holding'
+                if not getattr(r, 'writable', False) or rtype not in ('holding', 'coil'):
+                    continue
+                if _write_rule(dev_cfg, r.address, rtype) is not r or getattr(r, 'scale_from', None):
+                    continue
+                try:
+                    if _raw_channel_conflict(dev_cfg, rtype, r.address, _words_of(r.data_type or 'uint16', rtype)):
+                        continue
+                except Exception:  # noqa: BLE001 — a count never fails a list
+                    continue
+                seen.add((rtype, r.address))
+        return len(seen)
+
     def _start_device_client(dev_cfg):
         """Create + wire + background-start the client for a device.
 
@@ -1636,8 +1763,10 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
             allow_nonlan=config.security.allow_nonlan_http_devices)
         if client is None:
             # nothing runs for it (disabled, nothing to read): what its meters
-            # gave it stops too, until it runs again (review N1)
+            # gave it stops too, until it runs again (review N1); nor is what
+            # waited for its bus written (CR2-8)
             calc_runners.pop(dev_cfg.id, None)
+            _cmd_dispatch.cancel(device=dev_cfg.id, reason=f"device '{dev_cfg.id}' was disabled — nothing written")
             return None
         client.publish_callback = make_data_callback(dev_cfg)
         # its derived fields (template-shipped or the operator's) — loaded at
@@ -1738,6 +1867,30 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
                     errors.append(f"{fw}.scale: a non-zero number")
         return errors
 
+    def _virtual_map_conflict(protocol: str, dproto: str, conn: Dict, d, where: str):
+        """Two devices on one bus where either speaks a virtual-map protocol
+        (seplos_v2): None when neither does (the Modbus rules apply); else the
+        refusal, or [] when they may share it — the same protocol, the same
+        mode (a bus is polled or listened to, never both), and each pack its
+        own address."""
+        if protocol not in VIRTUAL_MAP_PROTOCOLS and dproto not in VIRTUAL_MAP_PROTOCOLS:
+            return None
+        if protocol != dproto:
+            return [f"connection.protocol: {where} is used by device '{d.id}' as {dproto} — "
+                    f"one bus speaks one protocol"]
+        theirs = _vmap_mode(d.connection)
+        if _vmap_mode(conn) != theirs:
+            return [f"connection.mode: {where} is {'listened to' if theirs == 'listen' else 'polled'} by "
+                    f"device '{d.id}' — a bus is either polled or listened to, never both"]
+        try:
+            same_unit = int(conn.get('unit_id', 0) or 0) == int(getattr(d.connection, 'unit_id', -1))
+        except (TypeError, ValueError):
+            same_unit = False
+        if same_unit:
+            return [f"connection.unit_id: pack {conn.get('unit_id', 0)} on {where} is already read by "
+                    f"device '{d.id}' — each pack on a bus has its own address"]
+        return []
+
     def _serial_line_conflicts(protocol: str, sp: str, conn: Dict,
                                existing_id: str = None) -> List[str]:
         """Who else holds serial line `sp`. One physical line cannot be driven
@@ -1745,11 +1898,25 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
         tty opens once — so an active RTU device and a tap never share a port.
         Taps DO share one (a single TapReader per port fans frames out by unit
         id), but that reader opens the line once, with the first tap's settings:
-        a second tap must agree on them or it would silently decode garbage."""
+        a second tap must agree on them or it would silently decode garbage.
+        A line is its canonical path: a tty and its by-id link are one (ADD-13)."""
+        from .bus_claims import canonical_serial
+        line = canonical_serial(sp)
         for d in config.devices:
             dproto = getattr(d, 'protocol', '')
-            if (getattr(d, 'id', None) == existing_id or dproto not in SERIAL_PROTOCOLS + ('rtu_tap',)
-                    or str(getattr(d.connection, 'serial_port', '')).strip() != sp):
+            if (getattr(d, 'id', None) == existing_id
+                    or dproto not in SERIAL_PROTOCOLS + ('rtu_tap',) + VIRTUAL_MAP_SERIAL
+                    or canonical_serial(getattr(d.connection, 'serial_port', '')) != line):
+                continue
+            _vm = _virtual_map_conflict(protocol, dproto, conn, d, f"'{sp}'")
+            if _vm is not None:
+                if _vm:
+                    return _vm
+                ours = (int(conn.get('baudrate', 9600) or 9600), str(conn.get('parity', 'N') or 'N').upper())
+                theirs = (int(d.connection.baudrate or 9600), str(d.connection.parity or 'N').upper())
+                if ours != theirs:
+                    return [f"connection.baudrate: '{sp}' is read by '{d.id}' at {theirs[0]} {theirs[1]} — "
+                            f"every device on one line uses the same line settings"]
                 continue
             if protocol in SERIAL_PROTOCOLS and dproto in SERIAL_PROTOCOLS and protocol != dproto:
                 return [f"connection.protocol: '{sp}' is read as {dproto.upper()} by device '{d.id}' — "
@@ -1794,10 +1961,15 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
         for d in config.devices:
             dproto = getattr(d, 'protocol', '')
             if (getattr(d, 'id', None) == existing_id
-                    or dproto not in NETWORK_PROTOCOLS + ('rtu_tap',)
+                    or dproto not in NETWORK_PROTOCOLS + ('rtu_tap',) + VIRTUAL_MAP_OVER_TCP
                     or str(getattr(d.connection, 'host', '')).strip().lower() != _host
                     or int(getattr(d.connection, 'port', 0) or 0) != _port
                     or (dproto == 'udp') != (protocol == 'udp')):     # a UDP port is not the TCP one
+                continue
+            _vm = _virtual_map_conflict(protocol, dproto, conn, d, f"{_host}:{_port}")
+            if _vm is not None:
+                if _vm:
+                    return _vm
                 continue
             if (dproto != protocol and 'rtu_tap' not in (dproto, protocol)):
                 return [f"connection.protocol: {_host}:{_port} is read as {dproto} by device "
@@ -1811,6 +1983,111 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
                         f"already {'tapped' if protocol == 'rtu_tap' else 'read'} by device "
                         f"'{d.id}' — each slave on a bus has its own address"]
         return []
+
+    def _refuse_if_listened(what: str, protocol: str, conn) -> None:
+        """409 when a device listens on the bus ``conn`` is on (ADR-0025):
+        another master owns it, so nothing is sent — no override."""
+        from .bus_claims import bus_of, listeners, refusal_detail, where_of
+        bus = bus_of(protocol, conn)
+        ids = listeners(config, bus, template_registry)
+        if ids:
+            raise HTTPException(status_code=409, detail=refusal_detail(what, bus, ids, where_of(protocol, conn)))
+
+    def _claim_sig(built, standby=False):
+        from .bus_claims import source_claims
+        return sorted((b, lis) for d in built for _i, b, lis, _w in source_claims(d, template_registry, standby))
+
+    def _bus_claim_errors(built, exclude, field_of, prev_built=None) -> List[str]:
+        """The bus claim on a save (ADR-0025): the same rule as a Test, both
+        ways — a polled source on a bus another device only listens to, a
+        listening one on a bus another device polls. Judged on what changes
+        (ADR-0006): an edit that leaves every source on the bus it was on, in
+        the role it had there, is not judged again."""
+        from .bus_claims import save_conflicts
+        if prev_built is not None and _claim_sig(prev_built) == _claim_sig(built):
+            return []
+        out: List[str] = []
+        for dev, i, why in save_conflicts(config, built, template_registry, exclude):
+            e = f"{field_of(dev, i)}: {why}"
+            if e not in out:
+                out.append(e)
+        return out
+
+    def _device_claim_check(raw: Dict, did: str, prev: Optional[Dict] = None) -> None:
+        """A device save that breaks the bus claim: 422, field by field."""
+        built = config.preview_devices(device=raw)
+        prev_built = config.preview_devices(device=prev) if prev else None
+        own = {did} | {c.id for c in config.component_devices(did)}   # read through it
+        keyed = bool(raw.get('sources'))
+        errs = _bus_claim_errors(built, own, lambda _d, i: (f"sources[{i}].protocol" if keyed
+                                                            else "connection.protocol"), prev_built)
+        if errs:
+            raise HTTPException(status_code=422, detail={"errors": errs})
+
+    def _endpoint_claim_check(raw: Dict, pid: str, prev: Optional[Dict] = None) -> None:
+        """An installation save that breaks the bus claim, or puts a template
+        written for listening on a unit that would poll (ADD-8): 422, each
+        error at the group / source it comes from."""
+        built = config.preview_devices(endpoint=raw)
+        prev_built = config.preview_devices(endpoint=prev) if prev else None
+        own = {d.id for d in built} | {d.id for d in config.endpoint_devices(pid)}
+        groups = [g for g in (raw.get('groups') or []) if isinstance(g, dict)]
+        by_gid = {str(g.get('id', '')).strip().lower(): (gi, g) for gi, g in enumerate(groups)}
+
+        def field_of(d, i: int) -> str:
+            gi, g = by_gid.get(str(getattr(d, 'group_id', '') or '').lower(), (None, None))
+            if g is not None and g.get('sources'):
+                return f"groups[{gi}].sources[{i}].protocol"
+            if g is not None and g.get('connection'):
+                return f"groups[{gi}].connection.protocol"
+            return f"sources[{i}].protocol" if raw.get('sources') else "connection.protocol"
+
+        def heard(devs):
+            return sorted((f"{d.group_id}/{i}", str(s.protocol).lower(), s.template or d.template)
+                          for d in devs for i, s in enumerate(d.sources or []))
+        errs: List[str] = []
+        if prev_built is None or heard(prev_built) != heard(built):
+            for d in built:
+                for i, s in enumerate(d.sources or []):
+                    tid = s.template or d.template
+                    p = str(s.protocol or '').lower()
+                    if p in MODBUS_PROTOCOLS and p != 'rtu_tap' and _listening_template(tid):
+                        e = (f"{field_of(d, i)}: template '{tid}' is only heard on a bus another master "
+                             f"polls — choose listen only (rtu_tap)")
+                        if e not in errs:
+                            errs.append(e)
+        errs += [e for e in _bus_claim_errors(built, own, field_of, prev_built) if e not in errs]
+        if errs:
+            raise HTTPException(status_code=422, detail={"errors": errs})
+
+    def _listening_template(tid: str) -> bool:
+        """A template that only listens (ADR-0025): its devices never transmit."""
+        from .device_template import template_listens
+        tpl = template_registry.get(tid) if tid else None
+        return tpl is not None and template_listens(tpl)
+
+    def _serial_missing(sp: str, busy_id: str = '') -> str:
+        """'' when the serial port is there; else what a Test says (QA-D-10):
+        missing, and — when the host has a port by that name the container
+        does not — the line that maps it."""
+        from . import serial_inventory, serial_ports
+        if not sp or os.path.exists(serial_ports._p(serial_inventory.SYSROOT, sp)):
+            return ''
+        msg = (f"Serial port {sp} does not exist in the gateway's container — nothing was asked"
+               + (f", and device '{busy_id}' cannot read on it either" if busy_id else ''))
+        try:
+            name = os.path.basename(sp)
+            port = next((p_ for p_ in serial_inventory.inventory(config, template_registry).get('ports', [])
+                         if p_.get('state') == 'not_mapped' and (p_.get('name') == name or p_.get('path') == sp)), None)
+        except Exception:  # noqa: BLE001 — the inventory only adds a hint
+            port = None
+        if port and port.get('fix'):
+            msg += (f". The host has {port.get('name')}, but it is not mapped into the gateway's container: "
+                    f"add `{port['fix'].get('compose', '')}` under the gateway's devices: in docker-compose "
+                    f"(or `{port['fix'].get('docker_run', '')}`) and recreate the container")
+        else:
+            msg += ": check the path, that the adapter is plugged in and that it is mapped into the container"
+        return msg
 
     def _test_on_shared_bus(conn: Dict, unit_id: int, address: int, timeout: float,
                             where: str, busy_id: str) -> Dict:
@@ -1835,6 +2112,12 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
         finally:
             mc.disconnect()                     # releases the claim, keeps the socket
         lat = round((time.perf_counter() - t0) * 1000, 1)
+        # only a serial port on this host can be missing (a bus over TCP has none)
+        serial = str(conn.get('protocol', '')).lower() in SERIAL_PROTOCOLS
+        missing = ('' if words is not None or not serial
+                   else _serial_missing(str(conn.get('serial_port', '') or ''), busy_id))
+        if missing:
+            return {"ok": False, "latency_ms": lat, "shared_with": busy_id, "message": missing}
         if words is not None:
             return {"ok": True, "latency_ms": lat, "shared_with": busy_id,
                     "message": f"Unit {unit_id} answered in {lat} ms — through the connection "
@@ -1854,7 +2137,7 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
         online when its meters are (MeterOnlyClient)."""
         from . import meter_links
         from .config import DeviceConfig
-        from .device_kind import METER_ONLY, normalize
+        from .device_kind import METER_ONLY
         fields: Dict[str, str] = {}
         if template_id:
             fields['template'] = 'a meter-only device has no template — it reads nothing itself'
@@ -1864,12 +2147,15 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
         raw = {'id': did, 'name': str(payload.get('name', '') or did), 'template': '',
                'enabled': flag(payload, 'enabled', True), 'connection': {'protocol': 'none'}}
         if not existing_id:
-            k = normalize(payload.get('kind')) if payload.get('kind') not in (None, '') else None
-            if k is None or k not in METER_ONLY:
-                fields['kind'] = (f"what it is — one of {', '.join(METER_ONLY)} (it has no template to say it; "
-                                  "a meter is not measured by meters)")
+            from . import device_types as _dtypes
+            k, why = _dtypes.from_payload(payload)
+            why = why or (_dtypes.override_error(k, meter_only=True) if k is not None else None)
+            if k is None or why:
+                fields['type' if 'type' in payload else 'kind'] = (
+                    why or f"what it is — one of {', '.join(METER_ONLY)} or a user type (it has no template "
+                           "to say it; a meter is not measured by meters)")
             else:
-                raw['kind'] = k
+                raw['kind'] = _dtypes.stored_form(k)
             probe = DeviceConfig(id=did, name=raw['name'], protocol='none')
             links, lerrs = (meter_links.validate(config, probe, payload.get('meters'))
                             if payload.get('meters') is not None
@@ -1916,6 +2202,33 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
             return "connection.timeout: must be 1..30 seconds"
         return None if 1 <= t <= 30 else "connection.timeout: must be 1..30 seconds"
 
+    def _edit_locks(conn: Dict, template_id: str, existing_id: Optional[str]) -> List[Tuple[str, str]]:
+        """What the edit locks refuse in a device save (connection_spec.edit_errors):
+        the stored device's spec against the one this save would store, with
+        its template's family and the components it holds."""
+        from .bridges import TYPES as _BT, resolve_connection as _resolve
+        from .connection_spec import edit_errors, spec_of
+        from .device_template import template_transport
+        conn = dict(conn or {})
+        if conn.get('bridge') and str(conn.get('protocol', '')).lower() in VIRTUAL_MAP_PROTOCOLS:
+            conn = {k: v for k, v in conn.items() if k not in ('bridge', 'bridge_port')}   # refused below
+        new = spec_of(conn, config.bridges, _BT)
+        old, was = None, None
+        if existing_id:
+            was = config.get_device(existing_id)
+            if was is not None:
+                old = spec_of((_stored_device_raw(was).get('connection')
+                               or ((config.get_raw_device(existing_id) or {}).get('sources') or [{}])[0]),
+                              config.bridges, _BT)
+        proto = str((_resolve(conn, config.bridges) if conn.get('bridge') else conn).get('protocol', 'tcp')).lower()
+        tpl = template_registry.get(template_id) if template_id else None
+        fam = (template_transport(tpl) if tpl is not None and not tpl.component_of
+               and proto in PROTOCOLS_BY_CONTEXT['device'] else None)
+        return edit_errors(old, new, {
+            'id': existing_id or '', 'components': len(config.component_devices(existing_id)) if was else 0,
+            'template_changed': was is not None and template_id != (was.template or ''),
+            'template': template_id, 'template_family': fam, 'protocol': proto})
+
     def _validate_device_payload(payload: Dict, *, existing_id: str = None,
                                  stored_conn: Optional[Dict] = None) -> Dict:
         """Normalize + validate the raw device dict from the UI. Raises
@@ -1934,20 +2247,25 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
             errors.append(f"id: '{did}' is an installation's id — a device by that name would hide it in formulas")
         template_id = str(payload.get('template', '')).strip()
         conn = payload.get('connection', {}) or {}
+        _conn_sent = conn          # as sent: a bridge's own values are not the device's to judge
         _none = str(conn.get('protocol', '')).lower() == 'none'
-        if existing_id:
+        # the edit locks, in one place (ADR-0026 §2): judged on the stored
+        # device's spec and the one this save would store
+        _locks = _edit_locks(conn, template_id, existing_id)
+        if _locks and _locks[0][1] == METER_ONLY_TEXT:
             # read through a connection, or measured by its meters: decided at
             # creation (its meters and its kind come with it) — never by an
             # edit that would leave a device with neither (review N3)
-            _was = config.get_device(existing_id)
-            if _was is not None and (_was.protocol == 'none') != _none:
-                raise HTTPException(status_code=422, detail={
-                    "errors": ["connection.protocol: fixed after creation — a device measured only by its "
-                               "meters, or one read through a connection, is created as such"],
-                    "fields": {"connection.protocol": "fixed after creation"}})
+            raise HTTPException(status_code=422, detail={
+                "errors": [METER_ONLY_TEXT], "fields": {"connection.protocol": "fixed after creation"}})
+        _lock_fields = {f: e.partition(': ')[2] if e.startswith(f + ': ') else e for f, e in _locks}
         if _none:
             return _meter_only_raw(payload, did, template_id, errors, existing_id)
         _bridge_ref = None
+        if conn.get('bridge') and str(conn.get('protocol', '')).lower() in VIRTUAL_MAP_PROTOCOLS:
+            errors.append(f"connection.bridge: a {conn.get('protocol')} bus is reached by its serial "
+                          f"port or a bridge's host and port, not through a bridge record")
+            conn = {k: v for k, v in conn.items() if k not in ('bridge', 'bridge_port')}
         if conn.get('bridge'):
             # a device on a bridge: the bridge must exist and own that port;
             # host, port and protocol then come from it (checked as such below)
@@ -1982,9 +2300,11 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
                 conn = _resolve(conn, config.bridges)
                 _bridge_ref.setdefault('bridge_port', conn.get('port'))
         protocol = str(conn.get('protocol', 'tcp')).lower()
-        if protocol not in MODBUS_PROTOCOLS + ('http', 'mqtt'):
-            errors.append("connection.protocol: must be one of " + ", ".join(MODBUS_PROTOCOLS + ('http', 'mqtt')))
-        elif protocol in MODBUS_PROTOCOLS and protocol != 'rtu_tap':
+        _asks = ((protocol in MODBUS_PROTOCOLS and protocol != 'rtu_tap')
+                 or (protocol in VIRTUAL_MAP_PROTOCOLS and _vmap_mode(conn) == 'poll'))
+        if protocol not in PROTOCOLS_BY_CONTEXT['device']:
+            errors.append("connection.protocol: must be one of " + ", ".join(PROTOCOLS_BY_CONTEXT['device']))
+        elif _asks:
             _te = _timeout_error(conn, stored_conn)
             if _te:
                 errors.append(_te)
@@ -1992,21 +2312,28 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
         # HTTP/MQTT by json_path), so the device protocol MUST match the template's
         # transport class — otherwise every read silently resolves to nothing.
         _tpl = template_registry.get(template_id) if template_id else None
-        _classmap = {'http': 'http', 'mqtt': 'mqtt'}
         if template_id and _tpl is None:
             errors.append(f"template: '{template_id}' not found")
         elif _tpl is not None and _tpl.component_of:
             errors.append(f"template: '{template_id}' is a component of '{_tpl.component_of}' — "
                           "add the device, then this as one of its components")
             _tpl = None
-        elif _tpl is not None and protocol in MODBUS_PROTOCOLS + ('http', 'mqtt'):
-            from .device_template import template_transport
-            dev_class = _classmap.get(protocol, 'modbus')
-            tpl_class = template_transport(_tpl)
-            if dev_class != tpl_class:
-                errors.append(
-                    f"template: '{template_id}' is a {tpl_class.upper()} map but this "
-                    f"device is {protocol.upper()} — pick a {dev_class.upper()} template")
+        if _locks:
+            # a template's family, the class a device keeps, a device holding
+            # components (edit_errors): where the family check always stood
+            errors.extend(e for _f, e in _locks)
+        if (_tpl is not None and protocol in PROTOCOLS_BY_CONTEXT['device']
+                and not any(f == 'template' for f, _e in _locks)):
+            # the template's family matches: does it only ever listen?
+            from .device_template import template_listens, template_listens_only
+            if (template_listens_only(_tpl) and protocol in VIRTUAL_MAP_PROTOCOLS
+                    and _vmap_mode(conn) != 'listen'):
+                errors.append(f"connection.mode: template '{template_id}' is only heard on a bus "
+                              "another master polls — choose listen")
+            elif protocol_family(protocol) == 'modbus' and protocol != 'rtu_tap' and template_listens(_tpl):
+                # a map written for listening never polls (ADR-0025, ADD-8)
+                errors.append(f"connection.protocol: template '{template_id}' is only heard on a bus "
+                              "another master polls — choose listen only (rtu_tap)")
         if protocol == 'http':
             url = str(conn.get('url', '')).strip()
             if not (url.startswith('http://') or url.startswith('https://')):
@@ -2051,6 +2378,50 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
                     raise ValueError
             except (TypeError, ValueError):
                 errors.append("connection.port: must be 1..65535")
+        elif protocol in CAN_PROTOCOLS:
+            # a CAN bus listened to through a carrier (can_client.py)
+            from .can_client import connection_errors as _can_errors
+            errors.extend(_can_errors(conn))
+        elif protocol in VIRTUAL_MAP_PROTOCOLS:
+            # a non-Modbus bus with its own driver: a serial port here, or a
+            # bridge's raw byte stream at host:port; polled or listened to
+            if _vmap_mode(conn) not in _VMAP_MODES:
+                errors.append("connection.mode: poll (the gateway asks) or listen (it never transmits)")
+            elif _vmap_mode_missing(conn, stored_conn):
+                errors.append("connection.mode: choose poll (the gateway asks) or listen (it never "
+                              "transmits) — a bus a master pack already polls must be listened to")
+            if protocol in VIRTUAL_MAP_SERIAL:
+                sp = str(conn.get('serial_port', '')).strip()
+                if not sp:
+                    errors.append(f"connection.serial_port: required for {_PROTO_WORDS.get(protocol, protocol)}")
+                else:
+                    errors.extend(_serial_line_conflicts(protocol, sp, conn, existing_id))
+                for fld, lo, hi in (("baudrate", 300, 4_000_000), ("stopbits", 1, 2), ("bytesize", 5, 8)):
+                    if fld in conn:
+                        try:
+                            if not (lo <= int(conn.get(fld)) <= hi):
+                                raise ValueError
+                        except (TypeError, ValueError):
+                            errors.append(f"connection.{fld}: must be {lo}..{hi}")
+                if str(conn.get('parity', 'N')).upper() not in ('N', 'E', 'O'):
+                    errors.append("connection.parity: must be N, E or O")
+            else:
+                if not str(conn.get('host', '')).strip():
+                    errors.append(f"connection.host: required for {_PROTO_WORDS.get(protocol, protocol)}")
+                elif _is_serial_path(conn.get('host')):
+                    errors.append(_serial_host_error("connection.host", conn.get('host')))
+                try:
+                    if not (1 <= int(conn.get('port', 0)) <= 65535):
+                        raise ValueError
+                except (TypeError, ValueError):
+                    errors.append("connection.port: must be 1..65535")
+                else:
+                    errors.extend(_network_bus_conflicts(protocol, conn, existing_id))
+            try:
+                if not (0 <= int(conn.get('unit_id', 0)) <= 255):
+                    raise ValueError
+            except (TypeError, ValueError):
+                errors.append("connection.unit_id: must be 0..255 (the pack address)")
         elif protocol == 'rtu_tap' and _bridge_ref:
             # a tap through a bridge: the bus is the bridge's port
             errors.extend(_network_bus_conflicts(protocol, conn, existing_id))
@@ -2096,8 +2467,14 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
                     raise ValueError
             except (TypeError, ValueError):
                 errors.append("connection.unit_id: must be 0..255")
+        # the advanced keys a save sets anew, each in its range (L3-F7)
+        from .conn_advanced import errors as _advanced_errors
+        errors.extend(_advanced_errors(_conn_sent if isinstance(_conn_sent, dict) else {}, stored_conn, protocol))
         if errors:
-            raise HTTPException(status_code=422, detail={"errors": errors})
+            _d = _errors_detail(errors)
+            for _f, _m in _lock_fields.items():
+                _d.setdefault('fields', {}).setdefault(_f, _m)
+            raise HTTPException(status_code=422, detail=_d)
         raw = {
             'id': did,
             'name': str(payload.get('name', '') or did),
@@ -2161,9 +2538,185 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
         return {**{k: dict(x) if isinstance(x, dict) else x for k, x in v.items() if k != 'at'},
                 'age_s': round(max(0.0, time.time() - v['at']), 1)}
 
-    def _device_entry(dev_cfg, client, *, redact=False) -> Dict:
+    def _raw_index() -> Dict[str, Dict]:
+        """Every stored entry by device id, units and components expanded
+        once — what a whole list reads (review: no re-expansion per row)."""
+        out = {str(d.get('id')): d for d in config._raw_devices if isinstance(d, dict)}
+        try:
+            for _pid, d in config._expand_endpoints():
+                out.setdefault(str(d.get('id')), d)
+            for _pid, _c, d in config._expand_components():
+                out.setdefault(str(d.get('id')), d)
+        except Exception:  # noqa: BLE001 — a row falls back to its own lookup
+            logger.debug("raw index incomplete", exc_info=True)
+        return out
+
+    def _stored_device_raw(dev_cfg, raw_index=None) -> Dict:
+        """The device as stored (or, for the primary, an installation's unit
+        and a component, as its stored definition expands): what the spec
+        reads and the ETag hashes."""
+        if raw_index is not None and not dev_cfg.primary and dev_cfg.id in raw_index:
+            return raw_index[dev_cfg.id]
+        if dev_cfg.primary:
+            m = config.modbus
+            return {'id': dev_cfg.id, 'connection': {'protocol': 'tcp', 'host': m.host, 'port': m.port,
+                                                     'unit_id': m.unit_id, 'timeout': m.timeout,
+                                                     'retry_attempts': m.retry_attempts,
+                                                     'retry_delay': m.retry_delay},
+                    'ha_discovery_enabled': bool(config.mqtt.ha_discovery_enabled)}
+        raw = config.get_raw_device(dev_cfg.id)
+        if raw is not None:
+            return raw
+        if dev_cfg.endpoint_id:
+            ep = config.get_raw_endpoint(dev_cfg.endpoint_id)
+            for _pid, d in (config._expand_endpoints([ep]) if ep else []):
+                if d.get('id') == dev_cfg.id:
+                    return d
+        if dev_cfg.component_of:
+            for _pid, _c, d in config._expand_components():
+                if d.get('id') == dev_cfg.id:
+                    return d
+        return {'id': dev_cfg.id, 'connection': {'protocol': dev_cfg.protocol}}
+
+    # the ETag's key: random per process. A bare hash of the stored entry
+    # would let a viewer confirm a guessed password against it; keyed, it
+    # says only "changed or not" (review). An ETag held across a restart is
+    # stale: 412, read again.
+    _etag_key = __import__('secrets').token_bytes(32)
+
+    def _primary_kept(which: str) -> Dict[str, Any]:
+        """The primary's opcua / rest_push section in the form its file keeps
+        (memory set by any route agrees; a hand-loaded one too)."""
+        from .config import primary_opcua_kept, primary_rest_push_kept
+        return (primary_opcua_kept(config.opcua_primary) if which == 'opcua'
+                else primary_rest_push_kept(config.rest_push_primary))
+
+    def _device_etag(dev_cfg, raw_index=None) -> str:
+        """An HMAC of the stored entry (sorted keys): the same while nothing
+        stored changes, a reload included (ADR-0026 §6)."""
+        stored = _stored_device_raw(dev_cfg, raw_index)
+        if dev_cfg.primary:
+            # the primary's other flat sections are its stored entry too: an
+            # output or its write lock changed is a new version (L3.11-F1)
+            stored = {**stored, '_flat': {'http_output': bool(config.http_output_primary_enabled),
+                                          'opcua_output': _primary_kept('opcua'),
+                                          'rest_push': _primary_kept('rest_push'),
+                                          'pq_recorder': config.pq_recorder_primary or {},
+                                          'write_locked': bool(config.security.primary_write_locked)}}
+        body = json.dumps(stored, sort_keys=True, default=str, separators=(',', ':'))
+        return '"' + hmac.new(_etag_key, body.encode('utf-8'), hashlib.sha256).hexdigest()[:32] + '"'
+
+    def _check_if_match(if_match: Optional[str], device_id: str) -> None:
+        """412 with the current entry when ``If-Match`` names another version
+        of the device; nothing to check without the header (as before)."""
+        if if_match is None or not device_id:
+            return
+        _i, dev_cfg, client = _find_device(device_id)
+        if dev_cfg is None:
+            return                                  # the caller answers 404
+        cur = _device_etag(dev_cfg)
+        if _etag_guard.matches(if_match, cur):
+            return
+        raise HTTPException(status_code=412, detail={
+            "errors": ["If-Match: the device changed since it was read — reload it and apply the change again"],
+            "current": _device_entry(dev_cfg, client), "etag": cur}, headers={'ETag': cur})
+
+    def _device_tag_now(device_id) -> Optional[str]:
+        """The device's ETag now (None once it is gone)."""
+        if not device_id:
+            return None
+        _i, dev_cfg, _c = _find_device(str(device_id))
+        return _device_etag(dev_cfg) if dev_cfg is not None else None
+
+    # One lock per stored entry, held by a checked write around its check,
+    # its write and its tag (ADR-0030): two writes with one tag never both
+    # pass. Keyed by what owns the stored entry — a component's parent, a
+    # unit's installation. Always taken before _device_mutation_lock (the
+    # guard sits above @_serialized_mutation), never after it: one order.
+    _entry_locks: Dict[str, threading.Lock] = {}
+    _entry_locks_guard = threading.Lock()
+
+    def _entry_lock(device_id) -> Optional[threading.Lock]:
+        if not device_id:
+            return None
+        _i, dev_cfg, _c = _find_device(str(device_id))
+        if dev_cfg is None:
+            return None                          # the route answers 404
+        key = (f"dev:{dev_cfg.component_of}" if dev_cfg.component_of
+               else f"ep:{dev_cfg.endpoint_id}" if dev_cfg.endpoint_id else f"dev:{dev_cfg.id}")
+        with _entry_locks_guard:
+            return _entry_locks.setdefault(key, threading.Lock())
+
+    def _device_write(fn):
+        """A route under /api/devices/{device_id} that changes the stored
+        entry: a stale If-Match answers 412, every answer says the tag after
+        it (ADR-0030). Check, write and tag run under the entry's lock; put
+        it ABOVE @_serialized_mutation (lock order)."""
+        return _etag_guard.guard(fn, 'check',
+                                  check=lambda im, kw: _check_if_match(im, kw.get('device_id')),
+                                  tag=lambda kw: _device_tag_now(kw.get('device_id')),
+                                  lock=lambda kw: _entry_lock(kw.get('device_id')))
+
+    def _device_write_query(fn):
+        """The same, for a route that names its device by the ``device``
+        query parameter (empty: the primary) — state kept in the entry but
+        written outside /api/devices/{id} (the PQ recorder)."""
+        def _did(kw):
+            return kw.get('device') or config.primary_id
+        return _etag_guard.guard(fn, 'check',
+                                 check=lambda im, kw: _check_if_match(im, _did(kw)),
+                                 tag=lambda kw: _device_tag_now(_did(kw)),
+                                 lock=lambda kw: _entry_lock(_did(kw)))
+
+    def _device_runtime(fn):
+        """A route under /api/devices/{device_id} that acts but stores
+        nothing (a write to the device, a command, a test): never 412, the
+        current tag said (ADR-0030)."""
+        return _etag_guard.guard(fn, 'runtime', tag=lambda kw: _device_tag_now(kw.get('device_id')))
+
+    def _device_specs(dev_cfg, raw_index=None):
+        """(connection_spec, source_specs) as the API shows them."""
+        from .bridges import TYPES as _BT
+        from .connection_spec import device_specs, public
+        dev, per = device_specs(_stored_device_raw(dev_cfg, raw_index), config.bridges, _BT)
+        return public(dev), [{'id': p['id'], **public(p)} for p in per]
+
+    def _refuse_prefix(field: str, prefix, own) -> None:
+        """422 when a prefix being set breaks the rule (ADR-0026 §4): a
+        duplicate, an overlap either way, a wildcard, the gateway's root."""
+        from .topic_prefix import prefix_errors
+        errs = prefix_errors(prefix, config, own)
+        if errs:
+            raise HTTPException(status_code=422, detail={
+                "errors": [f"{field}: {e}" for e in errs], "fields": {field: errs[0]}})
+
+    def _drop_spec_keys(payload):
+        """A spec is output only (ADR-0026 §1): connection_spec.drop_spec_keys."""
+        from .connection_spec import drop_spec_keys
+        return drop_spec_keys(payload)
+
+    def _set_new_node(mqtt_block: Dict, did: str) -> None:
+        """The Home Assistant node a NEW device (or installation, by
+        pattern) stores beside its prefix (ADR-0026 §3): under `gateway`
+        `mbg_<gateway>_dev_<id>`; under `legacy` nothing (`mbg_dev_<id>`).
+        Never what a payload says."""
+        from .identity import new_node
+        node = new_node(did, config.identity_scope, config.gateway_id)
+        if node:
+            mqtt_block['ha_node'] = node
+        else:
+            mqtt_block.pop('ha_node', None)
+
+    def _device_entry(dev_cfg, client, *, redact=False, raw_index=None, claims=None) -> Dict:
         entry = dev_cfg.summary()
         entry['kind'], entry['kind_source'] = _device_kind(dev_cfg, template_registry)
+        entry['type'], entry['type_label'] = _device_type_of(dev_cfg)          # ADR-0027
+        try:
+            _labels = attributes.labels_of('device', dev_cfg.id)
+        except Exception:  # noqa: BLE001 — a label never fails a list
+            _labels = []
+        if _labels:
+            entry['labels'] = _labels
         # whether acquisition runs for it: an enabled device that does not is
         # revived by saving it again (update_device) — the page offers that
         entry['running'] = client is not None
@@ -2211,14 +2764,27 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
         _tpl = (template_registry.get(dev_cfg.template)
                 if template_registry and dev_cfg.template else None)
         entry['pq_supported'] = template_supports_pq(_tpl, dev_cfg.template)
+        # its template declares components (a GX's batteries): Components…
+        # is offered from the row, not after a template list loaded (L3.10 m4)
+        entry['components_declared'] = bool(getattr(_tpl, 'components', None) or [])
         entry['template_notes'] = list(getattr(_tpl, 'notes', None) or [])
         entry['pq_recorder'] = dict(dev_cfg.pq_recorder or {})
+        # Replace hardware's energy-counter reset markers (PATCH ?intent=replace,
+        # L3-F17): [{at, ts, reason}], oldest first — only when there are any
+        _resets = ([] if dev_cfg.primary
+                   else _stored_device_raw(dev_cfg, raw_index).get('energy_counter_resets') or [])
+        if _resets:
+            entry['energy_counter_resets'] = list(_resets)
         try:
             _cmds = _commands_for(dev_cfg)
         except Exception:  # noqa: BLE001 — a bad recipe must not hide the device
             _cmds = []
         entry['commands'] = [c['def'].name for c in _cmds if c['enabled']]
         entry['commands_offered'] = [c['def'].name for c in _cmds]
+        # the registers its template declares writable: an operator writes
+        # only these (a raw write is the admin's) — the ⋯ menu says so before
+        # the form is typed (ADR-0032 §3)
+        entry['writable_registers'] = _declared_writes(dev_cfg)
         # full connection block for the device detail editor
         c = dev_cfg.connection
         _url = dev_cfg.http.get('url', '') if dev_cfg.protocol == 'http' else ''
@@ -2261,7 +2827,43 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
             _tk = template_registry.get(dev_cfg.template) if dev_cfg.template else None
             entry['connection']['template_keepalive'] = ((getattr(_tk, 'protocol', None) or {}).get('keepalive')
                                                          if _tk is not None else None)
-        if dev_cfg.protocol in SERIAL_PROTOCOLS + ('rtu_tap',):
+        if dev_cfg.protocol in CAN_PROTOCOLS:
+            # what the connection form shows for a CAN link: the carrier, the
+            # interface, the bitrate the bus runs at, how long quiet stays fresh
+            _can = dict(getattr((dev_cfg.sources or [None])[0], 'can', None) or {})
+            entry['connection'].update({
+                'carrier': _can.get('carrier', 'socketcan'), 'channel': _can.get('channel', ''),
+                'bitrate': _can.get('bitrate'),
+                'stale_after_s': _can.get('stale_after_s', c.stale_after_s),
+            })
+        if dev_cfg.protocol in VIRTUAL_MAP_PROTOCOLS:
+            entry['connection']['mode'] = c.mode or 'poll'
+        # what the stored connection means, on its axes (ADR-0026 §1): beside
+        # `connection`, never inside it — a save echoes `connection` back
+        try:
+            _spec, _per = _device_specs(dev_cfg, raw_index)
+            entry['connection_spec'] = _spec
+            if _per:
+                entry['source_specs'] = _per
+        except Exception:  # noqa: BLE001 — an unreadable shape must not hide the device
+            logger.debug("device %s: connection spec unavailable", dev_cfg.id, exc_info=True)
+            entry['connection_spec'] = None
+        # the one-line connection summary and the edit locks (ADR-0031 §5),
+        # beside `connection` like the spec: never sent back by a save
+        try:
+            from .device_summary import device_view
+            entry.update(device_view(config, dev_cfg, template_registry,
+                                     raw=_stored_device_raw(dev_cfg, raw_index),
+                                     spec=entry.get('connection_spec'), claims=claims))
+        except Exception:  # noqa: BLE001 — a summary must not hide the device
+            logger.debug("device %s: summary unavailable", dev_cfg.id, exc_info=True)
+            entry['summary'], entry['locks'] = None, []
+        # what each PATCH section takes for it (ADR-0032 §6): the primary's
+        # adapter takes fewer keys; a component or a unit is edited elsewhere
+        from .device_patch import edit_sections
+        entry['edit_sections'] = edit_sections(dev_cfg.primary,
+                                               whole_refused=bool(dev_cfg.component_of or dev_cfg.endpoint_id))
+        if dev_cfg.protocol in SERIAL_PROTOCOLS + ('rtu_tap',) + VIRTUAL_MAP_SERIAL:
             entry['serial'] = dev_cfg.serial
         if dev_cfg.protocol == 'http':
             # Never echo header VALUES back — they can carry Authorization / API
@@ -2353,6 +2955,10 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
                 'poll_rate': stats.get('poll_rate'),
                 'data_health': health,
             })
+            from .can_client import stats_summary as _can_summary
+            _cs = _can_summary(stats)
+            if _cs:
+                entry['can'] = _cs          # frames, unknown ids, decode errors, listen-only
         else:
             # disabled or transport not run — idle (grey), not green
             entry.update({'connected': False, 'data_health': 'idle'})
@@ -2392,7 +2998,7 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
                 address = redact_url(url) if redact else url
             elif proto == 'mqtt':
                 address = str((src.mqtt_in or {}).get('topic', ''))
-            elif proto in SERIAL_PROTOCOLS + ('rtu_tap',):
+            elif proto in SERIAL_PROTOCOLS + ('rtu_tap',) + VIRTUAL_MAP_SERIAL:
                 address = f"{src.connection.bus} · unit {src.connection.unit_id}"
             else:
                 address = f"{src.connection.host}:{src.connection.port} · unit {src.connection.unit_id}"
@@ -2426,28 +3032,99 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
     @app.get("/api/devices")
     def list_devices(request: Request, q: Optional[str] = None, kind: Optional[str] = None,
                      state: Optional[str] = None, protocol: Optional[str] = None,
-                     installation: Optional[str] = None, sort: Optional[str] = None):
+                     installation: Optional[str] = None, sort: Optional[str] = None,
+                     type: Optional[str] = None, label: Optional[str] = None):  # noqa: A002
         """All southbound devices with live health (device #1 first).
-        Optional: ``q`` (search), ``kind``, ``state`` (online/offline/disabled),
-        ``protocol``, ``installation`` — each a comma list — and ``sort``
-        (name, id, kind, state, protocol; ``-`` for descending)."""
+        Optional: ``q`` (search), ``kind``, ``type`` (the device type, a user
+        type included), ``label`` (its identity labels), ``state``
+        (online/offline/disabled), ``protocol``, ``installation`` — each a
+        comma list — and ``sort`` (name, id, kind, state, protocol; ``-`` for
+        descending)."""
         # only admin sees raw credentials; viewer AND operator get redacted URLs
         _redact = getattr(request.state, "role", None) != "admin" and getattr(request.state, "role", None) is not None
-        entries = [(d, _device_entry(d, c, redact=_redact)) for d, c in registry]
-        if all(v in (None, '') for v in (q, kind, state, protocol, installation, sort)):
+        _idx = _raw_index()
+        from .device_summary import Claims
+        _claims = Claims(config, template_registry)        # the bus claims, once per list
+        entries = [(d, _device_entry(d, c, redact=_redact, raw_index=_idx, claims=_claims))
+                   for d, c in registry]
+        if all(v in (None, '') for v in (q, kind, state, protocol, installation, sort, type, label)):
             return {"devices": [e for _d, e in entries]}
         from .list_filters import FilterError, device_protocols, device_search_text, filter_devices
         rows = [(e, device_protocols(d), device_search_text(d, e, template_registry, redact=_redact))
                 for d, e in entries]
         try:
             return {"devices": filter_devices(rows, q=q, kind=kind, state=state, protocol=protocol,
-                                              installation=installation, sort=sort)}
+                                              installation=installation, sort=sort, type=type, label=label)}
         except FilterError as err:
             raise HTTPException(status_code=422, detail={"errors": [str(err)], "fields": err.fields})
 
     # /api/serial-ports, /api/bridge/adapters → routes/commissioning.py
 
     _late_hooks: Dict[str, Any] = {}
+
+    # devices whose HA discovery this gateway has taken back (MQTT or its
+    # discovery off), kept across restarts: a device cleared once is not
+    # cleared again at every start (ADR-0025, ADD-14)
+    _disc_cleared_path = config.config_path.parent / "ha_discovery_cleared.json"
+    try:
+        _disc_cleared: Set[str] = set(json.loads(_disc_cleared_path.read_text(encoding="utf-8")))
+    except (OSError, ValueError, TypeError):
+        _disc_cleared = set()
+
+    def _mark_disc_cleared(device_id: str, cleared: bool) -> None:
+        if (device_id in _disc_cleared) == cleared:
+            return
+        (_disc_cleared.add if cleared else _disc_cleared.discard)(device_id)
+        try:
+            _disc_cleared_path.write_text(json.dumps(sorted(_disc_cleared)), encoding="utf-8")
+        except OSError as e:
+            logger.warning(f"HA discovery: cannot keep which devices were cleared: {e}")
+
+    def _ha_write_rules(d, regs) -> Dict:
+        """The registers a device announces as write entities (number/select),
+        by store key: only when FULLY enabled; the template is the write
+        allowlist, so writability + bounds come from _write_rule, never from
+        the saved register."""
+        wrules = {}
+        if not (config.mqtt.allow_write_entities and config.security.allow_writes
+                and not d.primary and d.protocol != 'http'):
+            return wrules
+        for r in regs:
+            if getattr(r, 'register_type', 'holding') != 'holding':
+                continue
+            rule = _write_rule(d, r.address, 'holding')
+            if rule is None or not rule.writable:
+                continue
+            # advertise only what the write handler would accept:
+            # a scale_from or command-fronted register writes
+            # THROUGH its command, so without an enabled HA-faced
+            # value command the entity would be dead — or, worse,
+            # a raw write with the wrong scale (audit 2026-10)
+            _name = getattr(r, 'name', '')
+            _cmds = _commands_for(d)
+            _ha_cmd = any(
+                c['enabled'] and c['faces'].get('ha', True)
+                and c['def'].writes and c['def'].value_param is not None
+                and c['def'].writes[0].get('register') == _name
+                for c in _cmds)
+            # what the handler refuses is not advertised: any
+            # register any command writes on this slave (D4)
+            _fronted = _raw_channel_conflict(
+                d, 'holding', int(r.address), _words_of(rule.data_type or 'uint16')) is not None
+            if (getattr(rule, 'scale_from', None) or _fronted) and not _ha_cmd:
+                continue
+            if _writes_by_mqtt(d) and not _ha_cmd:
+                continue          # an MQTT unit writes through commands only
+            wrules[store_key(r.address, 'holding')] = rule   # keyed by table: a coil at
+            # the same address must never pick up this holding row's rule
+        return wrules
+
+    def _discovery_regs(d) -> List:
+        regs = config.unit_registers(d)     # all of the unit's sources, one entry per name
+        # derived measurements (status/text, status/alarm, …) are entities too
+        return regs + [e['_reg'] for e in calc_engine.store.get(d.id, []) if e.get('_reg') is not None]
+
+    from .device_types import meter_only_model as _meter_only_model
 
     def _sync_device_discovery():
         """Rebuild the MQTT discovery hooks from the current non-primary
@@ -2457,52 +3134,30 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
             return
         hooks = []
         for dev_cfg, _c in registry:
-            if dev_cfg.primary or not dev_cfg.ha_discovery_enabled:
+            if dev_cfg.primary:
+                continue
+            if not (dev_cfg.ha_discovery_enabled and dev_cfg.mqtt_enabled):
+                if dev_cfg.id in _disc_cleared:
+                    continue                  # taken back already, this run or before
+                # no discovery without its values on MQTT (ADR-0025, ADD-14):
+                # what it would have announced is taken back, once
+
+                def _unhook(d=dev_cfg):
+                    regs = _discovery_regs(d)
+                    if mqtt_publisher.clear_device_discovery(d.id, regs, write_keys=set(_ha_write_rules(d, regs)),
+                                                             ha_node=d.ha_node):
+                        _mark_disc_cleared(d.id, True)
+                hooks.append(_unhook)
                 continue
 
             def _hook(d=dev_cfg):
-                regs = config.unit_registers(d)     # all of the unit's sources, one entry per name
-                # derived measurements (status/text, status/alarm, …) are entities too
-                regs = regs + [e['_reg'] for e in calc_engine.store.get(d.id, []) if e.get('_reg') is not None]
-                # write-entities (number/select) only when FULLY enabled; the
-                # template is the write allowlist, so writability + bounds come
-                # from _write_rule, never from the saved register.
-                wrules = {}
-                if (config.mqtt.allow_write_entities and config.security.allow_writes
-                        and not d.primary and d.protocol != 'http'):
-                    for r in regs:
-                        if getattr(r, 'register_type', 'holding') != 'holding':
-                            continue
-                        rule = _write_rule(d, r.address, 'holding')
-                        if rule is None or not rule.writable:
-                            continue
-                        # advertise only what the write handler would accept:
-                        # a scale_from or command-fronted register writes
-                        # THROUGH its command, so without an enabled HA-faced
-                        # value command the entity would be dead — or, worse,
-                        # a raw write with the wrong scale (audit 2026-10)
-                        _name = getattr(r, 'name', '')
-                        _cmds = _commands_for(d)
-                        _ha_cmd = any(
-                            c['enabled'] and c['faces'].get('ha', True)
-                            and c['def'].writes and c['def'].value_param is not None
-                            and c['def'].writes[0].get('register') == _name
-                            for c in _cmds)
-                        _fronted = any(
-                            c['def'].writes
-                            and c['def'].writes[0].get('register') == _name
-                            for c in _cmds)
-                        if (getattr(rule, 'scale_from', None) or _fronted) and not _ha_cmd:
-                            continue
-                        if _writes_by_mqtt(d) and not _ha_cmd:
-                            continue          # an MQTT unit writes through commands only
-                        wrules[store_key(r.address, 'holding')] = rule   # keyed by table: a coil at
-                        # the same address must never pick up this holding row's rule
+                regs = _discovery_regs(d)
+                _mark_disc_cleared(d.id, False)   # announced: a later switch-off clears it again
                 mqtt_publisher.publish_device_discovery(
                     d.id, d.name, d.mqtt_topic_prefix, regs,
                     model=(d.template if d.protocol != 'none'
-                           else f"Meter-only ({getattr(d, 'kind', '') or 'device'})"),
-                    write_rules=wrules)
+                           else _meter_only_model(d)),
+                    write_rules=_ha_write_rules(d, regs), ha_node=d.ha_node)
             hooks.append(_hook)
         hooks.append(_publish_attribute_meta)    # the attributes: all after a (re)connect, else what changed
         mqtt_publisher.discovery_hooks = hooks
@@ -2607,91 +3262,102 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
         NOT a trusted caller, so EVERYTHING is re-validated here regardless of
         what discovery advertised: both write gates, the template write envelope
         (writability + bounds), a rate limit, and an audit record. Runs on the
-        MQTT command worker — never on paho's network thread, where the
-        blocking Modbus I/O would stall every publish (audit M4); write_value
-        takes the connection lock, so it is serialized with the poller."""
+        MQTT command worker — never on paho's network thread (audit M4). A raw
+        write is handed to the device's lane (ADR-0022 D5): the worker never
+        waits for the bus, and every outcome is told on `cmd/result` (D6)."""
         import math as _math
+        addr = getattr(register, 'address', '?')
+        rname = getattr(register, 'name', '') or ''
+        known = {}
+
+        def refuse(why: str, fmt: str, *args) -> None:
+            logger.warning(fmt, *args)
+            d = known.get('dev')
+            if d is not None:
+                _publish_raw_result(d, {'command': f"raw:holding@{addr}", 'register': rname or None,
+                                        'params': {'value': payload}, 'status': 'rejected', 'reason': why,
+                                        'device': d.id, 'via': 'ha', 'by': 'ha-mqtt', 'ts': round(time.time(), 3)})
         refused = _mqtt_writes_refused()
         if refused:
-            logger.warning("MQTT write on %s/%s ignored: %s", device_id, getattr(register, 'name', '?'), refused)
+            logger.warning("MQTT write on %s/%s ignored: %s", device_id, rname or '?', refused)
             return
         _idx, dev_cfg, client = _find_device(device_id)
         if dev_cfg is None or client is None or dev_cfg.primary or dev_cfg.protocol == 'http':
             return
+        known['dev'] = dev_cfg
         if dev_cfg.write_locked:
             # the lock is per device, whichever face asks (F-13, 3.83.0)
-            logger.warning("MQTT write REJECTED (device write-locked): device=%s addr=%s", device_id, register.address)
-            return
+            return refuse(f"device '{device_id}' is write-locked",
+                          "MQTT write REJECTED (device write-locked): device=%s addr=%s", device_id, addr)
         rule = _write_rule(dev_cfg, register.address, 'holding')
         if rule is None or not rule.writable:
-            logger.warning("MQTT write REJECTED (not writable): device=%s addr=%s", device_id, register.address)
-            return
+            return refuse(f"register {addr} is not declared writable",
+                          "MQTT write REJECTED (not writable): device=%s addr=%s", device_id, addr)
         cm = next((c for c in _commands_for(dev_cfg) if c['enabled'] and c['faces'].get('ha', True)
-                   and c['def'].writes and c['def'].writes[0].get('register') == getattr(register, 'name', '')
+                   and c['def'].writes and c['def'].writes[0].get('register') == rname
                    and c['def'].value_param is not None), None)
         if cm is not None:
             # a register that a command writes first (WMaxLimPct) is written
             # THROUGH the command — alone it would do nothing, or harm
             try:
-                _run_named_command(dev_cfg, client, cm['def'].name, {'value': float(payload)},
-                                   who='ha', ip='mqtt', via='ha')
+                value = float(payload)
             except (TypeError, ValueError):
                 logger.warning("HA command REJECTED (non-numeric %r): device=%s", payload, device_id)
+                return
+            # handed to the device's lane: the MQTT worker does not wait for
+            # the bus (ADR-0018 D11); every outcome is told on cmd/result
+            got = _submit_named_command(dev_cfg, client, cm['def'].name, {'value': value},
+                                        who='ha', ip='mqtt', via='ha', tell=True)
+            if isinstance(got, tuple):
+                _publish_command_result(dev_cfg, cm['def'].name, got[1])
             return
-        # Mirror the HTTP route (3.83.0): a register whose engineering value
-        # depends on a live scale factor, or that ANY command writes first,
-        # never takes a raw write — the raw path would encode it without the
-        # scale factor and "verify" the wrong value. When the fronting
-        # command was disabled or not HA-faced this used to fall through to
-        # the raw (wrong) write instead of refusing.
+        # A device read over MQTT takes only commands; a register whose
+        # engineering value depends on a live scale factor, or that ANY command
+        # writes at ANY position on this slave, never takes a raw write (D4,
+        # ADR-0022): WMaxLim_Ena written alone lifts a curtail the OV rule
+        # cannot see. Mirrors the HTTP route.
         if _writes_by_mqtt(dev_cfg):
-            logger.warning("HA write REJECTED: device=%s register=%s — a device read over MQTT is "
-                           "written only through an enabled command", device_id, getattr(register, 'name', '?'))
-            return
-        _fronting = next((c['def'].name for c in _commands_for(dev_cfg)
-                          if c['def'].writes
-                          and c['def'].writes[0].get('register') == getattr(register, 'name', '')), None)
-        if getattr(rule, 'scale_from', None) or _fronting:
-            logger.warning("MQTT write REJECTED (register is written through the command %s): "
-                           "device=%s addr=%s", _fronting or "<scale_from>",
-                           device_id, register.address)
-            return
+            return refuse("a device read over MQTT is written only through an enabled command",
+                          "HA write REJECTED: device=%s register=%s — a device read over MQTT is "
+                          "written only through an enabled command", device_id, rname or '?')
+        data_type = (rule.data_type or 'uint16').lower()
+        k = _raw_channel_conflict(dev_cfg, 'holding', int(register.address), _words_of(data_type))
+        if getattr(rule, 'scale_from', None) or k is not None:
+            why = (_conflict_text(int(register.address), rname, k) if k is not None
+                   else f"register {addr} ({rname}) scales by a live factor — written through its command")
+            return refuse(why, "MQTT write REJECTED (register is written through the command %s): "
+                               "device=%s addr=%s", (k or {}).get('command') or "<scale_from>", device_id, addr)
         enum_map = getattr(register, 'enum', None)
         if enum_map:                                   # select: label → code
-            value = next((int(k) for k, v in enum_map.items() if str(v) == payload), None)
+            value = next((int(k_) for k_, v in enum_map.items() if str(v) == payload), None)
             if value is None:
-                logger.warning("MQTT write REJECTED (unknown option %r): device=%s addr=%s",
-                               payload, device_id, register.address)
-                return
+                return refuse(f"unknown option {payload!r}", "MQTT write REJECTED (unknown option %r): "
+                              "device=%s addr=%s", payload, device_id, addr)
         else:                                          # number: parse
             try:
                 value = float(payload)
             except (TypeError, ValueError):
-                logger.warning("MQTT write REJECTED (non-numeric %r): device=%s addr=%s",
-                               payload, device_id, register.address)
-                return
+                return refuse(f"not a number: {payload!r}", "MQTT write REJECTED (non-numeric %r): "
+                              "device=%s addr=%s", payload, device_id, addr)
         # bounds apply to BOTH a typed number and a mapped enum code
         if not _math.isfinite(value):
-            return
+            return refuse("not a finite number", "MQTT write REJECTED (not finite): device=%s addr=%s",
+                          device_id, addr)
         if rule.write_min is not None and value < rule.write_min:
-            logger.warning("MQTT write REJECTED (%s < min %s): device=%s addr=%s",
-                           value, rule.write_min, device_id, register.address)
-            return
+            return refuse(f"{value:g} is below the register minimum {rule.write_min}",
+                          "MQTT write REJECTED (%s < min %s): device=%s addr=%s",
+                          value, rule.write_min, device_id, addr)
         if rule.write_max is not None and value > rule.write_max:
-            logger.warning("MQTT write REJECTED (%s > max %s): device=%s addr=%s",
-                           value, rule.write_max, device_id, register.address)
-            return
+            return refuse(f"{value:g} is above the register maximum {rule.write_max}",
+                          "MQTT write REJECTED (%s > max %s): device=%s addr=%s",
+                          value, rule.write_max, device_id, addr)
         # the exact-allowlist guard the HTTP route enforces — a [0, 1] select
         # must not accept 2 just because it arrived over the broker
         if (getattr(rule, 'write_allowed', None)
                 and value not in [float(v) for v in rule.write_allowed]):
-            logger.warning("MQTT write REJECTED (%s not in allowed set %s): device=%s addr=%s",
-                           value, rule.write_allowed, device_id, register.address)
-            return
-        if not _write_rate_ok('mqtt:' + device_id):
-            logger.warning("MQTT write RATE-LIMITED: device=%s", device_id)
-            return
-        data_type = (rule.data_type or 'uint16').lower()
+            return refuse(f"{value:g} is not in the register's allowed set {rule.write_allowed}",
+                          "MQTT write REJECTED (%s not in allowed set %s): device=%s addr=%s",
+                          value, rule.write_allowed, device_id, addr)
         scale = float(rule.scale if rule.scale is not None else 1.0)
         offset = float(getattr(rule, 'offset', 0.0) or 0.0)
         # what the encoder would have to clamp is refused here (F-15, 3.83.0,
@@ -2704,33 +3370,27 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
             except (TypeError, ValueError):
                 _raw = None
             if _raw is not None and not (_rng[0] <= _raw <= _rng[1]):
-                logger.warning("MQTT write REJECTED (%s encodes to %s, outside %s [%s, %s]): "
-                               "device=%s addr=%s", value, _raw, data_type,
-                               _rng[0], _rng[1], device_id, register.address)
-                return
-        # under the endpoint's command lock so a raw HA write cannot land between
-        # a command's guard read and its writes (or writes and verify)
-        with _cmd_lock_for(client):
-            ok, err, _words = client.write_value(register.address, 'holding', data_type,
-                                                 value, scale=scale, offset=offset)
-            logger.warning("MODBUS WRITE %s (via HA): device=%s addr=%s dtype=%s value=%r%s",
-                           "OK" if ok else "FAILED", device_id, register.address, data_type,
-                           value, "" if ok else f" err={err}")
-            if ok:                                          # write-then-refresh
-                try:
-                    raw = client.read_register(register.address, data_type, 'holding')
-                    if raw is not None:
-                        _push_readback_to_store(device_id, register.address,
-                                                float(raw) / (scale or 1.0) + offset)
-                except Exception:  # noqa: BLE001
-                    pass
-        try:
-            audit_log.append(user="ha-mqtt", ip="mqtt", action="modbus write",
-                             status="ok" if ok else "fail",
-                             detail={"device": device_id, "address": register.address,
-                                     "value": value, "via": "ha-write-entity"})
-        except Exception:  # noqa: BLE001
-            pass
+                return refuse(f"{value:g} encodes to {_raw}, outside {data_type} [{_rng[0]}, {_rng[1]}]",
+                              "MQTT write REJECTED (%s encodes to %s, outside %s [%s, %s]): "
+                              "device=%s addr=%s", value, _raw, data_type, _rng[0], _rng[1], device_id, addr)
+        ctx = {'dev': dev_cfg, 'rtype': 'holding', 'address': int(register.address), 'register': rname,
+               'data_type': data_type, 'scale': scale, 'offset': offset, 'value': value, 'via': 'ha',
+               'who': 'ha-mqtt', 'ip': 'mqtt', 'rate_key': 'mqtt:' + device_id}
+        def told(code, res, _d=dev_cfg):
+            # what the lane said without running it (superseded, expired,
+            # cancelled) carries the write's own fields too
+            res = {'command': f"raw:holding@{int(register.address)}", 'register': rname or None,
+                   'params': {'value': value}, 'device': device_id, 'via': 'ha', 'by': 'ha-mqtt',
+                   'ts': round(time.time(), 3), **res}
+            if res.get('status') not in ('success', 'mismatch', 'unverified', 'error'):
+                # what did not reach the wire (rate limit, superseded, expired,
+                # standby, refused at the head) is said; a written one logged itself
+                logger.warning("MQTT write %s: device=%s addr=%s — %s", str(res.get('status')).upper(),
+                               device_id, addr, res.get('reason') or '')
+            _publish_raw_result(_d, res)
+        # in the lane: the rate token is spent there, never by a value a newer
+        # one replaced (ADR-0018 D7); every outcome goes to cmd/result
+        _submit_raw(ctx, client, on_done=told)
 
     if mqtt_publisher:
         mqtt_publisher.set_command_write_handler(_mqtt_write_command)
@@ -2741,8 +3401,8 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
     # said to this device; the engine (multibus/commands.py) is vendor-blind.
     # Every face — API, MQTT, HA — lands here, with the same gates, the same
     # verification, the same audit. The gateway never decides WHEN.
-    from .commands import (CommandDef, normalize_params, parse_command_def,
-                           parse_payload, run_command, run_mqtt_command)
+    from .commands import (CommandDef, assign_channels, evaluate as _cmd_eval, normalize_params,
+                           parse_command_def, parse_payload, run_command, run_mqtt_command)
     # One command at a time PER ENDPOINT (a host:port, a serial port): units
     # behind one datalogger share it and must not interleave a command's
     # guard read → write → verify; a drive on another bus no longer waits for
@@ -2751,22 +3411,333 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
     _cmd_locks: Dict[str, Any] = {}
     _cmd_locks_guard = threading.Lock()
 
-    def _cmd_lock_for(client) -> Any:
+    def _lane_key(dev_cfg, client) -> str:
+        """The wire a unit's commands travel on — the dispatcher's lane and
+        the commands' bus lock (ADR-0018). STABLE: the bus of a Modbus
+        connection, else the device, else the device's MQTT source; never an
+        object id, which split a lane and leaked a lock whenever an edit
+        replaced the client (CMD-Q-10)."""
+        did = getattr(dev_cfg, 'id', '?')
         drv = _modbus_driver_of(client) if client is not None else None
-        conn = getattr(drv, 'connection', None) if drv is not None else getattr(client, 'connection', None)
-        if conn is None:
-            # an MQTT source has no bus: its own lock, not one shared by every
-            # device without a connection
-            mq = _mqtt_driver_of(client) if client is not None else None
-            key = f"mqtt:{id(mq if mq is not None else client)}"
+        if drv is not None:
+            bus = str(getattr(getattr(drv, 'connection', None), 'bus', '') or '')
+            return f"bus:{bus}" if bus else f"dev:{did}"
+        sid = 'default'
+        for src, part in getattr(client, 'parts', []) or []:
+            if str(getattr(src, 'protocol', '')).lower() == 'mqtt' and hasattr(part, 'wait_for'):
+                sid = str(getattr(src, 'id', '') or 'default')
+                break
+        # the connection the source actually uses: a component reads (and is
+        # written) through its parent's link — one wire, one lane (CR2-10)
+        mq = _mqtt_driver_of(client) if client is not None else None
+        link = str(getattr(mq, 'link_name', '') or '') if mq is not None else ''
+        return f"mqtt:{link or did}/{sid}"
+
+    def _cmd_lock_for(client, dev_cfg=None) -> Any:
+        if dev_cfg is not None:
+            key = _lane_key(dev_cfg, client)
         else:
-            key = str(getattr(conn, 'bus', '') or id(conn))
+            # a caller that does not name the device (kept for the raw write
+            # routes' older callers): the connection's bus, else the object
+            drv = _modbus_driver_of(client) if client is not None else None
+            conn = getattr(drv, 'connection', None) if drv is not None else getattr(client, 'connection', None)
+            if conn is None:
+                mq = _mqtt_driver_of(client) if client is not None else None
+                key = f"mqtt:{id(mq if mq is not None else client)}"
+            else:
+                bus = str(getattr(conn, 'bus', '') or '')
+                key = f"bus:{bus}" if bus else str(id(conn))
         with _cmd_locks_guard:
             lk = _cmd_locks.get(key)
             if lk is None:
                 lk = _cmd_locks[key] = threading.Lock()
             return lk
     _cmd_last: Dict[str, Dict] = {}       # (device:command) → last result, for the UI and the state topic
+
+    class _BusBusy(Exception):
+        """The bus stayed busy past a shutdown revert's deadline."""
+
+    @contextlib.contextmanager
+    def _bus_lock(lock, deadline: Optional[float] = None):
+        """The bus lock; with a deadline (a shutdown revert, ADR-0022 D8) at
+        most until then — past it, nothing is written and the lease stays on
+        disk for boot recovery (RC-5)."""
+        if deadline is None:
+            lock.acquire()
+        elif not lock.acquire(timeout=max(0.0, deadline - time.monotonic())):
+            raise _BusBusy("the bus stayed busy past the shutdown budget — nothing written, "
+                           "left for boot recovery")
+        try:
+            yield
+        finally:
+            lock.release()
+
+    # ── raw register writes (ADR-0022 D4–D8) ─────────────────────────────────
+    #
+    # A raw write is a register written by address, not through a command: an
+    # HA entity, POST /api/devices/{id}/write (guarded or `unguarded`), the raw
+    # lease revert. What a command writes — at any position — is never written
+    # raw (D4); everything else travels the device's lane as a job (D5).
+
+    _cmd_regs_memo: Dict[str, Tuple] = {}
+
+    def _words_of(data_type, rtype: str = 'holding') -> int:
+        if str(rtype).lower() == 'coil':
+            return 1
+        from .register_parser import RegisterParser as _RP
+        return max(1, int(_RP.REGISTER_COUNTS.get(str(data_type or 'uint16').lower(), 1)))
+
+    def _slave_of(dev_cfg) -> Tuple[str, Any]:
+        """The physical slave a device entry reads: its Modbus bus and unit id.
+        Two entries on one inverter (a twin, another template) are one slave.
+        A unit read only over HTTP/MQTT is no Modbus slave: its `protocol`
+        stays 'tcp' and its connection the empty default, which made twins
+        across installations one slave (':502', unit) — RP-7."""
+        srcs = list(dev_cfg.sources or [])
+        for s in srcs:
+            if str(s.protocol or 'tcp').lower() in _POLLED_MODBUS and getattr(s, 'connection', None) is not None:
+                return (s.connection.bus, int(s.connection.unit_id))
+        if srcs:
+            return ('device', dev_cfg.id)
+        if str(dev_cfg.protocol or 'tcp').lower() in _POLLED_MODBUS and getattr(dev_cfg, 'connection', None) is not None:
+            return (dev_cfg.connection.bus, int(dev_cfg.connection.unit_id))
+        return ('device', dev_cfg.id)
+
+    def _command_registers(dev_cfg) -> List[Tuple[str, int, int, str, str, str]]:
+        """(register type, first address, end, command, channel, register) of
+        every register any command of the device writes, at any position,
+        enabled or not — what assign_channels unites into channels."""
+        cmds = _commands_for(dev_cfg)
+        if not cmds:
+            return []
+        tpl = _modbus_template_of(dev_cfg)
+        # memoized as _commands_for is (asked per register by HA discovery)
+        key = (id(tpl), _cmds_gen[0], repr([(c['def'].name, c['def'].writes) for c in cmds]))
+        hit = _cmd_regs_memo.get(dev_cfg.id)
+        if hit is not None and hit[0] == key:
+            return hit[1]
+        regs = {r.name: r for r in (tpl.registers if tpl else [])}
+        out = []
+        for c in cmds:
+            for w in (c['def'].writes or []):
+                r = regs.get(w.get('register'))
+                if r is None:
+                    continue
+                rtype = (getattr(r, 'register_type', 'holding') or 'holding').lower()
+                start = int(r.address)
+                out.append((rtype, start, start + _words_of(getattr(r, 'data_type', None), rtype),
+                            c['def'].name, c.get('channel') or c['def'].name, r.name))
+        _cmd_regs_memo[dev_cfg.id] = (key, out)
+        return out
+
+    def _raw_channel_conflict(dev_cfg, rtype: str, address: int, words: int) -> Optional[Dict[str, Any]]:
+        """The command whose register a raw write of [address, address+words)
+        would touch on the same physical slave, or None (D4, review MED 4)."""
+        rtype = str(rtype or 'holding').lower()
+        lo, hi = int(address), int(address) + max(1, int(words))
+        slave = _slave_of(dev_cfg)
+        for d, _cl in list(registry):
+            if d.id != dev_cfg.id and _slave_of(d) != slave:
+                continue
+            try:
+                regs = _command_registers(d)
+            except Exception:  # noqa: BLE001 — a device with a broken template writes nothing anyway
+                continue
+            for t, start, end, cmd, ch, name in regs:
+                if t == rtype and start < hi and lo < end:
+                    return {'device': d.id, 'command': cmd, 'channel': ch, 'register': name, 'address': start}
+        return None
+
+    def _conflict_text(address: int, regname: str, k: Dict[str, Any]) -> str:
+        return (f"register {address} ({regname or k['register']}) is written through the command "
+                f"{k['command']} (channel {k['channel']}"
+                + (f" of {k['device']}" if k.get('device') else '') + "): "
+                f"POST /api/devices/{k['device']}/commands/{k['command']}")
+
+    def _raw_exec_timeout(client) -> float:
+        """A raw job's running time: one write and one read, each up to the
+        connection's timeout × (retries + 1)."""
+        drv = _modbus_driver_of(client)
+        cc = getattr(getattr(drv, 'connection', None), 'config', None)
+        try:
+            per = float(getattr(cc, 'timeout', 3) or 3) * (int(getattr(cc, 'retry_attempts', 3) or 0) + 1)
+        except (TypeError, ValueError):
+            per = 12.0
+        return 3 * per
+
+    def _read_back_failure(client) -> str:
+        """Why a read-back gave nothing: the connection's word for this
+        thread's last read (exception_2, timeout, …), or what None means."""
+        kind = None
+        try:
+            conn = getattr(_modbus_driver_of(client), 'connection', None)
+            kind = conn.last_read_error() if conn is not None and hasattr(conn, 'last_read_error') else None
+        except Exception:  # noqa: BLE001
+            kind = None
+        if kind:
+            return f"no answer ({kind})"
+        return "no value (no refusal from the device: the shared endpoint's turn, a stop or a retired connection)"
+
+    def _execute_raw(ctx: Dict[str, Any], job=None) -> Tuple[int, Dict[str, Any]]:
+        """One raw write under the bus lock, in its lane (D5): the lease still
+        current (a revert), the role,
+        D4 again (a template edited since admission), the rate token, the
+        write, the read-back; then the store, the log, the audit, the lease."""
+        dev_id, rtype, address = ctx['dev'].id, ctx['rtype'], int(ctx['address'])
+        via, who, is_revert = ctx['via'], ctx['who'], ctx.get('is_revert', False)
+        value, data_type = ctx['value'], ctx['data_type']
+        scale, offset = float(ctx['scale']), float(ctx.get('offset') or 0.0)
+        base = {'command': f"raw:{rtype}@{address}", 'register': ctx.get('register') or None,
+                'params': {'value': value}, 'device': dev_id, 'via': via, 'by': who}
+        _i, cur_cfg, c = _find_device(dev_id)
+        if c is None:
+            return 409, {**base, 'status': 'error', 'reason': f"device {dev_id} is not running — nothing written",
+                         'ts': round(time.time(), 3)}
+        cur_cfg = cur_cfg or ctx['dev']
+        stamp = None
+        try:
+            with _bus_lock(_cmd_lock_for(c, cur_cfg), ctx.get('deadline')):
+                if is_revert and ctx.get('is_current') is not None and not ctx['is_current']():
+                    return 409, {**base, 'status': 'cancelled', 'lease_renewed': True, 'ts': round(time.time(), 3),
+                                 'reason': 'the lease was renewed or cleared while the revert waited — nothing written'}
+                if not gw_role.active:
+                    return 503, {**base, 'status': 'rejected', 'reason': gw_role.status_text(),
+                                 'ts': round(time.time(), 3)}
+                if cur_cfg.write_locked and not is_revert:
+                    # locked while the job waited: the lock is asked again at
+                    # the head, as the command path asks it (RP-10); a revert
+                    # to the safe value still runs, as a command's does
+                    return 403, {**base, 'status': 'rejected', 'ts': round(time.time(), 3),
+                                 'reason': f"device '{dev_id}' was write-locked while the write waited — "
+                                           "nothing written"}
+                k = _raw_channel_conflict(cur_cfg, rtype, address, _words_of(data_type, rtype))
+                if k is not None and not is_revert:
+                    return 422, {**base, 'status': 'rejected', 'ts': round(time.time(), 3),
+                                 'reason': _conflict_text(address, ctx.get('register'), k)}
+                if not is_revert and ctx.get('rate_key') and not _write_rate_ok(ctx['rate_key']):
+                    return 429, {**base, 'status': 'rejected', 'reason': 'write rate limit exceeded',
+                                 'ts': round(time.time(), 3)}
+                ok, err, words = c.write_value(address, rtype, data_type, value, scale=scale, offset=offset,
+                                               prefer_fc6=bool(ctx.get('prefer_fc6')))
+                read_back, verified, rb_why = None, None, None
+                if ok and not is_revert:
+                    try:
+                        raw_back = c.read_register(address, data_type, rtype)
+                        if raw_back is None:
+                            # the read-back's own word: why it says nothing (RP-11)
+                            rb_why = _read_back_failure(c)
+                        elif rtype == 'coil':
+                            from .modbus_client import coil_truthy as _coil_truthy
+                            read_back = bool(raw_back)
+                            verified = read_back == _coil_truthy(value)
+                        else:
+                            read_back = float(raw_back) / (scale or 1.0) + offset
+                            verified = abs(read_back - float(value)) <= max(1e-6, abs(float(value)) * 1e-4)
+                    except Exception as e:  # noqa: BLE001
+                        rb_why = f"{type(e).__name__}: {e}"
+                    if rb_why is not None:
+                        logger.debug("raw write read-back failed: device=%s %s@%s: %s", dev_id, rtype, address, rb_why)
+                if ok and is_revert and k is not None:
+                    # a legacy raw lease on what is now a command's register
+                    # (ADR-0022 D8): the pace is stamped, not the on/off
+                    stamp = k
+                    rt = getattr(app.state, 'rules_runtime', None)
+                    if rt is not None:
+                        try:
+                            rt.channel_note(cur_cfg, k['command'], {}, pace_only=True)
+                        except Exception:  # noqa: BLE001
+                            pass
+        except _BusBusy as e:
+            return 409, {**base, 'status': 'cancelled', 'reason': str(e), 'ts': round(time.time(), 3)}
+        queued_ms = (round((job.started - job.admitted) * 1000.0, 1)
+                     if job is not None and job.started is not None else None)
+        if ok and read_back is not None:
+            _push_readback_to_store(dev_id, address, read_back, rtype)     # write-then-refresh
+        # the log and the audit as before 3.95, plus where it waited
+        if via == 'ha':
+            logger.warning("MODBUS WRITE %s (via HA): device=%s addr=%s dtype=%s value=%r%s",
+                           "OK" if ok else "FAILED", dev_id, address, data_type, value, "" if ok else f" err={err}")
+            detail = {"device": dev_id, "address": address, "value": value, "via": "ha-write-entity"}
+            audit = dict(user="ha-mqtt", ip="mqtt", action="modbus write", status="ok" if ok else "fail")
+        elif is_revert:
+            logger.warning("MODBUS WRITE (lease-revert) %s: device=%s addr=%s safe=%r%s",
+                           "OK" if ok else "FAILED", dev_id, address, value, "" if ok else f" err={err}")
+            detail = {"value": value, "data_type": data_type, "words": list(words) if words else None,
+                      "via": "lease-revert", **({"stamped": stamp['channel']} if stamp else {})}
+            audit = dict(user="lease", ip="-", action="modbus write", target=f"{dev_id} {rtype}@{address}",
+                         status="ok" if ok else "failed")
+        else:
+            logger.warning("MODBUS WRITE %s: by=%s@%s device=%s addr=%s type=%s dtype=%s value=%r words=%s%s",
+                           "OK" if ok else "FAILED", who, ctx.get('ip'), dev_id, address, rtype, data_type,
+                           value, words, "" if ok else f" err={err}")
+            detail = {"value": value, "data_type": data_type, "words": list(words) if words else None,
+                      "lease_ms": int(ctx.get('lease_ms') or 0),
+                      **({"unguarded": True} if ctx.get('unguarded') else {})}
+            audit = dict(user=who, ip=ctx.get('ip') or '?', action="modbus write",
+                         target=f"{dev_id} {rtype}@{address}", status="ok" if ok else "failed")
+        if queued_ms is not None:
+            detail['queued_ms'] = queued_ms
+        try:
+            audit_log.append(**audit, detail=detail)
+        except Exception:  # noqa: BLE001
+            pass
+        if not ok:
+            return 502, {**base, 'status': 'error', 'reason': f"write failed: {err}",
+                         'words': list(words) if words else None, 'ts': round(time.time(), 3)}
+        if via == 'api':
+            # the dead-man of this register: armed / renewed, or cancelled
+            lease_ms = int(ctx.get('lease_ms') or 0)
+            if lease_ms > 0:
+                _lease_mgr.arm(dev_id, rtype, address, lease_ms,
+                               _make_lease_revert(dev_id, rtype, address, data_type, scale, ctx.get('safe'),
+                                                  off=offset),
+                               meta={'device': dev_id, 'register_type': rtype, 'address': address,
+                                     'data_type': data_type, 'scale': scale, 'offset': offset,
+                                     'safe_value': ctx.get('safe'), 'lease_ms': lease_ms})
+            else:
+                _lease_mgr.clear(dev_id, rtype, address)
+        status = 'success' if verified else 'mismatch' if verified is False else 'unverified'
+        res = {**base, 'status': status, 'read_back': read_back, 'verified': verified,
+               'words': list(words) if words else None, 'ts': round(time.time(), 3)}
+        if status == 'unverified' and rb_why is not None:
+            res['reason'] = f"read-back failed: {rb_why}"
+        if queued_ms is not None:
+            res['queued_ms'] = queued_ms
+        return 200, res
+
+    def _submit_raw(ctx: Dict[str, Any], client, on_done=None):
+        """A raw write admitted: its lane's job (D5) — the slot is the
+        register, so a newer value of the same encoding replaces one still
+        waiting, whichever face sent either (review MED 5)."""
+        dev, rtype, address = ctx['dev'], ctx['rtype'], int(ctx['address'])
+        revert = bool(ctx.get('is_revert'))
+        job = _CmdJob(lane=_lane_key(dev, client), device=dev.id, channel=f"reg:{rtype}@{address}",
+                      command=f"raw:{rtype}@{address}",
+                      params={'value': ctx['value'], 'data_type': ctx['data_type'], 'scale': ctx['scale'],
+                              'offset': ctx.get('offset') or 0.0, 'prefer_fc6': bool(ctx.get('prefer_fc6')),
+                              'unguarded': bool(ctx.get('unguarded')), 'lease_ms': int(ctx.get('lease_ms') or 0)},
+                      run=lambda j: _execute_raw(j.ctx, j), kind='revert' if revert else 'command',
+                      coalesce=not revert, max_age_s=None if revert else DEFAULT_MAX_AGE_S,
+                      on_done=on_done, ctx=ctx)
+        return _cmd_dispatch.submit(job)
+
+    def _publish_raw_result(dev_cfg, res: Dict[str, Any]) -> None:
+        """An HA raw write's outcome on `<prefix>/cmd/result`, not retained
+        (D6); the retained `cmd/<name>/state` is a command's only. A standby
+        answers nothing (ADR-0018 D10)."""
+        if not gw_role.active or not mqtt_publisher or not getattr(mqtt_publisher, 'connected', False):
+            return
+        try:
+            mqtt_publisher.client.publish(f"{dev_cfg.mqtt_topic_prefix}/cmd/result",
+                                          json.dumps(res, default=str), qos=1, retain=False)
+        except Exception:  # noqa: BLE001
+            pass
+
+    def _budget_deadline() -> Optional[float]:
+        """The clean shutdown's revert deadline on this thread (monotonic),
+        or None outside a shutdown revert."""
+        left = write_lease_budget_s()
+        return None if left is None else time.monotonic() + left
 
     def _modbus_driver_of(client):
         """The Modbus driver behind a client: the client itself, or the first
@@ -2811,26 +3782,107 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
                     return template_registry.get(s.template)
         return template_registry.get(dev_cfg.template) if dev_cfg.template else None
 
+    # per-device channel settings a device may override (ADR-0019); `combine`
+    # stays the template's — what the setting means is not a device's choice
+    CHANNEL_OVERRIDE_KEYS = ('min_interval_s', 'min_on_s', 'min_off_s', 'max_starts_per_h', 'max_age_s')
+    from .rules import PACE_KEYS
+    from .command_dispatch import DEFAULT_MAX_AGE_S
+    _cmds_memo: Dict[str, Tuple] = {}
+    _cmds_gen = [0]
+
+    def _commands_changed() -> None:
+        """A binding, a channel override or a template changed: the memoized
+        command lists and the rules' channel cache are rebuilt (review 11)."""
+        _cmds_gen[0] += 1
+        _cmds_memo.clear()
+        rt = getattr(app.state, 'rules_runtime', None)
+        if rt is not None:
+            rt.__dict__.setdefault('_chan_cache', {}).clear()
+
+    _chan_conflicts_warned: set = set()
+
+    def _override_cid(key: str, defs: Dict[str, Any], ids: Dict[str, str]) -> Optional[str]:
+        declared = {d.channel for d in defs.values() if d.channel}
+        return key if key in declared else ids.get(key)
+
+    def _channel_overrides(dev_cfg, defs: Dict[str, Any], ids: Dict[str, str]):
+        """The device's overrides by channel id, the key each was taken from,
+        the keys that no longer name a channel (kept, listed as orphan) and
+        the keys that name a channel another key already overrides. A key is
+        a declared channel name or a member command's name — never a derived
+        `a+b` id. Two keys for one channel (`motor` and `set_frequency`):
+        the declared name wins whatever the order in the file, the other is
+        a conflict, listed and warned (CR2-14)."""
+        declared = {d.channel for d in defs.values() if d.channel}
+        by_cid: Dict[str, Dict] = {}
+        key_of: Dict[str, str] = {}
+        orphans: List[str] = []
+        conflicts: List[str] = []
+        stored = getattr(dev_cfg, 'channels', None) or {}
+        # declared names first, then member names, each sorted: deterministic
+        for key in sorted(stored, key=lambda k: (k not in declared, k)):
+            ov = stored[key]
+            cid = _override_cid(key, defs, ids)
+            if cid is None or not isinstance(ov, dict):
+                orphans.append(key)
+                continue
+            if cid in key_of:
+                conflicts.append(key)
+                if (dev_cfg.id, key) not in _chan_conflicts_warned:
+                    _chan_conflicts_warned.add((dev_cfg.id, key))
+                    logger.warning("device %s: channel override '%s' names channel '%s', already set "
+                                   "under '%s' — ignored", dev_cfg.id, key, cid, key_of[cid])
+                continue
+            key_of[cid] = key
+            by_cid[cid] = {k: v for k, v in ov.items() if k in CHANNEL_OVERRIDE_KEYS}
+        return by_cid, key_of, sorted(orphans), sorted(conflicts)
+
     def _commands_for(dev_cfg) -> List[Dict]:
         """What this device offers: the template's presets, each enabled only by
         a binding on the device (or its group), plus inline recipes declared
-        on the device. Order: as declared in the template, then inline ones."""
+        on the device. Order: as declared in the template, then inline ones.
+        Memoized per device id: it is asked several times per command (review
+        13); another template, binding or override rebuilds it — keyed by
+        what it is built from, not by the object, so the registry's and the
+        config's copies of one device share an entry (CR2-9)."""
         tpl = _modbus_template_of(dev_cfg)
+        sig = (repr(dev_cfg.commands), repr(getattr(dev_cfg, 'channels', None)))
+        hit = _cmds_memo.get(dev_cfg.id)
+        if hit is not None and hit[1] is tpl and hit[2] == sig and hit[3] == _cmds_gen[0]:
+            return list(hit[4])
+        out = _build_commands(dev_cfg, tpl)
+        if hit is not None:
+            # the device, its template, a binding or an override changed (an
+            # upsert, a channel PUT): the rules' channel view goes with it,
+            # not at their next tick (review 11)
+            rt = getattr(app.state, 'rules_runtime', None)
+            if rt is not None:
+                rt.__dict__.setdefault('_chan_cache', {}).clear()
+        _cmds_memo[dev_cfg.id] = (dev_cfg, tpl, sig, _cmds_gen[0], out)
+        return list(out)
+
+    def _build_commands(dev_cfg, tpl) -> List[Dict]:
         presets = dict((tpl.commands or {}) if tpl else {})
-        channels = dict(getattr(tpl, 'channels', None) or {}) if tpl else {}
+        tpl_channels = dict(getattr(tpl, 'channels', None) or {}) if tpl else {}
         bindings = {str(b.get('name', '')): b for b in (dev_cfg.commands or []) if isinstance(b, dict)}
         out = []
         for name, raw in presets.items():
             b = bindings.get(name) or {}
-            if isinstance(b.get('safe'), dict):
+            tpl_safe = dict(raw.get('safe') or {}) or None
+            safe_from = 'template' if tpl_safe else None
+            if isinstance(b.get('safe'), dict) and b['safe']:
                 # the release value belongs to the site (a grid contract, a
-                # cable): the device binding may set it over the template's
-                raw = {**raw, 'safe': dict(b['safe'])}
-            out.append({'def': parse_command_def(name, raw), 'from_template': True,
+                # cable): the device binding sets it OVER the template's, key
+                # by key — a binding's {value: 50} keeps the template's
+                # revert_s & co. instead of dropping them to defaults (CR2-13)
+                raw = {**raw, 'safe': {**(tpl_safe or {}), **dict(b['safe'])}}
+                safe_from = 'binding+template' if set(tpl_safe or {}) - set(b['safe']) else 'device'
+            out.append({'def': parse_command_def(name, raw), 'from_template': True, 'template_safe': tpl_safe,
+                        'binding_safe': dict(b['safe']) if isinstance(b.get('safe'), dict) else None,
                         'enabled': bool(b) and bool(b.get('enabled', True)),
                         'faces': dict(b.get('faces') or {'api': True, 'mqtt': True, 'ha': True}),
                         'confirm': bool(b.get('confirm', raw.get('confirm', True))),
-                        'lease_s': int(b.get('lease_s', 0) or 0), 'channels': channels})
+                        'lease_s': int(b.get('lease_s', 0) or 0), 'safe_from': safe_from})
         for name, b in bindings.items():
             if name in presets or not b.get('writes'):
                 continue
@@ -2838,7 +3890,26 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
                         'enabled': bool(b.get('enabled', True)),
                         'faces': dict(b.get('faces') or {'api': True, 'mqtt': True, 'ha': True}),
                         'confirm': bool(b.get('confirm', True)), 'lease_s': int(b.get('lease_s', 0) or 0),
-                        'channels': channels})
+                        'safe_from': 'device' if b.get('safe') else None})
+        defs = {c['def'].name: c['def'] for c in out}
+        ids = assign_channels(defs) if defs else {}
+        overrides, key_of, orphans, conflicts = _channel_overrides(dev_cfg, defs, ids)
+        # template + this device's overrides: the arbiter (rules and every
+        # outside writer) reads `channels`, the listing shows both
+        channels = {cid: dict(cfg) for cid, cfg in tpl_channels.items()}
+        for cid, ov in overrides.items():
+            channels[cid] = {**channels.get(cid, {}), **ov}
+        # the key an editor saves a channel's override under: the one that
+        # won for it (CR2-14), else the declared name, else a member command's
+        # name (never a derived `a+b` id, review 11)
+        stored_key = key_of
+        for c in out:
+            cid = ids.get(c['def'].name, c['def'].name)
+            members = sorted(n for n, i in ids.items() if i == cid and not defs[n].alias)
+            c.update({'channels': channels, 'template_channels': tpl_channels,
+                      'channel': cid, 'orphan_channels': orphans, 'channel_conflicts': conflicts,
+                      'channel_key': stored_key.get(cid) or (cid if '+' not in cid else (members or [cid])[0]),
+                      'channel_override': dict(overrides.get(cid) or {})})
         return out
 
     def _group_cmd_prefix(pid: str, gid: str, devs) -> str:
@@ -2862,13 +3933,39 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
             d = c['def'].to_dict()
             out.append({'name': d['name'], 'label': d['label'], 'params': d['params'],
                         'alias': d.get('alias'), 'enabled': c['enabled'], 'confirm': c['confirm'],
-                        'from_template': c['from_template'], 'binding': bindings.get(d['name'])})
+                        'from_template': c['from_template'], 'binding': bindings.get(d['name']),
+                        # the group editor edits the same binding and channel
+                        # fields as a device's Commands tab (ADR-0019)
+                        'safe': d.get('safe') or None, **_binding_view(c)})
         return out
+
+    def _binding_view(c: Dict) -> Dict:
+        """A command's binding and its channel's pace, as an editor shows
+        them: what runs (effective), the template's beside it, and what the
+        device (or its group) says of its own (ADR-0019)."""
+        cid = c.get('channel') or c['def'].name
+        eff = (c.get('channels') or {}).get(cid) or {}
+        tch = (c.get('template_channels') or {}).get(cid) or {}
+        bsafe = c.get('binding_safe') or {}
+        return {'lease_s': c['lease_s'], 'safe_from': c.get('safe_from'),
+                # where each key of the effective safe comes from (CR2-13)
+                'safe_from_keys': {k: ('device' if k in bsafe else 'template') for k in (c['def'].safe or {})},
+                'template_safe': c.get('template_safe'),
+                # the channel's pace as this device runs it, and the
+                # template's beside it
+                'channel': cid, 'channel_key': c.get('channel_key') or cid,
+                'min_interval_s': eff.get('min_interval_s') or 0,
+                'template_min_interval_s': tch.get('min_interval_s') or 0,
+                'max_age_s': eff.get('max_age_s') or DEFAULT_MAX_AGE_S,
+                'channel_settings': {k: eff[k] for k in CHANNEL_OVERRIDE_KEYS if k in eff},
+                'channel_override': dict(c.get('channel_override') or {}),
+                'template_channel': dict(tch)}
 
     def _command_entry(dev_cfg, c: Dict) -> Dict:
         d = c['def'].to_dict()
         d.update({'enabled': c['enabled'], 'from_template': c['from_template'], 'faces': c['faces'],
-                  'confirm': c['confirm'], 'lease_s': c['lease_s'],
+                  'confirm': c['confirm'], **_binding_view(c),
+                  'counters': _cmd_dispatch.counters(dev_cfg.id, c['def'].name),
                   'mqtt_topic': f"{dev_cfg.mqtt_topic_prefix}/cmd/{c['def'].name}",
                   'last': _cmd_last.get(f"{dev_cfg.id}:{c['def'].name}"),
                   'refreshing': f"{dev_cfg.id}:{c['def'].name}" in _cmd_refresh})
@@ -2895,7 +3992,11 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
 
     def _cancel_device_refreshes(dev_id: str) -> None:
         """A deleted or stopped device keeps no refresh: re-enabled days
-        later, it must not be told an old setting again."""
+        later, it must not be told an old setting again. Nor what waits for
+        its bus (ADR-0018 D12)."""
+        _cmd_dispatch.cancel(device=dev_id, reason=f"device '{dev_id}' was deleted or stopped — nothing written")
+        _cmds_memo.pop(dev_id, None)                 # rebuilt if it comes back (CR2-9)
+        _cmd_dispatch.forget(dev_id)
         with _cmd_refresh_lock:
             keys = [k for k in _cmd_refresh if k.split(':', 1)[0] == dev_id]
             timers = [_cmd_refresh.pop(k) for k in keys]
@@ -2942,12 +4043,28 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
             old.cancel()
         timer.start()
 
-    def _run_named_command(dev_cfg, client, name: str, params: Dict, *, who='?', ip='?',
-                           via='api', dry_run=False, lease_s=None, refresh_gen=None, still_wanted=None):
-        """Run one command on one unit with every gate, then record it —
-        whichever face asked. Returns (http_status, result). `still_wanted`
-        (a rule's write) is asked once the bus is ours: a rule that left
-        armed meanwhile writes nothing (OV-F4)."""
+    # ── the run: admission (cheap, final refusals) → the lane → the record ──
+    # (ADR-0018). Admission answers at once; what spends something — the rule
+    # pause, the write-rate token, the safety holder — happens in the lane,
+    # under the bus lock, when the command is about to write (D7).
+    _CMD_ID_MAX = 64
+
+    def _cmd_kind(via: str) -> str:
+        return ('revert' if via == 'lease-revert' else 'refresh' if via == 'refresh'
+                else 'sequence' if via.startswith('sequence:') else 'command')
+
+    def _cmd_id_error(cmd_id) -> Optional[str]:
+        if cmd_id is None or (isinstance(cmd_id, str) and 0 < len(cmd_id) <= _CMD_ID_MAX):
+            return None
+        return f"id: a text of 1..{_CMD_ID_MAX} characters — it is echoed in the result"
+
+    def _admit_command(dev_cfg, client, name: str, params: Dict, *, who, ip, via, dry_run,
+                       lease_s, refresh_gen, still_wanted, is_current, cmd_id, recheck=None):
+        """Every refusal that costs nothing → (http_status, result); else the
+        context the lane runs."""
+        why = _cmd_id_error(cmd_id)
+        if why:
+            return 422, {'status': 'rejected', 'reason': why, 'fields': {'id': f'1..{_CMD_ID_MAX} characters'}}
         # the dead-man's time is checked BEFORE anything is written: a bad
         # lease_s once failed after the write, leaving the setting on the
         # device with no lease to take it back (a 500)
@@ -2958,15 +4075,21 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
         c = _find_command(dev_cfg, name)
         if c is None:
             return 404, {'status': 'rejected', 'reason': f"device '{dev_cfg.id}' offers no command '{name}'"}
-        cmd: CommandDef = c['def']
-        if cmd.alias:
-            # an alias is another command with its parameters filled in
-            target = cmd.alias.get('command')
-            merged = dict(cmd.alias.get('params') or {})
+        # an alias is another command with its parameters filled in: resolved
+        # here, so the slot is the channel of what is really written (review 8)
+        for _hop in range(5):
+            if not c['def'].alias:
+                break
+            target = c['def'].alias.get('command')
+            merged = dict(c['def'].alias.get('params') or {})
             merged.update({k: v for k, v in (params or {}).items() if k == 'source'})
-            return _run_named_command(dev_cfg, client, target, merged, who=who, ip=ip, via=via,
-                                      dry_run=dry_run, lease_s=lease_s, refresh_gen=refresh_gen,
-                                      still_wanted=still_wanted)
+            params, name = merged, target
+            c = _find_command(dev_cfg, target)
+            if c is None:
+                return 404, {'status': 'rejected', 'reason': f"device '{dev_cfg.id}' offers no command '{target}'"}
+        else:
+            return 422, {'status': 'rejected', 'reason': f"command '{name}': aliases loop"}
+        cmd: CommandDef = c['def']
         # a dry run only reads: it previews a command before enabling it. A
         # lease revert writes the template's own safe recipe: turning the
         # command off while its lease runs must not strand the device at the
@@ -2998,9 +4121,9 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
                 if not (0 < secs <= MAX_OVERRIDE_S):      # NaN fails both sides
                     return 409, {'status': 'rejected', 'reason':
                                  f"owned by rule '{owner}' — pass override_s (1..{int(MAX_OVERRIDE_S)} s) to pause it"}
-                # the rule is paused only once the command has passed every
-                # gate below — a rejected command must not silence a safety
-                # rule (F-09, 3.83.0)
+                # the rule is paused only once the command is about to write,
+                # in the lane — a rejected, superseded or expired command must
+                # not silence a rule (F-09, 3.83.0; ADR-0018 D7)
                 _pause = (owner, secs)
         params = {k: v for k, v in (params or {}).items() if k != 'override_s'}
         # a dead-man revert restores the SAFE value the template declares; it
@@ -3025,47 +4148,240 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
         if drv is None and mq is None:
             return 409, {'status': 'rejected', 'reason': 'no Modbus or MQTT source is running for this unit — nothing can write'}
         tpl = _modbus_template_of(dev_cfg)
-        regs = {r.name: r for r in (tpl.registers if tpl else [])}
-        if not dry_run and not _write_rate_ok(f'{via}:{dev_cfg.id}'):
-            return 429, {'status': 'rejected', 'reason': 'write rate limit exceeded'}
-        if rt is not None and not dry_run and not via.startswith('rule:') and not _is_revert:
-            # the channel's protection (minimum run / stop, starts per hour)
-            # holds whoever writes — a rule's own writes meet it in the referee
-            why = rt.channel_hold(dev_cfg, cmd.name, norm)
-            if why:
-                return 409, {'status': 'rejected', 'held': True, 'reason': f"channel {why}"}
-        if _pause is not None:
-            rt.pause_channel(dev_cfg.id, cmd.name, _pause[1], who=who, via=via)
-        _rkey = f"{dev_cfg.id}:{cmd.name}"
+        cid = c.get('channel') or cmd.name
+        ctx = {'dev': dev_cfg, 'client': client, 'c': c, 'cmd': cmd, 'norm': norm, 'via': via, 'who': who,
+               'ip': ip, 'dry_run': dry_run, 'lease_s': lease_s, 'refresh_gen': refresh_gen,
+               'still_wanted': still_wanted, 'is_current': is_current, 'id': cmd_id, 'rt': rt,
+               'recheck': recheck,
+               # a revert run by a clean shutdown waits for the bus only within
+               # the shutdown's budget (ADR-0022 D8, review HIGH 1): its deadline
+               # travels with the job — the budget is the stopping thread's own
+               'deadline': _budget_deadline() if _is_revert else None,
+               'pause': _pause, 'outside': outside, 'is_revert': _is_revert, 'drv': drv, 'mq': mq,
+               'regs': {r.name: r for r in (tpl.registers if tpl else [])}, 'channel': cid,
+               'max_age_s': float(((c.get('channels') or {}).get(cid) or {}).get('max_age_s')
+                                  or DEFAULT_MAX_AGE_S)}
+        # the held channel answers at once (D5) — when nothing waits ahead of
+        # this command in its slot; it is asked again at the head of the lane
+        if _hold_applies(ctx) and _cmd_dispatch.pending(_lane_key(dev_cfg, client), dev_cfg.id, cid) == 0:
+            held = _held(ctx)
+            if held is not None:
+                return held
+        return ctx
+
+    def _hold_applies(ctx) -> bool:
+        # the channel's protection (minimum run / stop, starts per hour, the
+        # pace) holds whoever writes — a rule's own writes meet it in the
+        # referee, the dead-man never waits
+        return (ctx['rt'] is not None and not ctx['dry_run'] and not ctx['via'].startswith('rule:')
+                and not ctx['is_revert'])
+
+    def _held(ctx, check_already: bool = True):
+        """(409, held) when the channel's protection holds this command now —
+        unless the device already holds what it says (a renewal that changes
+        nothing is never held: CMD-Q-5)."""
+        got = ctx['rt'].channel_hold_s(ctx['dev'], ctx['cmd'].name, ctx['norm'])
+        if not got:
+            return None
+        if check_already and _already_set(ctx) is not None:
+            return None
+        _cmd_dispatch.count(ctx['dev'].id, ctx['cmd'].name, 'held')
+        return 409, {'status': 'rejected', 'held': True, 'reason': f"channel {got[0]}",
+                     'retry_after_s': round(max(0.1, got[1]), 1)}
+
+    def _already_set(ctx) -> Optional[Dict]:
+        """D6: the device holds what this command says — asked in the lane
+        against the reading, after what waited in the slot was superseded
+        (never at admission against the reading alone: review 1). An MQTT
+        source alive with every check a written register (its own already-set
+        test); a Modbus device only by the template's `skip_if_set`."""
+        cmd, norm = ctx['cmd'], ctx['norm']
+        if ctx['mq'] is not None:
+            try:
+                pre = run_mqtt_command(cmd, norm, ctx['mq'], ctx['regs'], dry_run=True,
+                                       forbidden_topics=_gateway_command_topics(ctx['dev']))
+            except ValueError:
+                return None
+            return pre if pre.get('already_set') else None
+        if not cmd.skip_if_set or cmd.refresh_s or 'revert_s' in cmd.params or not cmd.writes:
+            return None
+        store = registry.store_for(ctx['dev'].id) or {}
+        now = time.monotonic()
+        held: Dict[str, Any] = {}
+        for w in cmd.writes:
+            r = ctx['regs'].get(w.get('register'))
+            if r is None or (getattr(r, 'register_type', 'holding') or 'holding').lower() != 'holding':
+                return None
+            e = store.get(store_key(int(r.address), 'holding'))
+            # polled, and fresher than two of its poll periods — else a write
+            if not e or e.get('value') is None or e.get('mono') is None:
+                return None
+            every = float(e.get('interval') or 0)
+            if every <= 0 or now - float(e['mono']) > 2 * every:
+                return None
+            try:
+                want, got = float(_cmd_eval(w.get('value'), norm)), float(e['value'])
+            except (TypeError, ValueError, ArithmeticError):
+                return None
+            tol = next((float(v.get('tolerance', 0) or 0) for v in cmd.verify if v.get('read') == r.name), 0.0)
+            if abs(got - want) > max(tol, 1e-9):
+                return None
+            held[r.name] = got
+        return {'command': cmd.name, 'params': dict(norm), 'status': 'success', 'already_set': True,
+                'frames_sent': 0, 'before': dict(held), 'after': dict(held)}
+
+    def _exec_timeout(ctx) -> float:
+        """How long a running command may take: every transaction it makes —
+        the guard reads (re-read once when one fails), each written frame, the
+        verify reads before and after — up to the connection's timeout ×
+        (retries + 1), plus the settle (ADR-0018 D4). Counted from the recipe:
+        three transactions was too few for a long one (CR2-3)."""
+        settle = float(ctx['cmd'].settle_s or 0)
+        if ctx['mq'] is not None:
+            return settle + 5.0
+        cc = getattr(getattr(ctx['drv'], 'connection', None), 'config', None)
         try:
-            with _cmd_lock_for(drv if drv is not None else client):
+            per = float(getattr(cc, 'timeout', 3) or 3) * (int(getattr(cc, 'retry_attempts', 3) or 0) + 1)
+        except (TypeError, ValueError):
+            per = 12.0
+        cmd = ctx['cmd']
+        n = 2 * len(cmd.guard or []) + len(cmd.writes or []) + 2 * len(cmd.verify or []) + 1
+        return max(3, n) * per + settle
+
+    def _execute(ctx, job=None):
+        """The lane's part, under the bus lock: the last checks (the lease
+        still current, the role, the hold), what it spends (the rate token,
+        the rule pause), the write, then the record."""
+        dev_cfg, cmd, norm, via, who, rt = ctx['dev'], ctx['cmd'], ctx['norm'], ctx['via'], ctx['who'], ctx['rt']
+        dry_run, mq, drv, regs = ctx['dry_run'], ctx['mq'], ctx['drv'], ctx['regs']
+        queued_ms = (round((job.started - job.admitted) * 1000.0, 1)
+                     if job is not None and job.started is not None else None)
+        _rkey = f"{dev_cfg.id}:{cmd.name}"
+        already = None
+        try:
+            with _bus_lock(_cmd_lock_for(drv if drv is not None else ctx['client'], dev_cfg), ctx.get('deadline')):
+                if ctx['is_revert'] and ctx['is_current'] is not None and not ctx['is_current']():
+                    # asked again at the head of the lane (review 2): renewed
+                    # or cleared while the revert waited — nothing to undo
+                    return 409, {'status': 'cancelled', 'lease_renewed': True,
+                                 'reason': 'the lease was renewed or cleared while the revert waited — nothing written'}
+                still_wanted = ctx['still_wanted']
                 if still_wanted is not None and not dry_run and not still_wanted():
                     # queued behind the bus while its rule left armed: the
                     # rule no longer drives this target — nothing is written
                     res = {'status': 'cancelled', 'params': norm,
                            'reason': 'its rule left armed before the bus was free — nothing written',
                            'device': dev_cfg.id, 'via': via, 'by': who, 'ts': round(time.time(), 3)}
-                    audit_log.append(user=who, ip=ip, action="command", target=f"{dev_cfg.id} {cmd.name}",
+                    audit_log.append(user=who, ip=ctx['ip'], action="command", target=f"{dev_cfg.id} {cmd.name}",
                                      status='cancelled', detail={'params': norm, 'via': via, 'reason': res['reason']})
                     logger.info("COMMAND CANCELLED: device=%s %s %s via %s", dev_cfg.id, cmd.name, norm, via)
                     return 409, res
+                recheck = ctx.get('recheck')
+                if recheck is not None and not dry_run:
+                    # a rule's job is asked again here, under the bus lock,
+                    # on what it captured when it decided: paused, yielded or
+                    # held since (CMD-Q-8, ADR-0021 D3) — and a standby takes
+                    # it back, it is no failure (D6). Before the rate token
+                    # and any write (OV-F4-R3)
+                    got = recheck()
+                    if got is None and not gw_role.active:
+                        got = ('standby', gw_role.status_text())
+                    if got is not None:
+                        return _dropped(ctx, *got)
+                if not dry_run and not gw_role.active:
+                    return 503, {'status': 'rejected', 'reason': gw_role.status_text()}
+                # a rule's write behaves exactly as before 3.93 until the rules
+                # lot (CR2-6): no renewal shortcut, the rate token, the stamp
+                if not dry_run and not via.startswith('rule:'):
+                    already = _already_set(ctx)
+                if not dry_run and already is None:
+                    # the hold again, under the bus lock: two callers that both
+                    # passed it at admission cannot both write (review 12)
+                    if _hold_applies(ctx):
+                        held = _held(ctx, check_already=False)
+                        if held is not None:
+                            return held
+                    if not _write_rate_ok(f'{via}:{dev_cfg.id}'):
+                        return 429, {'status': 'rejected', 'reason': 'write rate limit exceeded'}
+                if ctx['outside'] and rt is not None and not dry_run:
+                    # asked always, not only when a rule owned the channel at
+                    # admission: one armed (or reloaded) while this waited is
+                    # a safety rule too (RD-3). Never owner_of here: it takes
+                    # the rules lock (ADR-0021, lock order bus → rt._lock)
+                    holder = rt.safety_holder(dev_cfg.id, cmd.name)
+                    if holder is not None:
+                        return 409, {'status': 'rejected', 'reason':
+                                     f"safety rule '{holder}' holds this channel now — it cannot be paused from outside"}
+                if ctx['pause'] is not None and not dry_run:
+                    rt.pause_channel(dev_cfg.id, cmd.name, ctx['pause'][1], who=who, via=via)
                 if not dry_run:
                     with _cmd_refresh_lock:
                         if via == 'refresh':
-                            if _cmd_refresh_gen.get(_rkey, 0) != refresh_gen:
-                                return 409, {'status': 'rejected', 'superseded': True,
+                            if _cmd_refresh_gen.get(_rkey, 0) != ctx['refresh_gen']:
+                                return 409, {'status': 'superseded', 'superseded': True,
                                              'reason': 'a newer command replaced this setting — refresh ended'}
                         else:
                             _cmd_refresh_gen[_rkey] = _cmd_refresh_gen.get(_rkey, 0) + 1
-                if mq is not None:
+                if already is not None:
+                    res = dict(already, status='success')
+                elif mq is not None:
                     res = run_mqtt_command(cmd, norm, mq, regs, dry_run=dry_run,
                                            forbidden_topics=_gateway_command_topics(dev_cfg))
                 else:
                     res = run_command(cmd, norm, drv.connection, regs,
                                       byte_order=getattr(drv, 'byte_order', 'big'), dry_run=dry_run,
                                       max_read=int(getattr(drv, 'max_read', 0) or 0))
+                if not dry_run:
+                    _stamp(ctx, res)
         except ValueError as e:                       # a bad definition — the operator's to fix
             return 422, {'status': 'rejected', 'reason': f"command definition: {e}"}
+        except _BusBusy as e:
+            return 409, {'status': 'cancelled', 'reason': str(e)}
+        if queued_ms is not None:
+            res['queued_ms'] = queued_ms
+        return _record(ctx, res)
+
+    def _stamp(ctx, res: Dict) -> None:
+        """The channel's view of a command that ran — the last step under the
+        bus lock (ADR-0021 D5): a writer waiting for the bus sees it, never a
+        gap between the lock released and the stamp (CMD-Q-8, mirror)."""
+        rt, via = ctx['rt'], ctx['via']
+        ctx['stamped'] = True
+        if res.get('status') not in ('success', 'mismatch', 'unverified') or rt is None:
+            return
+        try:
+            if res.get('already_set') and not via.startswith('rule:'):
+                # nothing went out: the pace is not stamped, an unknown
+                # on/off is learnt without a start (CMD-Q-5, review 10)
+                rt.channel_reconcile(ctx['dev'], ctx['cmd'].name, ctx['norm'])
+            else:
+                rt.channel_note(ctx['dev'], ctx['cmd'].name, ctx['norm'])   # the motor's view, by whoever
+        except Exception:  # noqa: BLE001
+            pass
+
+    def _dropped(ctx, dropped: str, why: str):
+        """A rule's job the head of the bus did not write (ADR-0021 D4):
+        cancelled, said why, audited like the disarm cancel — no failure."""
+        dev_cfg, cmd, norm, via, who = ctx['dev'], ctx['cmd'], ctx['norm'], ctx['via'], ctx['who']
+        res = {'status': 'cancelled', 'dropped': dropped, 'params': norm, 'reason': why,
+               'device': dev_cfg.id, 'via': via, 'by': who, 'ts': round(time.time(), 3)}
+        audit_log.append(user=who, ip=ctx['ip'], action="command", target=f"{dev_cfg.id} {cmd.name}",
+                         status='cancelled', detail={'params': norm, 'via': via, 'dropped': dropped, 'reason': why})
+        logger.info("COMMAND CANCELLED (%s): device=%s %s %s via %s — %s", dropped, dev_cfg.id, cmd.name, norm,
+                    via, why)
+        if dropped == 'held':
+            _cmd_dispatch.count(dev_cfg.id, cmd.name, 'held')
+        return 409, res
+
+    def _record(ctx, res: Dict):
+        """What a command that ran leaves behind: the log, the device's
+        events, the audit, the last result, the channel's view, the read-back
+        in the store, the result on MQTT, the dead-man, the refresh."""
+        dev_cfg, cmd, norm, via, who = ctx['dev'], ctx['cmd'], ctx['norm'], ctx['via'], ctx['who']
+        dry_run, mq, drv, regs, c, ip = ctx['dry_run'], ctx['mq'], ctx['drv'], ctx['regs'], ctx['c'], ctx['ip']
+        lease_s = ctx['lease_s']
+        if ctx.get('id') is not None:
+            res['id'] = ctx['id']
         res.update({'device': dev_cfg.id, 'via': via, 'by': who, 'ts': round(time.time(), 3)})
         if dry_run:
             return 200, res
@@ -3086,11 +4402,8 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
                                  'before': res.get('before'), 'after': res.get('after'),
                                  'reason': res.get('reason'), 'ms': res.get('ms')})
         _cmd_last[f"{dev_cfg.id}:{cmd.name}"] = {k: res.get(k) for k in ('status', 'params', 'before', 'after', 'reason', 'ms', 'via', 'by', 'ts')}
-        if res['status'] in ('success', 'mismatch', 'unverified') and rt is not None:
-            try:
-                rt.channel_note(dev_cfg, cmd.name, norm)     # the motor's view: started / stopped, by whoever
-            except Exception:  # noqa: BLE001
-                pass
+        if not ctx.get('stamped'):
+            _stamp(ctx, res)                     # stamped under the bus lock already (D5)
         if res['status'] in ('success', 'mismatch') and mq is None:
             # (an MQTT read-back reached the store through its subscription)
             # the read-back reaches the live store at once, and the group that
@@ -3119,12 +4432,27 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
                                        tuple(revert + d for d in REVERT_REREAD_AT_S))
             except Exception:  # noqa: BLE001
                 pass
-        _publish_command_result(dev_cfg, cmd.name, res)
         # the dead-man: a controller that dies leaves the device where it put
         # it only until this lease expires — then the gateway runs `safe`
         # a refresh only repeats a setting: it must not renew the dead-man the
         # original command armed, or a dead controller's setting never ends
-        lease = 0 if via == 'refresh' else int(lease_s if lease_s is not None else c['lease_s'] or 0)
+        # The lease is the OUTSIDE controller's dead-man (ADR-0019): a rule
+        # never arms it — 90 s after an OV curtail it would put 100 % back
+        # over the rule (RD-1) — and a rule's write that went out ends one an
+        # outside controller left, whose revert would otherwise write over the
+        # rule (RD-2). The rule's own release value is the rule's business.
+        # A sequence is an outside writer: its lease behaves as before.
+        is_rule = via.startswith('rule:')
+        if is_rule and (ok or int(res.get('frames_sent') or 0) > 0):
+            # the whole CHANNEL: an outside lease taken through another command
+            # of it (keyed on that command's first register) ends too
+            for oc in _commands_for(dev_cfg):
+                if oc.get('channel') != ctx['channel'] or not oc['def'].writes:
+                    continue
+                first = regs.get(oc['def'].writes[0].get('register'))
+                if first is not None:
+                    _lease_mgr.clear(dev_cfg.id, 'command', int(first.address))
+        lease = 0 if (via == 'refresh' or is_rule) else int(lease_s if lease_s is not None else c['lease_s'] or 0)
         vp = cmd.value_param
         safe_keys = [vp.name] if (vp is not None and cmd.safe and vp.name in cmd.safe) else list((cmd.safe or {}).keys())
         is_safe = bool(cmd.safe) and all(norm.get(k) == cmd.safe[k] for k in safe_keys)
@@ -3146,6 +4474,11 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
                                  'data_type': 'command', 'scale': 1.0, 'offset': 0.0,
                                  'safe_value': cmd.safe.get('value'), 'lease_ms': lease * 1000,
                                  'command': cmd.name})
+            res['lease_armed'] = True
+        elif lease > 0 and not cmd.safe and (ok or sent):
+            # a dead-man without a release value never fires: said, not hidden
+            res.update(lease_armed=False, lease_reason='no safe value on the binding or the template — '
+                                                      'the lease cannot release anything')
         elif ok and is_safe and cmd.writes:
             first = regs.get(cmd.writes[0]['register'])
             if first is not None:
@@ -3155,20 +4488,101 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
                 _cancel_refresh(dev_cfg.id, cmd.name)     # the safe value ends the refresh
             elif ok or sent:
                 _arm_refresh(dev_cfg.id, cmd.name, norm, float(cmd.refresh_s))
+        _publish_command_result(dev_cfg, cmd.name, res)
+        ctx['published'] = True
         code = 200 if res['status'] in ('success', 'mismatch', 'unverified') else 422 if res['status'] == 'rejected' else 502
         return code, res
 
+    def _submit_named_command(dev_cfg, client, name: str, params: Dict, *, who='?', ip='?', via='api',
+                              dry_run=False, lease_s=None, refresh_gen=None, still_wanted=None,
+                              is_current=None, cmd_id=None, tell=False, recheck=None):
+        """Admission, then the command in its lane. Returns (http_status,
+        result) when it was refused or ran inline, else the queued Job.
+        ``tell``: every outcome goes to cmd/result (a command that came over
+        MQTT / HA: CMD-Q-4)."""
+        adm = _admit_command(dev_cfg, client, name, params, who=who, ip=ip, via=via, dry_run=dry_run,
+                             lease_s=lease_s, refresh_gen=refresh_gen, still_wanted=still_wanted,
+                             is_current=is_current, cmd_id=cmd_id, recheck=recheck)
+        if isinstance(adm, tuple):
+            code, res = adm
+            res.update({k: v for k, v in (('device', dev_cfg.id), ('via', via), ('by', who), ('id', cmd_id))
+                        if v is not None and k not in res})
+            # the parameters as asked: a client without ids still matches a
+            # refusal to its request (CR2-12)
+            res.setdefault('params', {k: v for k, v in (params or {}).items() if k != 'override_s'})
+            return code, res
+        if dry_run or via.startswith('rule:'):
+            # a dry run only reads; a rule's write travels on its own
+            # per-device writer with the referee (D13: moved in the rules lot)
+            return _execute(adm)
+        cmd = adm['cmd']
+
+        def told(code, res, _ctx=adm):
+            # what the lane said without running it (superseded, expired,
+            # held at the head, cancelled): an executed one is already out
+            if tell and not _ctx.get('published'):
+                _publish_command_result(dev_cfg, cmd.name,
+                                        {'params': dict(_ctx['norm']), **res, 'device': dev_cfg.id, 'via': via,
+                                         'by': who, 'ts': round(time.time(), 3)})
+        job = _CmdJob(lane=_lane_key(dev_cfg, client), device=dev_cfg.id, channel=adm['channel'],
+                      command=cmd.name, params=dict(adm['norm']), run=lambda j: _execute(j.ctx, j),
+                      kind=_cmd_kind(via), coalesce=cmd.coalesce, max_age_s=adm['max_age_s'],
+                      id=cmd_id, on_done=told, ctx=adm)
+        return _cmd_dispatch.submit(job)
+
+    def _await_command(job) -> Tuple[int, Dict]:
+        """A queued command's verdict, waited for at most its max_age_s and
+        its execution time (D4) — a shutdown revert at most its budget: past
+        it, one not started is withdrawn and one running is said to run; the
+        lease stays on disk for boot recovery (ADR-0022, review HIGH 1)."""
+        wait = job.ctx['max_age_s'] + _exec_timeout(job.ctx) + 1.0
+        deadline = job.ctx.get('deadline')
+        if deadline is not None:
+            wait = max(0.0, min(wait, deadline - time.monotonic()))
+        code, res = _cmd_dispatch.wait_for(job, wait)
+        if code == 504 and job.kind == 'revert' and deadline is None:
+            # a revert that runs is in flight, not failed: its waiter (the lease
+            # sweep's thread, which keeps the key in flight) waits for the end —
+            # a 504 here used to read as a failure and fire it again (CR2-3)
+            job.wait()
+            code, res = job.result
+        res.setdefault('device', job.device)
+        return code, res
+
+    def _run_named_command(dev_cfg, client, name: str, params: Dict, *, who='?', ip='?',
+                           via='api', dry_run=False, lease_s=None, refresh_gen=None, still_wanted=None,
+                           is_current=None, cmd_id=None, recheck=None):
+        """Run one command on one unit with every gate, then record it —
+        whichever face asked — and wait for it. Returns (http_status, result).
+        `still_wanted` (a rule's write) is asked once the bus is ours: a rule
+        that left armed meanwhile writes nothing (OV-F4); `is_current` (a
+        lease revert) likewise. `recheck` (a rule's write, rules.recheck on)
+        is asked there too: paused, yielded or held since it decided
+        (ADR-0021)."""
+        got = _submit_named_command(dev_cfg, client, name, params, who=who, ip=ip, via=via, dry_run=dry_run,
+                                    lease_s=lease_s, refresh_gen=refresh_gen, still_wanted=still_wanted,
+                                    is_current=is_current, cmd_id=cmd_id, recheck=recheck)
+        return got if isinstance(got, tuple) else _await_command(got)
+
+    _APPLIED = ('success', 'mismatch', 'unverified')
+
     def _publish_command_result(dev_cfg, name: str, res: Dict) -> None:
+        # a standby hears the same broker: it never answers for the active
+        # gateway (review 5)
+        if not gw_role.active:
+            return
         if not mqtt_publisher or not getattr(mqtt_publisher, 'connected', False):
             return
         try:
             body = json.dumps({'command': name, **res}, default=str)
             mqtt_publisher.client.publish(f"{dev_cfg.mqtt_topic_prefix}/cmd/result", body, qos=1, retain=False)
-            # the last applied command, retained: a controller that restarts
-            # learns what the device was told without asking the wire
-            mqtt_publisher.client.publish(f"{dev_cfg.mqtt_topic_prefix}/cmd/{name}/state",
-                                          json.dumps({k: res.get(k) for k in ('status', 'params', 'after', 'ts', 'via', 'by')}, default=str),
-                                          qos=1, retain=True)
+            # the last APPLIED command, retained: a controller that restarts
+            # learns what the device was told without asking the wire — a
+            # refusal or an error is not what the device holds (CMD-Q-9)
+            if res.get('status') in _APPLIED:
+                mqtt_publisher.client.publish(f"{dev_cfg.mqtt_topic_prefix}/cmd/{name}/state",
+                                              json.dumps({k: res.get(k) for k in ('status', 'params', 'after', 'ts', 'via', 'by')}, default=str),
+                                              qos=1, retain=True)
         except Exception:  # noqa: BLE001
             pass
 
@@ -3190,49 +4604,263 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
         _i, dev_cfg, _c = _find_device(device_id)
         if dev_cfg is None:
             raise HTTPException(status_code=404, detail="device not found")
-        return {'device': device_id, 'commands': [_command_entry(dev_cfg, c) for c in _commands_for(dev_cfg)]}
+        cmds = _commands_for(dev_cfg)
+        return {'device': device_id, 'commands': [_command_entry(dev_cfg, c) for c in cmds],
+                # overrides whose channel the template no longer has: kept, said
+                'orphan_channels': list(cmds[0].get('orphan_channels') or []) if cmds else [],
+                # two keys for one channel: the one not taken (CR2-14)
+                'channel_conflicts': list(cmds[0].get('channel_conflicts') or []) if cmds else []}
 
-    @app.put("/api/devices/{device_id}/commands/{name}/enabled")
-    def set_device_command_enabled(device_id: str, name: str, payload: Dict = Body(...)):
-        """Enable or disable one of the template's commands on a device of its
-        own (an installation's units are enabled from the installation's
-        group). Nothing is written to the device."""
+    def _own_device_for_binding(device_id: str, what: str):
+        """(dev_cfg, client) of a device of its own; an installation's unit
+        takes its bindings and channels from its group (ADR-0019)."""
         _i, dev_cfg, client = _find_device(device_id)
         if dev_cfg is None:
             raise HTTPException(status_code=404, detail="device not found")
         if dev_cfg.endpoint_id:
+            # an installation with groups keeps them per group; one without, on
+            # itself (CR2-4: the pointer named a group that does not exist)
+            grouped = bool((config.get_raw_endpoint(dev_cfg.endpoint_id) or {}).get('groups'))
+            where = (f"in the installation's group '{getattr(dev_cfg, 'group_id', '') or 'units'}'" if grouped
+                     else "on the installation itself")
             raise HTTPException(status_code=422, detail={"errors": [
-                f"'{device_id}' belongs to installation '{dev_cfg.endpoint_id}' — enable it in the group"]})
-        if not any(c['def'].name == name and c['from_template'] for c in _commands_for(dev_cfg)):
+                f"'{device_id}' belongs to installation '{dev_cfg.endpoint_id}' — set its {what} {where}"]})
+        return dev_cfg, client
+
+    def _store_device_raw(device_id: str, client, mutate) -> Tuple[Dict, Dict]:
+        """Change the stored device under the mutation lock — a write-lock or
+        an edit landing between the read and the upsert would otherwise be
+        lost. ``mutate(raw)`` edits the copy; returns (old raw, new raw)."""
+        with _device_mutation_lock:
+            raw = next((copy.deepcopy(d) for d in config._raw_devices if d.get('id') == device_id), None)
+            if raw is None:
+                raise HTTPException(status_code=404, detail="device not found")
+            old = copy.deepcopy(raw)
+            mutate(raw)
+            try:
+                new_cfg = config.upsert_raw_device(raw)
+            except ValueError as e:
+                raise HTTPException(status_code=422, detail={"errors": [str(e)]})
+            registry.replace(device_id, new_cfg, client=client, add_if_missing=False)
+            _commands_changed()
+        return old, raw
+
+    _BINDING_KEYS = ('enabled', 'lease_s', 'safe', 'faces', 'confirm')
+
+    def _binding_errors(c: Dict, merged: Dict, changed, tpl_safe) -> Dict[str, str]:
+        """What a save CHANGES in a binding: the fields' shapes, `safe`
+        through the command's own bounds (CMD-Q-11), and a dead-man that has
+        something to release (CMD-Q-6). What is stored and not touched is
+        not judged (ADR-0006): turning a command off is never refused (CR2-1)."""
+        errs: List[str] = []
+        _validate_commands([{'name': merged['name'], **{k: merged[k] for k in changed if k in merged}}],
+                           errs, safe_def=c['def'])
+        fields = {e.split(':', 1)[0].replace('commands[0].', ''): e.split(':', 1)[1].strip() for e in errs}
+        safe = merged.get('safe') if isinstance(merged.get('safe'), dict) else tpl_safe
+        if not fields and ({'lease_s', 'safe'} & set(changed)) and int(merged.get('lease_s') or 0) > 0 \
+                and not safe:
+            fields['lease_s'] = ('a lease without a safe value never fires — set safe '
+                                 '(what the gateway writes when the lease runs out)')
+        return fields
+
+    def _save_binding(device_id: str, name: str, changes: Dict, request: Optional[Request]) -> Dict:
+        dev_cfg, client = _own_device_for_binding(device_id, 'command bindings')
+        c = next((x for x in _commands_for(dev_cfg) if x['def'].name == name and x['from_template']), None)
+        if c is None:
             raise HTTPException(status_code=404, detail=f"the template offers no command '{name}'")
+        said: Dict[str, Dict] = {}
+
+        def mutate(raw):
+            # read from what is stored, under the lock: the file is the truth
+            prev = next((dict(b) for b in (raw.get('commands') or [])
+                         if isinstance(b, dict) and b.get('name') == name), {})
+            # off keeps the binding and what it says (safe values, faces,
+            # lease): turning it back on finds them, not the template's. A
+            # null removes a field (the template's again)
+            merged = {**prev, 'name': name, 'enabled': bool(prev.get('enabled', True)) if prev else False}
+            for k, v in changes.items():
+                if v is None:
+                    merged.pop(k, None)
+                else:
+                    merged[k] = v
+            _tpl = _modbus_template_of(dev_cfg)
+            fields = _binding_errors(c, merged, [k for k in changes if k != 'enabled'],
+                                     dict(((_tpl.commands or {}).get(name) or {}).get('safe') or {}) if _tpl else {})
+            if fields:
+                raise HTTPException(status_code=422, detail={"errors": [f"{k}: {v}" for k, v in fields.items()],
+                                                             "fields": fields})
+            binds = [dict(b) for b in (raw.get('commands') or []) if isinstance(b, dict) and b.get('name') != name]
+            binds.append(merged)
+            raw['commands'] = binds
+            said.update(prev=prev, merged=merged)
+        _store_device_raw(device_id, client, mutate)
+        prev, merged = said['prev'], said['merged']
+        if not merged.get('enabled'):
+            _cancel_refresh(device_id, name)            # a disabled command stops refreshing
+        if request is not None:
+            audit_log.append(user=getattr(request.state, "user", None) or ("api-key" if _api_key else "anon"),
+                             ip=request.client.host if request.client else "?", action="command binding",
+                             target=f"{device_id} {name}", status="ok",
+                             detail={'old': prev or None, 'new': merged})
+        # rules bound to it re-bind, its MQTT command topic appears or goes
+        _sync_device_discovery()
+        return merged
+
+    @app.put("/api/devices/{device_id}/commands/{name}/enabled")
+    @_device_write
+    def set_device_command_enabled(device_id: str, name: str, request: Request, payload: Dict = Body(...)):
+        """Enable or disable one of the template's commands on a device of its
+        own (an installation's units are enabled from the installation's
+        group). Nothing is written to the device."""
+        _own_device_for_binding(device_id, 'commands')
         # a JSON true/false, said: "false" (a string) once read as true and
         # ENABLED the command; a missing key disabled it
         on = payload.get('enabled')
         if not isinstance(on, bool):
             raise HTTPException(status_code=422, detail={"errors": ["enabled: true or false"],
                                                          "fields": {"enabled": "true or false"}})
-        # the same lock as every device mutation: a write-lock or an edit
-        # landing between this read and the upsert would otherwise be lost
-        with _device_mutation_lock:
-            raw = next((dict(d) for d in config._raw_devices if d.get('id') == device_id), None)
-            if raw is None:
-                raise HTTPException(status_code=404, detail="device not found")
-            binds = [dict(b) for b in (raw.get('commands') or []) if isinstance(b, dict) and b.get('name') != name]
-            prev = next((b for b in (raw.get('commands') or []) if isinstance(b, dict) and b.get('name') == name), {})
-            # off keeps the binding and what it says (safe values, faces,
-            # lease): turning it back on finds them, not the template's
-            binds.append({**prev, 'name': name, 'enabled': on})
-            if not on:
-                _cancel_refresh(device_id, name)        # a disabled command stops refreshing
-            raw['commands'] = binds
-            try:
-                new_cfg = config.upsert_raw_device(raw)
-            except ValueError as e:
-                raise HTTPException(status_code=422, detail={"errors": [str(e)]})
-            registry.replace(device_id, new_cfg, client=client, add_if_missing=False)
-        # rules bound to it re-bind, its MQTT command topic appears or goes
-        _sync_device_discovery()
+        _save_binding(device_id, name, {'enabled': on}, request)
         return {'device': device_id, 'command': name, 'enabled': on}
+
+    @app.put("/api/devices/{device_id}/commands/{name}")
+    @_device_write
+    def set_device_command_binding(device_id: str, name: str, request: Request, payload: Dict = Body(...)):
+        """A template command's binding on a device of its own: {enabled,
+        lease_s, safe, faces, confirm}, merged into what is stored (a key not
+        sent is kept, null removes it; off keeps the binding). `safe` is
+        checked against the command's bounds; a lease needs a safe value.
+        Audited old / new; nothing is written to the device (ADR-0019)."""
+        if not isinstance(payload, dict) or not payload:
+            raise HTTPException(status_code=422, detail={"errors": [
+                f"send any of {', '.join(_BINDING_KEYS)}"]})
+        unknown = sorted(set(payload) - set(_BINDING_KEYS))
+        if unknown:
+            raise HTTPException(status_code=422, detail={"errors": [
+                f"{', '.join(unknown)}: not a binding field ({', '.join(_BINDING_KEYS)})"],
+                "fields": {k: 'unknown' for k in unknown}})
+        merged = _save_binding(device_id, name, dict(payload), request)
+        dev_cfg = config.get_device(device_id)
+        c = _find_command(dev_cfg, name) if dev_cfg is not None else None
+        warns = _lease_pace_warnings(dev_cfg, command=name) if dev_cfg is not None else []
+        return {'device': device_id, 'command': name, 'binding': merged,
+                **({'entry': _command_entry(dev_cfg, c)} if c is not None else {}),
+                **({'warnings': warns} if warns else {})}
+
+    def _lease_pace_warnings(dev_cfg, channel: Optional[str] = None, command: Optional[str] = None) -> List[str]:
+        """A binding's dead-man shorter than its channel's min_interval_s: a
+        controller renewing at the lease's pace is held, and the lease may
+        run out between renewals (ADR-0022, starvation said)."""
+        out = []
+        for c in _commands_for(dev_cfg):
+            cid = c.get('channel') or c['def'].name
+            if (channel is not None and cid != channel) or (command is not None and c['def'].name != command):
+                continue
+            lease = int(c.get('lease_s') or 0)
+            try:
+                mi = float((((c.get('channels') or {}).get(cid)) or {}).get('min_interval_s') or 0)
+            except (TypeError, ValueError):
+                mi = 0.0
+            if lease > 0 and mi > lease:
+                out.append(f"{c['def'].name}: lease_s {lease} is shorter than channel {cid}'s min_interval_s "
+                           f"{mi:g} — a controller renewing at the lease's pace is held, and the dead-man may "
+                           f"fire between renewals")
+        return out
+
+    def _channel_override_errors(value) -> Dict[str, str]:
+        if not isinstance(value, dict) or not value:
+            return {'channel': f"an object of {', '.join(CHANNEL_OVERRIDE_KEYS)} (null removes one)"}
+        errs: Dict[str, str] = {}
+        for k, v in value.items():
+            if k not in CHANNEL_OVERRIDE_KEYS:
+                errs[k] = (f"not a device's to set ({', '.join(CHANNEL_OVERRIDE_KEYS)}; "
+                           "`combine` is the template's)")
+            elif v is None:
+                continue
+            elif isinstance(v, bool) or not isinstance(v, (int, float)) or not 0 <= v <= 86400:
+                errs[k] = '0..86400'
+            elif k == 'max_starts_per_h' and not float(v).is_integer():
+                errs[k] = 'a whole number'
+            elif k == 'max_age_s' and v < 1:
+                errs[k] = '1..86400 (0 would expire every command)'
+        return errs
+
+    @app.put("/api/devices/{device_id}/channels/{key}")
+    @_device_write
+    def set_device_channel(device_id: str, key: str, request: Request, payload: Dict = Body(...)):
+        """This device's override of one of its template's channels — the key
+        is a declared channel name or a member command's name: {min_interval_s,
+        min_on_s, min_off_s, max_starts_per_h, max_age_s}, a null removes one
+        (the template's again). Lower than the template is allowed (60 → 5 is
+        the point); audited old / new (ADR-0019)."""
+        dev_cfg, client = _own_device_for_binding(device_id, 'channel settings')
+        cmds = _commands_for(dev_cfg)
+        defs = {c['def'].name: c['def'] for c in cmds}
+        ids = assign_channels(defs) if defs else {}
+        declared = {d.channel for d in defs.values() if d.channel}
+        if key not in declared and key not in ids:
+            raise HTTPException(status_code=422, detail={"errors": [
+                f"'{key}' is not a channel of '{device_id}' — name a channel "
+                f"({', '.join(sorted(declared)) or 'none declared'}) or one of its commands"],
+                "fields": {'key': 'unknown channel'}})
+        errs = _channel_override_errors(payload)
+        if errs:
+            raise HTTPException(status_code=422, detail={"errors": [f"{k}: {v}" for k, v in errs.items()],
+                                                         "fields": errs})
+        # one channel, one key: `motor` and `set_frequency` both name the VFD's
+        # motor — which one won depended on the file's order (CR2-14)
+        _cid = _override_cid(key, defs, ids)
+        other = next((k for k in (getattr(dev_cfg, 'channels', None) or {})
+                      if k != key and _override_cid(k, defs, ids) == _cid), None)
+        if other is not None:
+            raise HTTPException(status_code=422, detail={"errors": [
+                f"channel '{_cid}' is already overridden under '{other}' — edit that one"],
+                "fields": {'key': f"already set under '{other}'"}})
+        # a pace on a channel an armed steps rule with a fast step drives is
+        # refused (ADR-0022, operator Q5) — judged on what this save changes:
+        # a pace already stored is not set again by an edit of max_age_s (RP-8)
+        _rt = getattr(app.state, 'rules_runtime', None)
+        _before = ((getattr(dev_cfg, 'channels', None) or {}).get(key)) or {}
+        _before = _before if isinstance(_before, dict) else {}
+        _paced = sorted(k for k, v in payload.items() if k in PACE_KEYS and v and v != _before.get(k))
+        _fast = _rt.fast_rule_on(device_id, _cid) if (_rt is not None and _paced) else None
+        if _fast is not None:
+            raise HTTPException(status_code=422, detail={"errors": [
+                f"channel '{_cid}' is driven by the armed rule '{_fast}', a steps rule with a fast step: a pace "
+                f"({', '.join(_paced)}) would hold its other reasserts while its emergency step passes it — "
+                f"put the rule in shadow or remove `fast` first"],
+                "fields": {k: f"refused: rule '{_fast}' has a fast step" for k in _paced}})
+        said: Dict[str, Dict] = {}
+
+        def mutate(raw):
+            chans = {k: dict(v) for k, v in (raw.get('channels') or {}).items() if isinstance(v, dict)}
+            prev = dict(chans.get(key) or {})
+            merged = {**prev, **{k: v for k, v in payload.items() if v is not None}}
+            for k, v in payload.items():
+                if v is None:
+                    merged.pop(k, None)
+            if merged:
+                chans[key] = merged
+            else:
+                chans.pop(key, None)
+            if chans:
+                raw['channels'] = chans
+            else:
+                raw.pop('channels', None)
+            said.update(prev=prev, merged=merged)
+        _store_device_raw(device_id, client, mutate)
+        prev, merged = said['prev'], said['merged']
+        audit_log.append(user=getattr(request.state, "user", None) or ("api-key" if _api_key else "anon"),
+                         ip=request.client.host if request.client else "?", action="channel override",
+                         target=f"{device_id} {key}", status="ok",
+                         detail={'old': prev or None, 'new': merged or None,
+                                 'template': (cmds[0].get('template_channels') or {}).get(ids.get(key, key))
+                                 if cmds else None})
+        dev_cfg = config.get_device(device_id)
+        warns = _lease_pace_warnings(dev_cfg, channel=_cid)
+        return {'device': device_id, 'channel': key, 'override': merged or None,
+                'commands': [_command_entry(dev_cfg, c) for c in _commands_for(dev_cfg)
+                             if c.get('channel') == (key if key in declared else ids.get(key))],
+                **({'warnings': warns} if warns else {})}
 
     def _device_reads(dev_cfg) -> set:
         """The names a device reads itself (registers and its own calculated
@@ -3318,6 +4946,7 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
         return meter_links.catalog()
 
     @app.put("/api/devices/{device_id}/meters")
+    @_device_write
     def set_device_meters(device_id: str, payload: Dict = Body(...), dry_run: bool = False):
         """The meters that measure this device, each in a role — the whole
         list: {meters: [{role, device, power, energy, sign}]}, [] for none —
@@ -3333,6 +4962,7 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
                             raw_options=payload['options'] if 'options' in payload else _ABSENT)
 
     @app.put("/api/devices/{device_id}/energy-meter")
+    @_device_write
     def set_device_energy_meter(device_id: str, payload: Dict = Body(...)):
         """The earlier form: name the device that measures this one's
         electricity — {device, power, energy} — or {} to have none. It sets
@@ -3356,6 +4986,7 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
                                  if k != 'role' and (k != 'sign' or v != 'auto')}}
 
     @app.post("/api/devices/{device_id}/commands/{name}")
+    @_device_runtime
     def run_device_command(device_id: str, name: str, request: Request, payload: Dict = Body(default={})):
         """Run a command on one unit. Body: its parameters (a bare number is
         `value`). Answers the result with its verdict: 200 success / mismatch /
@@ -3367,10 +4998,13 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
             raise HTTPException(status_code=404, detail="device not found")
         params = dict(payload or {})
         lease = params.pop('lease_s', None)
-        code, res = _run_named_command(dev_cfg, client, name, params, who=who, ip=ip, via='api', lease_s=lease)
+        cmd_id = params.pop('id', None)
+        code, res = _run_named_command(dev_cfg, client, name, params, who=who, ip=ip, via='api', lease_s=lease,
+                                       cmd_id=cmd_id)
         return JSONResponse(res, status_code=code)
 
     @app.post("/api/devices/{device_id}/commands/{name}/dry-run")
+    @_device_runtime
     def dry_run_device_command(device_id: str, name: str, request: Request, payload: Dict = Body(default={})):
         """The guard's current readings and the exact frames a run would write
         — nothing on the wire beyond the reads."""
@@ -3378,7 +5012,11 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
         _i, dev_cfg, client = _find_device(device_id)
         if dev_cfg is None:
             raise HTTPException(status_code=404, detail="device not found")
-        code, res = _run_named_command(dev_cfg, client, name, payload or {}, who=who, ip=ip, via='api', dry_run=True)
+        params = dict(payload or {})
+        # the id a run takes is taken (and echoed) by its preview too (CR2-11)
+        cmd_id = params.pop('id', None)
+        code, res = _run_named_command(dev_cfg, client, name, params, who=who, ip=ip, via='api', dry_run=True,
+                                       cmd_id=cmd_id)
         return JSONResponse(res, status_code=code)
 
     @app.post("/api/endpoints/{endpoint_id}/groups/{group_id}/commands/{name}")
@@ -3393,11 +5031,18 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
         # the lease is the dead-man's time, as on one device — never a command
         # parameter, and checked (once, by the runner) before anything is written
         lease = params.pop('lease_s', None)
+        cmd_id = params.pop('id', None)
+        # every unit is submitted first, then all are waited for: units on
+        # different wires run in parallel (ADR-0018 D4)
+        queued = []
         for dev in config.endpoint_devices(endpoint_id):
             if (getattr(dev, 'group_id', '') or 'units') != group_id:
                 continue
             _i, _c, client = registry.find(dev.id)
-            code, res = _run_named_command(dev, client, name, dict(params), who=who, ip=ip, via='api', lease_s=lease)
+            queued.append((dev, _submit_named_command(dev, client, name, dict(params), who=who, ip=ip,
+                                                      via='api', lease_s=lease, cmd_id=cmd_id)))
+        for dev, got in queued:
+            code, res = got if isinstance(got, tuple) else _await_command(got)
             results.append({'device': dev.id, 'unit_id': dev.connection.unit_id, 'http_status': code, **res})
         if not results:
             raise HTTPException(status_code=404, detail="group has no units")
@@ -3432,6 +5077,7 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
 
     # the 3.72.0 routes stay as aliases of the power_limit command
     @app.post("/api/devices/{device_id}/actions/power_limit")
+    @_device_runtime
     def device_power_limit(device_id: str, request: Request, payload: Dict = Body(...)):
         return run_device_command(device_id, 'power_limit', request, payload)
 
@@ -3456,11 +5102,13 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
 
     def _mqtt_command(device_ids, name: str, payload: str) -> None:
         """A controller's command over MQTT. The broker is not a trusted
-        caller: the same gates as the API, plus mqtt.allow_write_entities."""
+        caller: the same gates as the API, plus mqtt.allow_write_entities.
+        Decoded and handed to the device's lane — the MQTT worker never waits
+        for a bus (CMD-Q-1) — and every outcome, a refusal included, is told
+        on cmd/result with the request's `id` (CMD-Q-4)."""
         refused = _mqtt_writes_refused()
         if refused:
             logger.warning("MQTT command %s ignored: %s", name, refused)
-            return
         for did in device_ids:
             _i, d, c = _find_device(did)
             if d is None:
@@ -3471,14 +5119,27 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
             try:
                 params = parse_payload(cm['def'], payload) if str(payload).strip() else {}
             except ValueError as e:
-                _publish_command_result(d, name, {'status': 'rejected', 'reason': str(e), 'device': d.id, 'via': 'mqtt'})
+                # nothing parsed: the payload as it came, for a client to match (CR2-12)
+                _publish_command_result(d, name, {'status': 'rejected', 'reason': str(e), 'device': d.id, 'via': 'mqtt',
+                                                  'payload': str(payload)[:200]})
                 continue
+            cmd_id = params.pop('id', None)
+            if isinstance(cmd_id, (int, float)) and not isinstance(cmd_id, bool):
+                cmd_id = str(cmd_id)                  # a number is an id too
             who = str(params.pop('source', '') or 'mqtt')[:64]
             # a controller's envelope (the legacy collector's schema: command,
             # device_id, ts) says who and what — the parameters are the rest
             for k in ('command', 'device_id', 'ts'):
                 params.pop(k, None)
-            _run_named_command(d, c, name, params, who=who, ip='mqtt', via='mqtt')
+            why = refused or _cmd_id_error(cmd_id)
+            if why:
+                _publish_command_result(d, name, {'status': 'rejected', 'reason': why, 'device': d.id, 'via': 'mqtt',
+                                                  'by': who, 'params': dict(params),
+                                                  **({} if _cmd_id_error(cmd_id) else {'id': cmd_id})})
+                continue
+            got = _submit_named_command(d, c, name, params, who=who, ip='mqtt', via='mqtt', cmd_id=cmd_id, tell=True)
+            if isinstance(got, tuple):
+                _publish_command_result(d, name, got[1])
 
     _device_cmd_topics: set = set()
 
@@ -3532,7 +5193,11 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
 
     app.state.commands_for = _commands_for
     app.state.run_command = _run_named_command
+    app.state.make_lease_revert = _make_lease_revert
     app.state.cmd_lock_for = _cmd_lock_for
+    app.state.lane_key = _lane_key
+    app.state.exec_timeout = _exec_timeout
+    app.state.commands_changed = _commands_changed
     app.state.lease_manager = _lease_mgr
     app.state.mqtt_command = _mqtt_command
     app.state.mqtt_write_command = _mqtt_write_command
@@ -3751,7 +5416,10 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
                                           config_dir=config.config_path.parent, version=__version__,
                                           run_command=self._run)
                 if not self.server.start():
-                    logger.error("OPC UA server did not start: %s", self.server.error)
+                    if self.server.error:
+                        logger.error("OPC UA server did not start: %s", self.server.error)
+                    else:   # a slow host: it keeps starting, status() says so
+                        logger.warning("OPC UA server is still starting; it reports running when ready")
                 return self.server.status()
 
         def shutdown(self):
@@ -3785,7 +5453,8 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
     # what a device's own routes manage (Outputs tab, write lock, Commands
     # tab, linked meter, components): an edit never changes them
     _DEVICE_OWN_KEYS = ('write_locked', 'http_output', 'rest_push', 'pq_recorder',
-                        'energy_meter', 'meters', 'meter_options', 'components', 'commands', 'opcua', 'kind')
+                        'energy_meter', 'meters', 'meter_options', 'components', 'commands', 'channels',
+                        'opcua', 'kind', 'energy_counter_resets')
 
     def _device_put_raw(device_id: str, dev_cfg, payload: Dict, prev: Dict) -> Dict:
         """What saving ``payload`` over the stored device writes: the stored
@@ -3810,18 +5479,26 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
         raw = _apply_routing_defaults(_validate_device_payload(payload, existing_id=device_id,
                                                                stored_conn=prev.get('connection')))
         raw = keep_unsaid(raw, prev, payload, own=_DEVICE_OWN_KEYS)
+        _device_claim_check(raw, device_id, prev)
         # Routing identity (topic prefix / bucket / Influx tag) is FIXED after
         # creation — changing it would re-route future data and orphan the
         # device's history + Home Assistant entities (the enable flags and
         # HA discovery stay editable); an API caller cannot bypass it either.
         raw.setdefault('mqtt', {})['topic_prefix'] = dev_cfg.mqtt_topic_prefix
+        # …and so is its Home Assistant node (stored, or none: the legacy one)
+        _node = ((prev.get('mqtt') or {}).get('ha_node'))
+        if _node:
+            raw['mqtt']['ha_node'] = _node
+        else:
+            raw['mqtt'].pop('ha_node', None)
         raw.setdefault('influxdb', {})['bucket'] = dev_cfg.influxdb_bucket
         raw['influxdb']['device_tag'] = dev_cfg.influxdb_device_tag
         return raw
 
-    def _built_sig(cfgs) -> Optional[str]:
+    def _built_sig(cfgs, also_skip: Tuple[str, ...] = ()) -> Optional[str]:
         """What a set of devices RUNS on — every built field but the name and
-        the kind (labels, refreshed in place) — or None when it cannot be told."""
+        the kind (labels, refreshed in place) and ``also_skip`` — or None when
+        it cannot be told."""
         def _runs_on(d: Dict) -> Dict:
             # a block another protocol reads means nothing here (a TCP device's
             # `http` echoes its timeout — not a reason to restart it)
@@ -3829,6 +5506,10 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
             for k, keep in (('http', proto == 'http'), ('mqtt_in', proto == 'mqtt')):
                 if not keep:
                     d.pop(k, None)
+            if proto not in SERIAL_PROTOCOLS + ('rtu_tap',) + VIRTUAL_MAP_SERIAL:
+                # a line another protocol never opens (an MQTT device's echoed
+                # `serial_port: ''`) is not what it runs on
+                d.pop('serial', None)
             if d.get('serial'):
                 # the raw line as written; a default spelled out is the same line
                 d['serial'] = {'baudrate': 9600, 'parity': 'N', 'stopbits': 1, 'bytesize': 8, **d['serial']}
@@ -3850,7 +5531,7 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
         try:
             # (a kind and a meter link change what is shown and computed, not
             # what is read)
-            skip = ('name', 'kind', 'energy_meter', 'meters', 'meter_options')
+            skip = ('name', 'kind', 'energy_meter', 'meters', 'meter_options') + tuple(also_skip)
             return json.dumps([_runs_on({k: v for k, v in dataclasses.asdict(c).items() if k not in skip})
                                for c in cfgs], sort_keys=True, default=str)
         except Exception:  # noqa: BLE001
@@ -3913,7 +5594,9 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
     # FastAPI still resolves path/body params (it follows __wrapped__).
     _device_mutation_lock = threading.Lock()
 
-    _FIELD_PATH_RE = re.compile(r'^[a-z_]+(\.[a-z_0-9]+)*$')
+    # a path names a field: lowercase keys; a later segment may be a name
+    # of the user's (an HTTP header: X-Auth)
+    _FIELD_PATH_RE = re.compile(r'^[a-z_]+(\.[a-z_0-9]+)*(\.[A-Za-z0-9_-]+)?$')
 
     def _errors_detail(errors: List[str]) -> Dict:
         """A 422's detail: `errors` as always, plus `fields` — each error that
@@ -3958,35 +5641,97 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
     @app.post("/api/devices")
     @_serialized_mutation
     @_field_errors
-    def create_device(payload: Dict = Body(...), dry_run: bool = False):
+    def create_device(payload: Dict = Body(...), dry_run: bool = False, only: Optional[str] = None,
+                      request: Request = None):
         """Create a device: validate → persist → auto-select its template
         registers + ensure its InfluxDB bucket → hot-start its poller and
         publish HA discovery (no restart). `?dry_run=true`: everything a save
-        checks, nothing stored or started — {status: valid, would: create}.
+        checks, nothing stored or started — {status: valid, would: create,
+        entry: the would-be entry (ADR-0031 §5)}. `?dry_run=true&only=connection`:
+        the connection alone (fields, matrix, bus claims, Seplos mode),
+        without an id, a name or a template (L3-F3). ``components``
+        ([{type, instance, name?}]) are created with the device, all or
+        nothing.
         (The id is checked against every device, unit and installation; a
         component the new device declares is checked for a clash only by the
-        real save.) A ``kind`` sent is filed as the device's kind (as
-        ``/organise`` would); later edits keep it and only ``/organise`` changes it."""
+        real save.) A ``type`` (or ``kind``, its older word) sent is filed as
+        the device's type (as ``/organise`` would); later edits keep it and
+        only ``/organise`` changes it. ``attributes`` ({category: value}) are
+        stored with the device; refused, nothing is created (ADR-0027)."""
+        from . import device_types as _dtypes
+        if only is not None:
+            if only != 'connection' or not dry_run:
+                _msg = "only=connection goes with dry_run=true"
+                raise HTTPException(status_code=422, detail={"errors": [f"only: {_msg}"], "fields": {"only": _msg}})
+            return _dry_run_connection(payload)
+        # how Add's Check ended (L3.9-F3): the create's word only, for its
+        # audit line — never stored on the device
+        _check, _check_job = None, None
+        if isinstance(payload, dict) and ('check' in payload or 'check_job' in payload):
+            payload = dict(payload)
+            _check, _check_job = payload.pop('check', None), payload.pop('check_job', None)
+            if _check is not None and _check not in ('ok', 'failed', 'skipped'):
+                _m = "check: ok, failed or skipped (how Add's Check ended)"
+                raise HTTPException(status_code=422, detail={"errors": [_m], "fields": {"check": _m.split(': ', 1)[1]}})
+            if _check_job is not None and not (isinstance(_check_job, str) and re.fullmatch(r'[A-Za-z0-9_-]{1,64}', _check_job)):
+                _m = "check_job: the preview job's id (letters, digits, - and _)"
+                raise HTTPException(status_code=422, detail={"errors": [_m], "fields": {"check_job": _m.split(': ', 1)[1]}})
+        payload = _drop_spec_keys(payload)
         raw = _apply_routing_defaults(_validate_device_payload(payload))
-        if isinstance(payload, dict) and payload.get('kind') not in (None, ''):
-            from .device_kind import OVERRIDABLE, normalize as _norm_kind
-            _k = _norm_kind(payload.get('kind'))
-            if _k not in OVERRIDABLE:
-                msg = f"{str(payload.get('kind'))[:40]!r}: one of {', '.join(OVERRIDABLE)}, or leave it out"
-                raise HTTPException(status_code=422, detail={"errors": [f"kind: {msg}"], "fields": {"kind": msg}})
-            raw['kind'] = _k
+        _set_new_node(raw['mqtt'], raw['id'])
+        _refuse_prefix('mqtt.topic_prefix', raw['mqtt']['topic_prefix'].replace('${device_id}', raw['id'])
+                       .replace('${id}', raw['id']), {f"device:{raw['id']}"})
+        _k, _why = _dtypes.from_payload(payload)
+        if _k is not None or _why:
+            _field = 'type' if isinstance(payload, dict) and 'type' in payload else 'kind'
+            _why = _why or _dtypes.override_error(_k)
+            if _why:
+                raise HTTPException(status_code=422, detail={"errors": [f"{_field}: {_why}"],
+                                                             "fields": {_field: _why}})
+            raw['kind'] = _dtypes.stored_form(_k)
+        _attrs = None
+        if isinstance(payload, dict) and payload.get('attributes') is not None:
+            _tpl = template_registry.get(raw.get('template') or '') if raw.get('template') else None
+            _attrs, _aerr = attributes.check_many('device', payload['attributes'],
+                                                  mppt_count=(_mppt_count_of(_tpl) or None) if _tpl else None)
+            if _aerr:
+                raise HTTPException(status_code=422, detail={"errors": _aerr, "fields": {"attributes": '; '.join(_aerr)}})
+            if _attrs and attributes.store.broken:
+                raise HTTPException(status_code=503, detail={"errors": [
+                    "attributes.yaml cannot be read — fix or restore it, or create the device without attributes"]})
+        _comps = _components_on_create(raw, payload)
+        if _comps:
+            raw['components'] = _comps
+        _device_claim_check(raw, raw['id'])
+        _why = config.raw_device_refusal(raw['id'])     # what the store refuses, dry run or not
+        if _why:
+            raise HTTPException(status_code=422, detail={"errors": [_why]})
         if dry_run:
             if not config.preview_devices(device=raw):
                 raise HTTPException(status_code=422, detail={"errors": [
                     f"device {raw['id']!r} could not be built from the given data"]})
-            return {"status": "valid", "would": "create"}
+            return {"status": "valid", "would": "create", "entry": _would_be_entry(raw)}
         # a new device is not served on OPC UA until someone says so (its
         # Outputs tab): a SCADA sees what it was given, not every new device
         raw.setdefault('opcua', {'enabled': False})
+        # …and writes nothing until an admin unlocks it (/write-lock),
+        # whatever the payload says (ADR-0025, ADD-12)
+        raw['write_locked'] = True
         try:
             dev_cfg = config.upsert_raw_device(raw)
         except ValueError as e:
             raise HTTPException(status_code=422, detail={"errors": [str(e)]})
+        if _comps:
+            # all or nothing: a component the store could not build takes
+            # its parent back with it
+            _lost = [c['id'] for c in _comps if getattr(config.get_device(c['id']), 'component_of', None) != dev_cfg.id]
+            if _lost:
+                try:
+                    config.discard_raw_device(dev_cfg.id)
+                except Exception:  # noqa: BLE001
+                    logger.exception("device %s: rollback failed", dev_cfg.id)
+                raise HTTPException(status_code=422, detail={"errors": [
+                    f"components: {', '.join(_lost)} could not be built (see the log) — nothing was created"]})
         _autoselect_template_registers(dev_cfg)   # before start → poller loads them
         # a NEW device at an old id: nothing an earlier device kept survives
         # (as for its registers); a restore keeps them
@@ -3994,13 +5739,201 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
             attributes.drop('device', dev_cfg.id, reason='a new device at this id')
         except Exception:  # noqa: BLE001 — the device is saved; its attributes must not fail it
             logger.exception("attributes: could not clear what %s held", dev_cfg.id)
+        if _attrs:
+            try:
+                attributes.put_many('device', dev_cfg.id, _attrs, who=_req_user(request), ip=_req_ip(request))
+            except Exception as e:  # noqa: BLE001 — checked above: only a file that broke meanwhile
+                # all or nothing: the device goes again
+                logger.exception("attributes of %s could not be stored: the device is not created", dev_cfg.id)
+                try:
+                    config.discard_raw_device(dev_cfg.id)      # no tombstone: an older one stays as it was
+                except Exception:  # noqa: BLE001
+                    logger.exception("device %s: rollback failed", dev_cfg.id)
+                raise HTTPException(status_code=503, detail={"errors": [
+                    f"its attributes could not be stored ({e}) — nothing was created"]})
         _ensure_device_bucket(dev_cfg)
         client = _start_device_client(dev_cfg)
         registry.add(dev_cfg, client)
+        _made = [_start_new_component(config.get_device(c['id'])) for c in _comps]
         _sync_device_discovery()
         logger.info(f"device {dev_cfg.id}: created "
-                    f"({dev_cfg.protocol}, template={dev_cfg.template or '—'})")
-        return {"status": "created", "device": _device_entry(dev_cfg, client)}
+                    f"({dev_cfg.protocol}, template={dev_cfg.template or '—'})"
+                    + (f" with {len(_made)} component(s)" if _made else ""))
+        try:
+            audit_log.append(user=_req_user(request), ip=_req_ip(request), action="device created",
+                             target=dev_cfg.id, status="ok", detail={
+                                 "check": _check or "not said", "check_job": _check_job,
+                                 "template": dev_cfg.template or "", "protocol": dev_cfg.protocol,
+                                 "components": len(_made)})
+        except Exception:  # noqa: BLE001 — the device is made; its trail line must not fail it
+            logger.exception("audit: device %s created, line not written", dev_cfg.id)
+        out = {"status": "created", "device": _device_entry(dev_cfg, client)}
+        if _made:
+            out["components"] = [_component_view(c) for c in _made]
+        return out
+
+    def _dry_run_connection(payload: Dict, existing_id: Optional[str] = None) -> Dict:
+        """``POST /api/devices?dry_run=true&only=connection`` (L3-F3): the
+        connection judged as a save judges it — its fields, the matrix and
+        the edit locks, the bus claims (ADR-0025), the Seplos mode rule —
+        without an id, a name or a template (one sent is used: a map written
+        for listening decides the role). Nothing is stored, no probe device
+        is ever made. 422 names only the connection's fields.
+        ``existing_id`` (the device page's preview of a saved device): judged
+        as a save of THAT device — its own address is not a clash with
+        itself, its edit locks apply (L3.9)."""
+        import secrets as _secrets
+        conn = payload.get('connection') if isinstance(payload, dict) else None
+        if not isinstance(conn, dict) or not conn:
+            raise HTTPException(status_code=422, detail={"errors": ["connection: required"],
+                                                         "fields": {"connection": "required"}})
+        tid = str(payload.get('template') or '').strip()
+        if existing_id and registry.has(existing_id):
+            probe = existing_id
+        else:
+            existing_id = None
+            probe = 'probe-' + _secrets.token_hex(6)
+            while registry.has(probe):
+                probe = 'probe-' + _secrets.token_hex(6)
+        body = _drop_spec_keys({'id': probe, 'name': probe, 'template': tid, 'enabled': False,
+                                'connection': dict(conn)})
+
+        def _own(e) -> bool:
+            path, sep, _m = str(e).partition(': ')
+            if not sep or not _FIELD_PATH_RE.match(path):
+                return existing_id is not None or probe not in str(e)   # a bus claim or a store refusal
+            return path.split('.', 1)[0] in ('connection', 'sources')
+
+        errs: List[str] = []
+        fields: Dict[str, str] = {}
+        try:
+            raw = _validate_device_payload(body, existing_id=existing_id)
+        except HTTPException as e:
+            d = e.detail if isinstance(e.detail, dict) else {}
+            if e.status_code != 422 or not isinstance(d.get('errors'), list):
+                raise
+            errs = [x for x in d['errors'] if _own(x)]
+            fields = {f: m for f, m in (d.get('fields') or {}).items()
+                      if f.split('.', 1)[0] in ('connection', 'sources')}
+            raw = None
+        # the bus claim is said whatever else the fields said (m6): judged on
+        # the connection as sent when the fields did not pass
+        claim_raw = raw if raw is not None else {'id': probe, 'name': probe, 'template': tid,
+                                                 'enabled': False, 'connection': dict(conn)}
+        try:
+            _device_claim_check(claim_raw, probe)
+        except HTTPException as ce:
+            cd = ce.detail if isinstance(ce.detail, dict) else {}
+            errs += [x for x in (cd.get('errors') or []) if x not in errs]
+        except Exception:  # noqa: BLE001 — a shape that cannot be built: the bus is unknown
+            logger.debug("only=connection: claim check skipped", exc_info=True)
+        try:
+            bus = _bus_of_raw(claim_raw, probe)
+        except Exception:  # noqa: BLE001
+            bus = None
+        if bus is None and raw is None:
+            bus = 'unknown'                 # not told: the connection did not pass
+        if errs:
+            det = _errors_detail(errs)
+            for f, m in fields.items():
+                det.setdefault('fields', {}).setdefault(f, m)
+            det['bus'] = bus
+            raise HTTPException(status_code=422, detail=det)
+        return {"status": "valid", "would": "create", "only": "connection", "bus": bus}
+
+    def _bus_of_raw(raw: Dict, did: str) -> Optional[Dict]:
+        """The bus a device definition would join: {key, where, role, pollers,
+        listeners} (the others already on it), or None (HTTP, MQTT, CAN…)."""
+        from .bus_claims import listeners, pollers, source_claims
+        built = config.preview_devices(device=raw)
+        if not built:
+            return None
+        claims = source_claims(built[0], template_registry)
+        if not claims:
+            return None
+        _i, key, listens, where = claims[0]
+        return {'key': key, 'where': where, 'role': 'listen' if listens else 'master',
+                'pollers': pollers(config, key, template_registry, {did}),
+                'listeners': listeners(config, key, template_registry, {did}, standby=False)}
+
+    def _would_be_entry(raw: Dict) -> Dict:
+        """What a create would store, as the device will be seen: the resolved
+        topic prefix, bucket and Home Assistant node, the wire it speaks, its
+        write lock (always on), its setup (pending when its template has
+        setup writes), the bus it joins with the devices already on it, and
+        the components that come with it (ADR-0031 §5)."""
+        from .bridges import TYPES as _BT
+        from .connection_spec import public, spec_of
+        did = raw['id']
+        built = config.preview_devices(device=raw)
+        dev = built[0] if built else None
+        tpl = template_registry.get(raw.get('template') or '') if raw.get('template') else None
+        try:
+            wire = public(spec_of(raw.get('connection'), config.bridges, _BT))
+        except Exception:  # noqa: BLE001 — the entry is a courtesy of the dry run
+            wire = None
+        return {
+            'id': did, 'name': raw.get('name') or did, 'template': raw.get('template') or '',
+            'enabled': bool(raw.get('enabled', True)), 'type': raw.get('kind') or '',
+            'protocol': dev.protocol if dev else str((raw.get('connection') or {}).get('protocol', '')),
+            'wire': wire,
+            'topic_prefix': dev.mqtt_topic_prefix if dev else raw['mqtt']['topic_prefix'],
+            'bucket': dev.influxdb_bucket if dev else raw['influxdb']['bucket'],
+            'device_tag': dev.influxdb_device_tag if dev else did,
+            'ha_node': (raw.get('mqtt') or {}).get('ha_node') or f"mbg_dev_{did}",
+            'write_locked': True,
+            'opcua_enabled': bool((raw.get('opcua') or {}).get('enabled', False)),
+            'setup': 'pending' if getattr(tpl, 'setup', None) else 'none',
+            'bus': _bus_of_raw(raw, did),
+            'components': [{'id': c['id'], 'type': c['type'], 'instance': c['instance'], 'name': c['name']}
+                           for c in raw.get('components') or []],
+        }
+
+    def _components_on_create(raw: Dict, payload: Dict) -> List[Dict]:
+        """The components a create brings ([{type, instance, name?}]), checked
+        as one added later is (_new_component) — the entries to store, or 422
+        for any of them: all or nothing."""
+        comps = payload.get('components') if isinstance(payload, dict) else None
+        if comps is None or comps == []:
+            return []
+        if not isinstance(comps, list) or len(comps) > 64:
+            raise HTTPException(status_code=422, detail={"errors": [
+                "components: a list of {type, instance, name} (up to 64)"]})
+        did = raw['id']
+        errors: List[str] = []
+        if str((raw.get('connection') or {}).get('protocol', 'tcp')).lower() != 'mqtt':
+            errors.append("components: they are read over MQTT only, for now")
+        tpl = template_registry.get(raw.get('template') or '') if raw.get('template') else None
+        types = dict(getattr(tpl, 'components', None) or {})
+        held: Set[tuple] = set()
+        taken: Set[str] = {did}
+        out: List[Dict] = []
+        for i, c in enumerate(comps):
+            if not isinstance(c, dict):
+                errors.append(f"components[{i}]: an object {{type, instance, name}}")
+                continue
+            entry, cid, errs = _new_component(did, types, c, held, taken)
+            errors += [f"components[{i}].{e}" for e in errs]
+            if entry is not None:
+                held.add((entry['type'], entry['instance']))
+                taken.add(cid)
+                out.append(dict(entry, id=cid))
+        if errors:
+            raise HTTPException(status_code=422, detail=_errors_detail(errors))
+        return out
+
+    def _start_new_component(new):
+        """A component just stored: its template's registers, a clean slate of
+        attributes, its bucket, its client."""
+        from .device_seed import autoselect_template_registers
+        autoselect_template_registers(config, template_registry, new, topics_must_match=True)
+        try:
+            attributes.drop('device', new.id, reason='a new component at this id')
+        except Exception:  # noqa: BLE001
+            logger.exception("attributes: could not clear what %s held", new.id)
+        _ensure_device_bucket(new)
+        registry.add(new, _start_device_client(new))
+        return new
 
     # ── devices that announce themselves over MQTT (mqtt_discovery.py) ──────
     from .mqtt_discovery import MqttDiscovery
@@ -4055,28 +5988,118 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
         discovery_state.set_enabled(flag(payload, "enabled"))
         return {"enabled": discovery_state.enabled}
 
+    def _restore_resets(raw: Optional[Dict]) -> Dict[str, Any]:
+        """What a restore of ``raw`` (a device's stored entry) sets back to safe
+        and so does NOT bring back as it was (ADR-0025 ADD-12): the write lock
+        when it was off, the command bindings that were on. ``{}``: a restore
+        brings it back exactly. Said by the delete and by the restore, so
+        Undo's toast says it plainly (ADR-0032 §8)."""
+        out: Dict[str, Any] = {}
+        raw = raw if isinstance(raw, dict) else {}
+        if raw.get('write_locked') is not True:
+            out['write_locked'] = True
+        cmds = raw.get('commands') if isinstance(raw.get('commands'), list) else []
+        # a binding with no name is said by its place (review n4)
+        on = [str(c.get('name') or f"#{i + 1}") for i, c in enumerate(cmds)
+              if isinstance(c, dict) and c.get('enabled')]
+        if on:
+            out['commands'] = on
+        # its components come back write-locked too (review M1, ADR-0025)
+        comps = raw.get('components') if isinstance(raw.get('components'), list) else []
+        unlocked = [_comp_id(raw, c) for c in comps if isinstance(c, dict) and c.get('write_locked') is False]
+        if unlocked:
+            out['components'] = unlocked
+        return out
+
+    def _comp_id(parent: Dict, c: Dict) -> str:
+        """A component entry's id: its own, else the one the config derives."""
+        return str(c.get('id') or config.component_id(str(parent.get('id', '')), str(c.get('type', '')),
+                                                       str(c.get('instance', ''))))
+
+    def _restore_resumes(raw: Optional[Dict]) -> List[Dict[str, str]]:
+        """What a restore of ``raw`` starts again beside reading (review m6):
+        its REST push (and its components'), each with the host it pushes to —
+        never the URL's path, query or credentials."""
+        from urllib.parse import urlparse
+        raw = raw if isinstance(raw, dict) else {}
+        out: List[Dict[str, str]] = []
+        comps = raw.get('components') if isinstance(raw.get('components'), list) else []
+        for did, ent in [(raw.get('id'), raw)] + [(_comp_id(raw, c), c) for c in comps if isinstance(c, dict)]:
+            rp = ent.get('rest_push') if isinstance(ent, dict) else None
+            if isinstance(rp, dict) and rp.get('enabled') and str(rp.get('url') or '').strip():
+                host = ''
+                try:
+                    u = urlparse(str(rp['url']))
+                    host = u.hostname or ''
+                    if ':' in host:
+                        host = f"[{host}]"            # IPv6, as a URL writes it (R2)
+                    if u.port:
+                        host = f"{host}:{u.port}"
+                except ValueError:
+                    pass                              # a port that is not one: the host is still said
+                out.append({'what': 'rest_push', 'device': str(did or ''), 'host': host})
+        return out
+
     @app.get("/api/devices/restorable")
-    def list_restorable_devices():
+    def list_restorable_devices(check: bool = False):
         """Deleted devices whose full definition was kept (id no longer active).
         Restoring one rebuilds the exact device — connection, template AND its
-        register selection — instead of starting from scratch."""
-        return {"devices": config.list_deleted_devices()}
+        register selection — instead of starting from scratch.
+        ``?check=true``: each also says, before the click, what a restore
+        would refuse (``problems``, the restore's own words; [] = it can come
+        back), what it would set back to safe (``resets``) and what it would
+        start again (``resumes``). One kept device that cannot even be read
+        says so in its own row; the list stands (review M2). The checks run
+        outside the device lock: read-only, but one that runs during a
+        mutation may report a passing problem (review n1)."""
+        items = config.list_deleted_devices()
+        if check:
+            for it in items:
+                try:
+                    _restore_plan(it['id'])
+                    it['problems'] = []
+                except HTTPException as e:
+                    det = e.detail
+                    it['problems'] = ([str(x) for x in det.get('errors') or []] if isinstance(det, dict)
+                                      else [str(det)])
+                except Exception:  # noqa: BLE001 — a malformed kept device: said in its row
+                    logger.warning("restorable %s: kept settings unreadable", it['id'], exc_info=True)
+                    it['problems'] = ["its kept settings are damaged and cannot be restored — Forget them"]
+                try:
+                    raw = config.load_deleted_device(it['id'])
+                    it['resets'] = _restore_resets(raw)
+                    it['resumes'] = _restore_resumes(raw)
+                except Exception:  # noqa: BLE001
+                    it['resets'], it['resumes'] = {}, []
+        return {"devices": items}
 
-    @app.post("/api/devices/{device_id}/restore")
-    @_serialized_mutation
-    def restore_device(device_id: str):
-        """Re-create a previously deleted device from its kept tombstone. Its
-        selected-registers file (kept on disk) is loaded by the poller, so the
-        measurement selection returns intact."""
+    def _restore_plan(device_id: str) -> Dict:
+        """The entry a restore of ``device_id`` would store, every check a
+        restore makes passed — or the HTTPException it refuses with. Nothing
+        is stored; the restore and the list's ``?check=true`` ask the same.
+        Kept settings the checks cannot even read (a planted or hand-edited
+        file) are a 422, never a 500 (review M2)."""
+        try:
+            return _restore_plan_checked(device_id)
+        except HTTPException:
+            raise
+        except Exception:  # noqa: BLE001 — the detail is the log's, not the operator's (R4)
+            logger.warning("restore %s: kept settings unreadable", device_id, exc_info=True)
+            raise HTTPException(status_code=422, detail={"errors": [
+                "its kept settings are damaged and cannot be restored — Forget them"]})
+
+    def _restore_plan_checked(device_id: str) -> Dict:
         if any(d.id == device_id for d in config.devices):
             raise HTTPException(status_code=409, detail={"errors": [
-                f"device '{device_id}' already exists"]})
+                f"device '{device_id}' already exists"], "code": "exists"})
         try:
             raw = config.load_deleted_device(device_id)
         except ValueError as e:
             raise HTTPException(status_code=422, detail={"errors": [str(e)]})
         if raw is None:
             raise HTTPException(status_code=404, detail="no restorable device with that id")
+        if not isinstance(raw, dict):
+            raise HTTPException(status_code=422, detail={"errors": ["its kept settings are not a device"]})
         # re-validate the tombstone through the same SSRF/LAN + protocol/port
         # checks create_device enforces (raises 422 on failure) — a planted or
         # edited tombstone must not reactivate a definition that create would
@@ -4086,7 +6109,11 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
         # commands, linked meter, write lock, outputs, components — and comes
         # back, each checked; nothing else from the file does
         _errs: List[str] = []
-        _validate_commands(raw.get('commands'), _errs)
+        # the tombstone's bindings were stored: a safe the template's bounds
+        # moved away from does not block the restore (CR2-5)
+        _validate_commands(raw.get('commands'), _errs, tpl=template_registry.get(raw.get('template') or ''),
+                           stored=raw.get('commands'))
+        _validate_channels(raw.get('channels'), _errs)
         _comps = raw.get('components')
         if _comps is not None and (not isinstance(_comps, list) or any(
                 not isinstance(c, dict) or (c.get('id') and not _DEVICE_ID_RE.match(str(c['id'])))
@@ -4103,6 +6130,38 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
             if _k in raw and _k not in checked:
                 checked[_k] = raw[_k]
         raw = checked
+        # a restored device comes back safe (ADR-0025, ADD-12): write-locked,
+        # every command binding off until someone turns it on again
+        raw['write_locked'] = True
+        if isinstance(raw.get('commands'), list):
+            raw['commands'] = [{**c, 'enabled': False} if isinstance(c, dict) else c for c in raw['commands']]
+        # its components too: each is a device a write could reach (review M1)
+        if isinstance(raw.get('components'), list):
+            raw['components'] = [{**c, 'write_locked': True} if isinstance(c, dict) else c for c in raw['components']]
+        _device_claim_check(raw, device_id)
+        return raw
+
+    @app.post("/api/devices/{device_id}/restore")
+    @_device_write
+    @_serialized_mutation
+    def restore_device(device_id: str, deleted_ts: Optional[float] = None):
+        """Re-create a previously deleted device from its kept tombstone. Its
+        selected-registers file (kept on disk) is loaded by the poller, so the
+        measurement selection returns intact; its attributes were kept. What
+        ran beside it starts again (its REST push; its retained attributes
+        meta follows as before). ``reset``: what came back set to safe instead of as it was;
+        ``resumed``: what started again. ``deleted_ts`` (an Undo): the delete
+        it undoes — a device kept by a later delete is not restored in its
+        place (409 ``tombstone_changed``, review m1)."""
+        raw = _restore_plan(device_id)
+        if deleted_ts is not None:
+            kept = config.deleted_device_ts(device_id)
+            if kept is None or abs(kept - float(deleted_ts)) > 0.0005:
+                raise HTTPException(status_code=409, detail={"errors": [
+                    f"'{device_id}' was deleted again since this Undo was offered: its kept settings are another "
+                    "device's — see Deleted devices"], "code": "tombstone_changed"})
+        kept_raw = config.load_deleted_device(device_id)
+        resets, resumes = _restore_resets(kept_raw), _restore_resumes(kept_raw)
         try:
             dev_cfg = config.upsert_raw_device(raw)
         except ValueError as e:
@@ -4113,10 +6172,12 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
             _autoselect_template_registers(d)
             _ensure_device_bucket(d)
             registry.add(d, _start_device_client(d))
+            _apply_rest_push(d)                   # the delete stopped it (L3.11c)
         client = registry.find(dev_cfg.id)[2]
         _sync_device_discovery()
         logger.info(f"device {device_id}: restored from tombstone")
-        return {"status": "restored", "device": _device_entry(dev_cfg, client)}
+        return {"status": "restored", "device": _device_entry(dev_cfg, client), "reset": resets,
+                "resumed": resumes}
 
     @app.delete("/api/devices/restorable/{device_id}")
     @_serialized_mutation
@@ -4146,54 +6207,123 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
             logger.exception("attributes: could not drop what %s held", device_id)
         return {"status": "forgotten", "id": device_id}
 
-    def _update_primary_device(payload: Dict, dry_run: bool = False):
-        """Edit device #1 in place: connection → config.modbus, HA flag →
-        global mqtt, name/template updatable; routing identity (topic prefix /
-        bucket / device tag) stays FIXED for byte-identical migration.
-        Reconnects the primary client live. `dry_run`: checked, never saved."""
-        conn = payload.get('connection', {}) or {}
-        if str(conn.get('protocol', 'tcp')).lower() != 'tcp':
-            raise HTTPException(status_code=422, detail={"errors": [
-                "the primary device (UMG512) is Modbus TCP"]})
+    def _primary_connection(conn: Dict) -> Dict[str, Any]:
+        """The primary's connection checked (PUT and PATCH, one validator —
+        ADR-0032 §6): {host, port, unit_id, timeout, retry_attempts,
+        retry_delay} for config.update_modbus (a retry key left out: None,
+        kept). A key left out keeps what the meter runs on; an empty host is
+        still refused. Raises the 422: the class lock first, alone (with its
+        field), then every value refused."""
+        from .connection_spec import edit_errors, spec_of
+        _lock = edit_errors(None, spec_of({'protocol': conn.get('protocol', 'tcp')}, []), {'primary': True})
+        if _lock:
+            raise HTTPException(status_code=422, detail={"errors": [e for _f, e in _lock],
+                                                         "fields": {f: e for f, e in _lock}})
         # Validate like a secondary device — the primary was skipping this, so a
         # bad port/unit_id (e.g. "abc") was persisted and broke the primary client.
         errors = []
-        # a key left out keeps what the meter runs on; an empty
-        # host is still refused
         m = config.modbus
         host = str(conn.get('host', m.host) or '').strip()
         if not host:
             errors.append("connection.host: required for Modbus TCP")
         elif _is_serial_path(host):
             errors.append(_serial_host_error("connection.host", host))
-        try:
-            port = int(conn.get('port', m.port))
-            if not (1 <= port <= 65535):
-                raise ValueError
-        except (TypeError, ValueError):
+        from .conn_advanced import _number
+
+        def _whole(v):
+            # a whole number given as a number or its text; never a boolean
+            # or a fraction (int(2.9) was 2, int(True) was 1 — review #3)
+            n = _number(v)
+            return int(n) if n is not None and n.is_integer() else None
+        port = _whole(conn.get('port', m.port))
+        if port is None or not (1 <= port <= 65535):
             errors.append("connection.port: must be 1..65535")
-        try:
-            unit = int(conn.get('unit_id', m.unit_id))
-            if not (0 <= unit <= 255):
-                raise ValueError
-        except (TypeError, ValueError):
+        unit = _whole(conn.get('unit_id', m.unit_id))
+        if unit is None or not (0 <= unit <= 255):
             errors.append("connection.unit_id: must be 0..255")
-        try:
-            timeout = float(conn.get('timeout', m.timeout))
-        except (TypeError, ValueError):
+        timeout = _number(conn.get('timeout', m.timeout))
+        if timeout is None:
             errors.append("connection.timeout: must be a number")
         else:
             _te = _timeout_error({'timeout': timeout}, {'timeout': float(m.timeout)})
             if _te:
                 errors.append(_te)
+        # the retries by the rule every device's advanced keys follow (a value
+        # as stored is never judged again — ADR-0006); text that is a number
+        # is stored as one (L3.11-F2: it was stored as text and broke the meter)
+        from .conn_advanced import errors as _advanced_errors
+        retry = {k: conn.get(k) for k in ('retry_attempts', 'retry_delay')}
+        errors += _advanced_errors({k: v for k, v in retry.items() if v is not None},
+                                   {'retry_attempts': m.retry_attempts, 'retry_delay': m.retry_delay})
         if errors:
             raise HTTPException(status_code=422, detail={"errors": errors})
-        # what it reads with now: a save that says the same is no save — it
-        # would rewrite config.yaml and reconnect the meter live systems read
-        same = (host == str(m.host) and port == int(m.port) and unit == int(m.unit_id)
-                and float(timeout) == float(m.timeout)
-                and conn.get('retry_attempts') in (None, m.retry_attempts)
-                and conn.get('retry_delay') in (None, m.retry_delay)
+        # stored as the numbers they are, whatever form they came in (a 4.0
+        # stored as a float broke range() in the meter's read loop — review #2)
+        if retry['retry_attempts'] is not None:
+            retry['retry_attempts'] = int(_number(retry['retry_attempts']))
+        if retry['retry_delay'] is not None:
+            retry['retry_delay'] = float(_number(retry['retry_delay']))
+        return {'host': host, 'port': port, 'unit_id': unit, 'timeout': timeout, **retry}
+
+    def _primary_connection_same(vals: Dict[str, Any]) -> bool:
+        """What it reads with now: a save that says the same is no save — it
+        would rewrite config.yaml and reconnect the meter live systems read."""
+        m = config.modbus
+        return (vals['host'] == str(m.host) and vals['port'] == int(m.port) and vals['unit_id'] == int(m.unit_id)
+                and float(vals['timeout']) == float(m.timeout)
+                and vals['retry_attempts'] in (None, m.retry_attempts)
+                and vals['retry_delay'] in (None, m.retry_delay))
+
+    def _apply_primary_or_say(apply: Dict[str, Any], pg_saved: bool = False) -> None:
+        """config.apply_primary, its failures said as what was stored: a save
+        that failed stored nothing (memory put back) — 503, with the poll
+        intervals as a partial save when they went in first; a rebuild that
+        failed after the save — 503 saying it is saved and the gateway must
+        be restarted to run on it (review #9), never a bare 500."""
+        from .config import PrimaryRebuildError
+        try:
+            config.apply_primary(**apply)
+        except PrimaryRebuildError as e:
+            logger.error("primary: saved, but the devices could not be rebuilt (%s)", e)
+            saved = (['polling.poll_groups'] if pg_saved else []) + ['entry']
+            raise HTTPException(status_code=503, detail={
+                "errors": [f"saved to config.yaml, but the running devices could not be rebuilt from it ({e}) — "
+                           "restart the gateway to run on it"],
+                "partial": {"saved": saved, "failed": ["apply"]}})
+        except Exception as e:  # noqa: BLE001 — put back in memory by apply_primary
+            logger.warning("primary: config not written (%s)", e)
+            det: Dict[str, Any] = {"errors": [f"the configuration could not be written ({type(e).__name__}) — "
+                                              + ("only the poll intervals were saved" if pg_saved
+                                                 else "nothing was saved")]}
+            if pg_saved:
+                det["partial"] = {"saved": ["polling.poll_groups"], "failed": ["entry"]}
+            raise HTTPException(status_code=503, detail=det)
+        # _build_devices() rebuilt EVERY DeviceConfig — re-sync the whole list
+        # (clients matched by id), so pollers and config.get_device() never
+        # diverge on derived fields after a primary edit.
+        registry.resync(config.devices, modbus_client)
+
+    def _write_primary_modbus(conn: Dict[str, Any]) -> None:
+        """Settings → Modbus (POST /api/config/modbus), the third writer of
+        ``modbus:`` (review #7): the primary's one validator and one write,
+        under its entry lock; no reconnect (Settings' Apply does it)."""
+        import contextlib
+        # the lock order of every checked device write: the entry's, then
+        # the device-mutation lock
+        entry = (_entry_lock(config.primary_id) if config.primary_id else None) or contextlib.nullcontext()
+        with entry, _device_mutation_lock:
+            vals = _primary_connection(conn)
+            if not _primary_connection_same(vals):
+                config.apply_primary(modbus=vals)
+                registry.resync(config.devices, modbus_client)
+
+    def _update_primary_device(payload: Dict, dry_run: bool = False):
+        """Edit device #1 in place: connection → config.modbus, HA flag →
+        global mqtt; name, template and routing identity (topic prefix /
+        bucket / device tag) stay FIXED for byte-identical migration.
+        Reconnects the primary client live. `dry_run`: checked, never saved."""
+        vals = _primary_connection(payload.get('connection', {}) or {})
+        same = (_primary_connection_same(vals)
                 and ('ha_discovery_enabled' not in payload
                      or flag(payload, 'ha_discovery_enabled') == bool(config.mqtt.ha_discovery_enabled)))
         if same:
@@ -4204,14 +6334,8 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
         if dry_run:
             # anything else rewrites the config and reconnects the meter
             return {"status": "valid", "would": "update_restart"}
-        config.update_modbus(
-            host=host, port=port, unit_id=unit, timeout=timeout,
-            retry_attempts=conn.get('retry_attempts'),
-            retry_delay=conn.get('retry_delay'))
-        if 'ha_discovery_enabled' in payload:
-            config.mqtt.ha_discovery_enabled = flag(payload, 'ha_discovery_enabled')
-        config.save_yaml_config()
-        config._build_devices()
+        _apply_primary_or_say(dict(modbus=vals, ha_discovery=(flag(payload, 'ha_discovery_enabled')
+                                                              if 'ha_discovery_enabled' in payload else None)))
         prim = config.primary_device
         # _build_devices() rebuilt EVERY DeviceConfig — re-sync the whole list
         # (clients matched by id), so pollers and config.get_device() never
@@ -4228,6 +6352,7 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
         return {"status": "updated", "device": _device_entry(prim, modbus_client)}
 
     @app.put("/api/devices/{device_id}")
+    @_device_write
     @_serialized_mutation
     @_field_errors
     def update_device(device_id: str, payload: Dict = Body(...), dry_run: bool = False):
@@ -4237,14 +6362,23 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
         the save checks, nothing stored, nothing restarted — {status: valid,
         would: unchanged | update | update_restart} (whether it would restart
         acquisition)."""
+        payload = _drop_spec_keys(payload)
         idx, dev_cfg, client = _find_device(device_id)
         if dev_cfg is None:
             raise HTTPException(status_code=404, detail="device not found")
+        # a stale If-Match was answered 412 by @_device_write, under the lock
+        return _update_device_locked(device_id, payload, dry_run)
+
+    def _update_device_locked(device_id: str, payload: Dict, dry_run: bool):
+        idx, dev_cfg, client = _find_device(device_id)
         if dev_cfg.primary:
             return _update_primary_device(payload, dry_run=dry_run)
         if dev_cfg.component_of:
             raise HTTPException(status_code=422, detail={"errors": [
                 f"'{device_id}' is a component of '{dev_cfg.component_of}' — manage it from that device"]})
+        _why = config.raw_device_refusal(device_id)     # an installation's unit: dry run or not
+        if _why:
+            raise HTTPException(status_code=422, detail={"errors": [_why]})
         _prev_raw = copy.deepcopy(config.get_raw_device(device_id) or {})
         try:
             raw = _device_put_raw(device_id, dev_cfg, payload, _prev_raw)
@@ -4266,14 +6400,9 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
             if dry_run:
                 return {"status": "valid", "would": "unchanged"}
             return {"status": "unchanged", "device": _device_entry(dev_cfg, client)}
-        # its components read through its connection: while they exist, the
-        # device keeps its template and stays MQTT
-        _comps = config.component_devices(device_id)
-        if _comps and (raw.get('template') != dev_cfg.template or str(
-                (raw.get('connection') or {}).get('protocol', 'tcp')).lower() != 'mqtt'):
-            raise HTTPException(status_code=422, detail={"errors": [
-                f"'{device_id}' has {len(_comps)} component(s): its template and protocol stay "
-                "while they exist — remove them first"]})
+        # (its components read through its connection: while they exist, the
+        # device keeps its template and stays MQTT — an edit lock, held by
+        # _validate_device_payload with the others)
         # Persist FIRST (upsert is transactional and rolls back on failure);
         # only tear down the old client once the new config is committed, so a
         # rejected edit leaves the running device untouched instead of
@@ -4313,7 +6442,396 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
         logger.info(f"device {device_id}: updated")
         return {"status": "updated", "device": _device_entry(new_cfg, new_client)}
 
+    # what a device publishes and how: applied live (the poller reads the
+    # switches at every reading), never a reason to restart acquisition
+    _LIVE_FIELDS = ('ha_discovery_enabled', 'mqtt_enabled', 'influxdb_enabled', 'mqtt_publish_mode',
+                    'mqtt_heartbeat_s', 'influxdb_publish_mode', 'influxdb_write_interval_s',
+                    'influxdb_heartbeat_s', 'http_output_enabled', 'opcua_enabled', 'opcua_fields',
+                    'rest_push')
+    _COUNTER_RESETS_KEPT = 20
+
+    def _patch_locks(dev_cfg) -> List[Dict[str, Any]]:
+        """The dry run's ``locks``: the device's edit locks exactly as
+        ``GET /api/devices/{id}`` says them (device_summary.locks, L3.2a)."""
+        from .device_summary import device_view
+        try:
+            spec, _per = _device_specs(dev_cfg)
+        except Exception:  # noqa: BLE001 — device_view derives it then
+            spec = None
+        return device_view(config, dev_cfg, template_registry, raw=_stored_device_raw(dev_cfg),
+                           spec=spec)['locks']
+
+    def _poll_groups_now(dev_cfg) -> Dict[str, Dict]:
+        try:
+            _regs, groups = config.load_device_registers(dev_cfg)
+        except Exception:  # noqa: BLE001
+            return {}
+        return {n: {"interval": g.interval, "description": g.description} for n, g in (groups or {}).items()}
+
+    def _primary_state() -> Dict[str, Any]:
+        """The primary's flat sections as one entry-shaped dict — what its
+        PATCH diffs (device_patch.changes places each key in its section),
+        each output in the form its file keeps (review #5: a change that
+        never reaches the file is no change)."""
+        m = config.modbus
+        return {'connection': {'host': m.host, 'port': m.port, 'unit_id': m.unit_id, 'timeout': m.timeout,
+                               'retry_attempts': m.retry_attempts, 'retry_delay': m.retry_delay},
+                'http_output': {'enabled': bool(config.http_output_primary_enabled)},
+                'opcua': copy.deepcopy(_primary_kept('opcua')),
+                'rest_push': copy.deepcopy(_primary_kept('rest_push'))}
+
+    def _patch_primary(dev_cfg, secs: Dict[str, Dict], dry_run: bool, intent: Optional[str]):
+        """PATCH on the primary meter (ADR-0032 §6, L3-F19): the sections
+        mapped onto its flat config — connection → ``modbus:`` (the PUT's
+        validator, _primary_connection), http_output / opcua / rest_push →
+        their primary sections (the sub-routes' validators),
+        polling.poll_groups → its register file (the poll-group route's).
+        Anything else — the gateway's HA switch included — is refused per
+        field in its locks' words. One config write (config.apply_primary),
+        one restart decision: the meter reconnects only when its connection
+        changes."""
+        from .config import primary_opcua_kept, primary_rest_push_kept
+        from . import device_patch as _dp
+        device_id = dev_cfg.id
+        if intent == 'replace':
+            raise HTTPException(status_code=422, detail=_errors_detail([
+                "intent: replace is not offered for the primary meter — its counters keep no reset marker"]))
+        if 'connection' in secs:          # a spec is output only (ADR-0026 §1): dropped, as for any device
+            secs = {**secs, 'connection': _drop_spec_keys({'connection': secs['connection']})['connection']}
+        errors = _dp.primary_refusals(secs, {
+            'name': dev_cfg.name, 'type': _device_type_of(dev_cfg)[0], 'template': dev_cfg.template,
+            'ha_discovery': bool(config.mqtt.ha_discovery_enabled),
+            # what GET serves: sent back as served, a key it does not use is no change
+            'connection': _device_entry(dev_cfg, modbus_client)['connection'] if 'connection' in secs else {}})
+        if errors:
+            raise HTTPException(status_code=422, detail=_errors_detail(errors))
+        before = _primary_state()
+        after = copy.deepcopy(before)
+        apply: Dict[str, Any] = {}
+        restart = False
+        if 'connection' in secs:
+            vals = _primary_connection(_dp.primary_connection_keys(secs['connection']))
+            if not _primary_connection_same(vals):
+                # the meter reconnects only when what it reads with changes;
+                # said as it is, modbus: is not rewritten (as PUT: unchanged)
+                after['connection'].update({k: v for k, v in vals.items() if v is not None})
+                apply['modbus'] = vals
+                restart = True
+        pol, plan = secs.get('polling') or {}, {}
+        if 'outputs' in secs:
+            plan, oerr = _dp.outputs_plan(_dp.primary_outputs(secs['outputs']),
+                                          old_rest_headers=dev_cfg.rest_push.get('headers') or {},
+                                          mask=_REST_HDR_MASK, flag=flag, heartbeat_ok=heartbeat_seconds,
+                                          opcua_block=_opcua_block)
+            errors += oerr
+        pg_clean: Dict = {}
+        if 'poll_groups' in pol:
+            pg_clean, why = _dp.poll_groups_clean(pol['poll_groups'])
+            if why:
+                errors.append(f"polling.poll_groups: {why}")
+        if errors:
+            raise HTTPException(status_code=422, detail=_errors_detail(errors))
+        pg_changes: List[Dict] = []
+        if pg_clean:
+            _refuse_busy_poll_groups(dev_cfg, pg_clean, field='polling.poll_groups')
+            pg_changes = _dp.poll_group_changes(_poll_groups_now(dev_cfg), pg_clean)
+        if 'http_output' in plan:
+            after['http_output']['enabled'] = plan['http_output']
+        if 'opcua' in plan:
+            after['opcua'] = primary_opcua_kept(plan['opcua'])
+        if 'rest_push' in plan:
+            after['rest_push'] = primary_rest_push_kept(plan['rest_push'])
+        # only what changes is written (an output said as it is stays as stored)
+        if after['http_output'] != before['http_output']:
+            apply['http_output'] = after['http_output']['enabled']
+        if after['opcua'] != before['opcua']:
+            apply['opcua'] = plan['opcua']
+        if after['rest_push'] != before['rest_push']:
+            apply['rest_push'] = plan['rest_push']
+        entry_changes = _dp.changes(before, after)
+        changes = entry_changes + pg_changes
+        effects: List[str] = []
+        if restart:
+            effects.append("acquisition restarts (connection): the meter reconnects")
+        elif changes:
+            effects.append("applies live — acquisition keeps running")
+        if 'rest_push' in apply:
+            effects.append("the REST push restarts with its new settings")
+        if pg_changes:
+            effects.append("the new poll intervals apply at once")
+        would = 'update_restart' if restart else ('update' if changes else 'unchanged')
+        if dry_run:
+            return {"status": "valid", "would": would, "changes": changes, "restart_required": restart,
+                    "effects": effects, "locks": _patch_locks(dev_cfg)}
+        if not changes:
+            return {"status": "unchanged", "restarted": False, "changes": [],
+                    "device": _device_entry(dev_cfg, modbus_client)}
+        if pg_changes:
+            # the intervals first, as for any device: a file that cannot be
+            # written stores nothing at all
+            try:
+                config.save_device_poll_groups(device_id, pg_clean)
+            except Exception as e:  # noqa: BLE001 — a corrupt file, a full disk: said, nothing stored
+                logger.warning("primary: poll intervals not written (%s) — the edit is not saved", e)
+                raise HTTPException(status_code=422 if isinstance(e, ValueError) else 503, detail={
+                    "errors": [f"polling.poll_groups: the register file could not be written ({type(e).__name__}: "
+                               f"{e}) — nothing was saved"],
+                    "fields": {"polling.poll_groups": "could not be written"}})
+        if entry_changes:
+            try:
+                _apply_primary_or_say(apply, pg_saved=bool(pg_changes))     # the one config write
+            except HTTPException:
+                if pg_changes:            # the intervals went in: they apply
+                    _reload_poll_groups(dev_cfg, modbus_client)
+                raise
+        prim = config.primary_device
+        if restart and modbus_client:
+            modbus_client.update_config(config.modbus)
+            modbus_client.reconnect()
+        if pg_changes:
+            _reload_poll_groups(prim, modbus_client)
+        if 'rest_push' in apply:
+            _apply_rest_push(prim)
+        logger.info(f"device {device_id}: patched ({', '.join(sorted({c['section'] for c in changes}))})"
+                    f"{' — reconnected' if restart else ' — kept running'}")
+        return {"status": "updated", "restarted": restart, "changes": changes,
+                "device": _device_entry(prim, modbus_client)}
+
+    @app.patch("/api/devices/{device_id}")
+    @_device_write
+    @_serialized_mutation
+    @_field_errors
+    def patch_device(device_id: str, request: Request, payload: Dict = Body(...), dry_run: bool = False,
+                     intent: Optional[str] = None):
+        """Edit a device in sections (ADR-0031 §4–§5): {sections: {connection?,
+        polling?: {enabled, poll_groups}, identity?: {name, type}, outputs?:
+        {mqtt, influxdb, ha_discovery, http_output, opcua, rest_push},
+        model?: {template}}}. ``If-Match`` is required (428 without; a stale
+        one 412). Every section is judged by the validator its own route
+        uses; then one config write, one audit record, one restart decision
+        (acquisition restarts only when what it runs on changes; outputs and
+        the name apply live). `?dry_run=true` stores nothing and answers
+        {status, would, changes: [{section, field, from, to}],
+        restart_required, effects, locks}; it does not need If-Match.
+        `?intent=replace` (Replace hardware) also writes an energy-counter
+        reset marker (``energy_counter_resets``). The write lock is not a
+        section (its own route). The primary meter takes the same body
+        through an adapter onto its flat config (_patch_primary, ADR-0032 §6):
+        what applies to it is GET's ``edit_sections``, the rest is refused
+        per field in the words of its ``locks``."""
+        from . import device_patch as _dp
+        _i, dev_cfg, client = _find_device(device_id)
+        if dev_cfg is None:
+            raise HTTPException(status_code=404, detail="device not found")
+        if not dry_run and request.headers.get('if-match') is None:
+            raise HTTPException(status_code=428, detail={"errors": [
+                "If-Match: required — send the ETag of GET /api/devices/{id}; a PATCH never overwrites a "
+                "version it did not read"]})
+        if intent not in (None, '', 'replace'):
+            raise HTTPException(status_code=422, detail={"errors": ["intent: replace, or none"],
+                                                         "fields": {"intent": "replace, or none"}})
+        try:
+            secs = _dp.parse(payload)
+        except _dp.PatchError as e:
+            raise HTTPException(status_code=422, detail=_errors_detail(e.errors))
+        if dev_cfg.primary:
+            return _patch_primary(dev_cfg, secs, dry_run, intent)
+        if dev_cfg.component_of:
+            raise HTTPException(status_code=422, detail={"errors": [
+                f"'{device_id}' is a component of '{dev_cfg.component_of}' — manage it from that device"]})
+        _why = config.raw_device_refusal(device_id)     # an installation's unit
+        if _why:
+            raise HTTPException(status_code=422, detail={"errors": [_why]})
+        prev = copy.deepcopy(config.get_raw_device(device_id) or {})
+        errors: List[str] = []
+        ident, model, pol = secs.get('identity', {}), secs.get('model', {}), secs.get('polling', {})
+        put: Dict[str, Any] = {}
+        if 'connection' in secs:
+            put['connection'] = secs['connection']
+        if 'name' in ident:
+            if not isinstance(ident['name'], str) or len(ident['name'].strip()) > 80:
+                errors.append("identity.name: text, up to 80 characters ('' = the id)")
+            else:
+                put['name'] = ident['name'].strip()
+        if 'template' in model:
+            if not isinstance(model['template'], str):
+                errors.append("model.template: a template id")
+            else:
+                put['template'] = model['template']
+        if 'enabled' in pol:
+            if not isinstance(pol['enabled'], bool):
+                errors.append("polling.enabled: true or false")
+            else:
+                put['enabled'] = pol['enabled']
+        if errors:
+            raise HTTPException(status_code=422, detail=_errors_detail(errors))
+        before = prev
+        raw = copy.deepcopy(prev)
+        if put:
+            try:
+                raw = _device_put_raw(device_id, dev_cfg, _drop_spec_keys(put), prev)
+            except BridgeConflict as e:
+                raise HTTPException(status_code=422, detail={"errors": [str(e)]})
+            try:
+                base = _device_put_raw(device_id, dev_cfg, copy.deepcopy(prev), prev)
+            except Exception as e:  # noqa: BLE001 — the comparison never fails a save
+                logger.debug("device %s: unchanged-check skipped (%s)", device_id, e)
+                base = None
+            if base is not None:
+                raw = _drop_echoed_defaults(raw, base)
+                if raw == base:
+                    raw = copy.deepcopy(prev)    # said what it was: the entry is not rewritten
+                else:
+                    before = base
+        # identity.type: the rule of /organise
+        if 'type' in ident:
+            kind, why = _kind_of_payload(dev_cfg, {'type': ident['type']})
+            if why:
+                errors.append(f"identity.type: {why}")
+            elif kind:
+                raw['kind'] = kind
+            else:
+                raw.pop('kind', None)
+        plan: Dict[str, Any] = {}
+        if 'outputs' in secs:
+            plan, oerr = _dp.outputs_plan(secs['outputs'], old_rest_headers=dev_cfg.rest_push.get('headers') or {},
+                                          mask=_REST_HDR_MASK, flag=flag, heartbeat_ok=heartbeat_seconds,
+                                          opcua_block=_opcua_block)
+            errors += oerr
+        pg_clean: Dict = {}
+        pg_changes: List[Dict] = []
+        if 'poll_groups' in pol:
+            pg_clean, why = _dp.poll_groups_clean(pol['poll_groups'])
+            if why:
+                errors.append(f"polling.poll_groups: {why}")
+        if errors:
+            raise HTTPException(status_code=422, detail=_errors_detail(errors))
+        if pg_clean:
+            _refuse_busy_poll_groups(dev_cfg, pg_clean, field='polling.poll_groups')
+            pg_changes = _dp.poll_group_changes(_poll_groups_now(dev_cfg), pg_clean)
+        _dp.apply_outputs(raw, plan)
+        if intent == 'replace':
+            import datetime as _dt
+            now = time.time()
+            marks = [m for m in (raw.get('energy_counter_resets') or []) if isinstance(m, dict)]
+            marks.append({'at': _dt.datetime.fromtimestamp(now, _dt.timezone.utc).isoformat(timespec='seconds'),
+                          'ts': round(now, 3), 'reason': 'replace'})
+            raw['energy_counter_resets'] = marks[-_COUNTER_RESETS_KEPT:]
+        changes = _dp.changes(before, raw) + pg_changes
+        entry_changed = raw != prev
+        built = config.preview_devices(device=raw)
+        if not built:
+            raise HTTPException(status_code=422, detail={"errors": [
+                f"device {device_id!r} could not be built from the given data"]})
+        # a device that should run and does not: its connection saved is how
+        # one reconnects it, changed or not (as PUT)
+        reconnect = bool(dev_cfg.enabled and client is None and 'connection' in secs)
+        old_sig = _built_sig(config.preview_devices(device=prev), _LIVE_FIELDS)
+        new_sig = _built_sig(built, _LIVE_FIELDS)
+        restart = reconnect or (entry_changed and (old_sig is None or new_sig is None or old_sig != new_sig))
+        comps = [d.id for d in config.component_devices(device_id)]
+        effects: List[str] = []
+        if restart:
+            why = sorted({c['section'] for c in changes if c['section'] in ('connection', 'model', 'polling')})
+            effects.append("acquisition restarts" + (f" ({', '.join(why)})" if why else
+                                                     " (it should run and does not: it reconnects)"))
+            if comps:
+                effects.append(f"its {len(comps)} component(s) restart with it")
+        elif changes:
+            effects.append("applies live — acquisition keeps running")
+        if 'template' in put and any(c['field'] == 'template' for c in changes):
+            effects.append("the new template's registers are selected where the device has none selected")
+        if plan.get('sinks') and ({'mqtt', 'ha_discovery'} & set(plan['sinks'])):
+            effects.append("Home Assistant discovery is published again")
+        if 'rest_push' in plan and any(c['field'].startswith('rest_push') for c in changes):
+            effects.append("the REST push restarts with its new settings")
+        if pg_changes:
+            effects.append("the new poll intervals apply at once")
+        if intent == 'replace':
+            effects.append("an energy-counter reset marker is written: the new meter's counters start a new "
+                           "series (the Energy tab does not read it yet)")
+        would = 'update_restart' if restart else ('update' if changes else 'unchanged')
+        if dry_run:
+            return {"status": "valid", "would": would, "changes": changes, "restart_required": restart,
+                    "effects": effects, "locks": _patch_locks(dev_cfg)}
+        if not changes and not restart:
+            return {"status": "unchanged", "restarted": False, "changes": [],
+                    "device": _device_entry(dev_cfg, client)}
+        if pg_changes:
+            # the intervals (already checked) live in the device's register
+            # file: written FIRST, so a file that cannot be written stores
+            # nothing at all — never an entry saved without its intervals
+            try:
+                config.save_device_poll_groups(device_id, pg_clean)
+            except Exception as e:  # noqa: BLE001 — a corrupt file, a full disk: said, nothing stored
+                logger.warning("device %s: poll intervals not written (%s) — the edit is not saved", device_id, e)
+                raise HTTPException(status_code=422 if isinstance(e, ValueError) else 503, detail={
+                    "errors": [f"polling.poll_groups: the register file could not be written ({type(e).__name__}: "
+                               f"{e}) — nothing was saved"],
+                    "fields": {"polling.poll_groups": "could not be written"}})
+        new_cfg = dev_cfg
+        if entry_changed:
+            try:
+                new_cfg = config.upsert_raw_device(raw)        # the one config write
+            except ValueError as e:
+                det: Dict[str, Any] = {"errors": [str(e)]}
+                if pg_changes:
+                    # the intervals went in: they apply, and the answer says so
+                    _reload_poll_groups(dev_cfg, client)
+                    det["partial"] = {"saved": ["polling.poll_groups"], "failed": ["entry"]}
+                raise HTTPException(status_code=422, detail=det)
+        if restart:
+            if client:
+                client.disconnect()
+            _autoselect_template_registers(new_cfg)
+            _ensure_device_bucket(new_cfg)
+            new_client = _start_device_client(new_cfg)
+            registry.replace(device_id, new_cfg, client=new_client, add_if_missing=True)
+            _apply_rest_push(new_cfg)
+            _restart_devices(comps)
+        else:
+            registry.replace(device_id, new_cfg)            # keep the running client
+            new_client = registry.find(device_id)[2]
+            if 'rest_push' in plan:
+                _apply_rest_push(new_cfg)
+            if pg_changes:
+                _reload_poll_groups(new_cfg, new_client)
+        _sync_device_discovery()
+        if 'type' in ident:
+            try:
+                attributes.invalidate()
+                _publish_attribute_meta()
+            except Exception:  # noqa: BLE001 — publishing never fails a save
+                logger.exception("attributes meta after a type change")
+        logger.info(f"device {device_id}: patched ({', '.join(sorted({c['section'] for c in changes}))})"
+                    f"{' — restarted' if restart else ' — kept running'}"
+                    f"{' [replace: counter reset marker]' if intent == 'replace' else ''}")
+        return {"status": "updated", "restarted": restart, "changes": changes,
+                "device": _device_entry(new_cfg, new_client)}
+
+    def _refresh_shared(dev_cfg, scope: str) -> None:
+        """An installation's unit sets an output for every unit of its
+        installation (scope 'endpoint': HTTP / JSON, REST push) or of its
+        group ('group': OPC UA, the publishing rhythm): every one of them
+        is drawn again in the registry (the unit written is already), so
+        each says it at once (review of L3.11b, m3). A REST push is
+        (re)started for each."""
+        if not getattr(dev_cfg, 'endpoint_id', None):
+            return
+        for d in list(config.devices):
+            if d.id == dev_cfg.id or d.endpoint_id != dev_cfg.endpoint_id:
+                continue
+            if scope == 'group' and d.group_id != dev_cfg.group_id:
+                continue
+            try:
+                registry.replace(d.id, d)               # keep the running client
+                if scope == 'rest':
+                    _apply_rest_push(d)
+            except Exception:  # noqa: BLE001 — a sibling's refresh never fails the write
+                logger.exception(f"device {d.id}: refresh after {dev_cfg.id}'s shared output")
+
     @app.post("/api/devices/{device_id}/http-output")
+    @_device_write
     def set_device_http_output(device_id: str, payload: Dict = Body(...)):
         """Toggle the HTTP/JSON output sink for a device. Read-only feed, so no
         poller restart — just flip the flag, persist, and refresh the runtime
@@ -4328,12 +6846,14 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
             raise HTTPException(status_code=422, detail={"errors": [str(e)]})
         new_cfg = config.get_device(device_id)
         registry.replace(device_id, new_cfg)       # keep the running client
+        _refresh_shared(new_cfg, 'endpoint')
         logger.info(f"device {device_id}: http output {'enabled' if enabled else 'disabled'}")
         return {"status": "ok", "device_id": device_id,
                 "http_output_enabled": enabled,
                 "path": f"/api/meters/{device_id}"}
 
     @app.post("/api/devices/{device_id}/outputs")
+    @_device_write
     def set_device_outputs(device_id: str, payload: Dict = Body(...)):
         """Switch a device's MQTT / InfluxDB output or its Home Assistant
         discovery at once ({mqtt, influxdb, ha_discovery}, each optional). No
@@ -4358,35 +6878,17 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
                 "ha_discovery_enabled": new_cfg.ha_discovery_enabled}
 
     @app.post("/api/devices/{device_id}/publishing")
+    @_device_write
     def set_device_publishing(device_id: str, payload: Dict = Body(...)):
         """A device's own publishing rhythm, apart from Settings:
         {mqtt: {publish_mode, heartbeat_interval}, influxdb: {publish_mode,
-        write_interval}}; null = back to Settings, a key left out stays.
+        write_interval, heartbeat_interval}}; null = back to Settings, a key
+        left out stays.
         Applies at the next reading, no poller restart."""
         if config.get_device(device_id) is None:
             raise HTTPException(status_code=404, detail="device not found")
-        allowed = {'mqtt': ('publish_mode', 'heartbeat_interval'), 'influxdb': ('publish_mode', 'write_interval')}
-        errors, out = [], {}
-        for sect, keys in allowed.items():
-            block = payload.get(sect)
-            if block is None:
-                continue
-            if not isinstance(block, dict) or set(block) - set(keys):
-                errors.append(f"{sect}: an object with {', '.join(keys)}")
-                continue
-            clean = {}
-            for k, v in block.items():
-                if v is None:
-                    clean[k] = None
-                elif k == 'publish_mode':
-                    if v not in ('changed', 'all'):
-                        errors.append(f"{sect}.publish_mode: changed or all (null = as in Settings)")
-                    clean[k] = v
-                elif isinstance(v, bool) or not isinstance(v, (int, float)) or v < 0 or v > 86400:
-                    errors.append(f"{sect}.{k}: seconds, 0..86400 (null = as in Settings)")
-                else:
-                    clean[k] = int(v) if k == 'heartbeat_interval' else float(v)
-            out[sect] = clean
+        from .device_patch import publishing_clean
+        out, errors = publishing_clean(payload, heartbeat_seconds)
         if not out and not errors:
             errors.append("send mqtt and/or influxdb")
         if errors:
@@ -4397,6 +6899,7 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
             raise HTTPException(status_code=422, detail={"errors": [str(e)]})
         new_cfg = config.get_device(device_id)
         registry.replace(device_id, new_cfg)
+        _refresh_shared(new_cfg, 'group')
         logger.info(f"device {device_id}: publishing {out}")
         return {"status": "ok", "device_id": device_id, "publishing": _publishing(new_cfg)}
 
@@ -4406,11 +6909,13 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
         settings = {'mqtt': {'publish_mode': config.mqtt.publish_mode,
                              'heartbeat_interval': config.mqtt.heartbeat_interval},
                     'influxdb': {'publish_mode': config.influxdb.publish_mode,
-                                 'write_interval': config.influxdb.write_interval}}
+                                 'write_interval': config.influxdb.write_interval,
+                                 'heartbeat_interval': config.influxdb.heartbeat_interval}}
         own = {'mqtt': {'publish_mode': dev_cfg.mqtt_publish_mode or None,
                         'heartbeat_interval': dev_cfg.mqtt_heartbeat_s},
                'influxdb': {'publish_mode': dev_cfg.influxdb_publish_mode or None,
-                            'write_interval': dev_cfg.influxdb_write_interval_s}}
+                            'write_interval': dev_cfg.influxdb_write_interval_s,
+                            'heartbeat_interval': dev_cfg.influxdb_heartbeat_s}}
         if dev_cfg.primary:
             own = {s: {k: None for k in v} for s, v in own.items()}
         eff = {s: {k: (own[s][k] if own[s][k] is not None else settings[s][k]) for k in settings[s]}
@@ -4418,6 +6923,7 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
         return {'own': own, 'settings': settings, 'effective': eff, 'editable': not dev_cfg.primary}
 
     @app.post("/api/devices/{device_id}/opcua-output")
+    @_device_write
     def set_device_opcua_output(device_id: str, payload: Dict = Body(...)):
         """Serve a device on the OPC UA server or not, and which of its values
         (`fields`, omitted or [] = every one). No poller restart: the server
@@ -4431,6 +6937,7 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
             raise HTTPException(status_code=422, detail={"errors": [str(e)]})
         new_cfg = config.get_device(device_id)
         registry.replace(device_id, new_cfg)       # keep the running client
+        _refresh_shared(new_cfg, 'group')
         shared = [d.id for d in config.devices if new_cfg.endpoint_id and d.endpoint_id == new_cfg.endpoint_id
                   and d.group_id == new_cfg.group_id]
         logger.info(f"device {device_id}: opc ua output {'on' if block['enabled'] else 'off'}"
@@ -4439,6 +6946,7 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
                 "opcua_fields": list(new_cfg.opcua_fields), "applies_to": shared or [device_id]}
 
     @app.post("/api/devices/{device_id}/rest-push")
+    @_device_write
     def set_device_rest_push(device_id: str, payload: Dict = Body(...)):
         """Configure the generic REST push sink for a device (POST its values to
         an external URL on an interval). Header VALUES are masked on read and
@@ -4446,34 +6954,12 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
         dev = config.get_device(device_id)
         if dev is None:
             raise HTTPException(status_code=404, detail="device not found")
-        errors = []
-        enabled = flag(payload, 'enabled', False)
-        url = str(payload.get('url', '') or '').strip()
-        if enabled and not (url.startswith('http://') or url.startswith('https://')):
-            errors.append("url: required (http:// or https://) when enabled")
-        try:
-            interval = int(payload.get('interval_s', 30))
-            if interval < 5:
-                errors.append("interval_s: minimum 5 seconds")
-        except (TypeError, ValueError):
-            errors.append("interval_s: must be an integer")
-            interval = 30
-        fmt = str(payload.get('format', 'native'))
-        if fmt not in ('native', 'flat'):
-            errors.append("format: must be 'native' or 'flat'")
+        # Preserve masked header secrets: a value equal to the mask keeps the stored one.
+        from .device_patch import rest_push_clean
+        cfg, errors = rest_push_clean(payload, dev.rest_push.get('headers') or {}, _REST_HDR_MASK, flag)
         if errors:
             raise HTTPException(status_code=422, detail={"errors": errors})
-        # Preserve masked header secrets: a value equal to the mask keeps the stored one.
-        old_h = dict(dev.rest_push.get('headers') or {})
-        new_h = payload.get('headers')
-        headers = old_h
-        if isinstance(new_h, dict):
-            headers = {k: (old_h.get(k, v) if v == _REST_HDR_MASK else v)
-                       for k, v in new_h.items() if k}
-        cfg = {'enabled': enabled, 'url': url, 'interval_s': interval,
-               'headers': headers, 'format': fmt,
-               'verify_tls': flag(payload, 'verify_tls', True),
-               'timeout': int(payload.get('timeout', 10) or 10)}
+        enabled = cfg['enabled']
         try:
             config.set_rest_push(device_id, cfg)
         except ValueError as e:
@@ -4481,10 +6967,12 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
         new_cfg = config.get_device(device_id)
         registry.replace(device_id, new_cfg)       # keep the running client
         _apply_rest_push(new_cfg)
+        _refresh_shared(new_cfg, 'rest')
         logger.info(f"device {device_id}: REST push {'enabled' if enabled else 'disabled'}")
         return {"status": "ok", "rest_push": _rest_push_public(new_cfg)}
 
     @app.post("/api/devices/{device_id}/rest-push/test")
+    @_device_runtime
     def test_device_rest_push(device_id: str):
         """Push once right now and report the result — the card's Test button.
         Works even before enabling, as long as a URL is configured."""
@@ -4587,6 +7075,7 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
         }
 
     @app.post("/api/devices/{device_id}/write")
+    @_device_runtime
     def write_device_register(device_id: str, request: Request, payload: Dict = Body(...)):
         """Write a value to a device (Modbus FC5 coil / FC6+FC16 holding).
 
@@ -4604,7 +7093,6 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
         - authenticated + rate-limited + audited; the value is read back.
         """
         from .config import normalize_register_type
-        from .modbus_client import coil_truthy as _coil_truthy
         if not gw_role.active:
             raise HTTPException(status_code=503, detail={"errors": [gw_role.status_text()]})
         if not config.security.allow_writes:
@@ -4622,14 +7110,23 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
         _idx, dev_cfg, client = _find_device(device_id)
         if dev_cfg is None:
             raise HTTPException(status_code=404, detail="device not found")
+        # what can never be written is said first (a listened bus stays one
+        # whether locked or not), then the lock — the order the device
+        # menus give their reasons in (ADR-0032 §3, L3.10 review m2)
+        if dev_cfg.protocol == 'http':
+            raise HTTPException(status_code=400, detail={"errors": [
+                "HTTP/JSON devices cannot be written"]})
+        _protos = [str(getattr(x, 'protocol', '') or '').lower()
+                   for x in (dev_cfg.sources or []) if getattr(x, 'enabled', True)] or [dev_cfg.protocol]
+        if all(p_ in READ_ONLY_PROTOCOLS for p_ in _protos):
+            raise HTTPException(status_code=400, detail={"errors": [
+                f"{', '.join(dict.fromkeys(_protos))} devices are read-only — the gateway never "
+                f"writes to that bus"]})
         if dev_cfg.write_locked:
             raise HTTPException(status_code=403, detail={"errors": [
                 f"device '{device_id}' is write-locked — unlock it "
                 + ("via security.primary_write_locked" if dev_cfg.primary
-                   else "in the device's Outputs tab (write protection)")]})
-        if dev_cfg.protocol == 'http':
-            raise HTTPException(status_code=400, detail={"errors": [
-                "HTTP/JSON devices cannot be written"]})
+                   else "from the device's ⋯ → Unlock writes… (admin)")]})
         rtype = normalize_register_type(payload.get('register_type') or payload.get('fc') or 'holding')
         if rtype in ('input', 'discrete'):
             raise HTTPException(status_code=400, detail={"errors": [
@@ -4641,23 +7138,28 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
             raise HTTPException(status_code=422, detail={"errors": ["address must be an integer 0..65535"]})
         if 'value' not in payload:
             raise HTTPException(status_code=422, detail={"errors": ["value is required"]})
+        if _writes_by_mqtt(dev_cfg):
+            # as on HA (ADR-0022, review MED 4e): there is no register to write
+            raise HTTPException(status_code=422, detail={"errors": [
+                f"'{device_id}' is read over MQTT — it is written only through an enabled command: "
+                f"GET /api/devices/{device_id}/commands"]})
         # ── write envelope: declared path (guards enforce) or raw path (opt-in) ──
         rule = _write_rule(dev_cfg, address, rtype)
         unguarded = False
         if rule is not None and rule.writable:
-            # A register whose engineering value depends on a live scale
-            # factor, or that a command writes first (WMaxLimPct travels with
-            # WMaxLim_Ena), is written THROUGH the command — alone, the raw
-            # path would encode it without the scale factor and "verify" the
-            # wrong value (3.83.0). The HA face has always routed it this way.
-            _fronting = next((c['def'].name for c in _commands_for(dev_cfg)
-                              if c['def'].writes
-                              and c['def'].writes[0].get('register') == getattr(rule, 'name', '')), None)
-            if getattr(rule, 'scale_from', None) or _fronting:
+            # What a command writes is refused raw (D4, below); a register whose
+            # engineering value depends on a live scale factor is written
+            # THROUGH its command — alone, the raw path would encode it without
+            # the scale factor and "verify" the wrong value (3.83.0)
+            _k = _raw_channel_conflict(dev_cfg, rtype, address, _words_of(rule.data_type or 'uint16', rtype))
+            if _k is not None:
                 raise HTTPException(status_code=422, detail={"errors": [
-                    f"register {address} ({getattr(rule, 'name', '?')}) is written through "
-                    f"the command {_fronting or 'that owns it'!s}: "
-                    f"POST /api/devices/{dev_cfg.id}/commands/{_fronting or '<name>'}"]})
+                    _conflict_text(address, getattr(rule, 'name', ''), _k)],
+                    "status": "rejected", "through_command": _k['command'], "channel": _k['channel']})
+            if getattr(rule, 'scale_from', None):
+                raise HTTPException(status_code=422, detail={"errors": [
+                    f"register {address} ({getattr(rule, 'name', '?')}) scales by a live factor — "
+                    f"it is written through the command that owns it"]})
             # DECLARED: encoding is a property of the register (its template
             # row), NOT caller-controlled — a declared register always writes
             # with its declared type and scale, so a caller can't corrupt it
@@ -4700,6 +7202,15 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
                 f"(guards optional — each one you declare is enforced and "
                 f"improves the UI), or pass unguarded:true for a raw write "
                 f"with your own data_type/scale."]})
+        # What any command writes, at any position, on this physical slave is
+        # never written raw — guarded or unguarded, admin or not (ADR-0022 D4,
+        # operator Q2): WMaxLim_Ena = 0 alone lifts an OV curtail while the
+        # percentage still reads 50, a drift the rule never sees
+        _k = _raw_channel_conflict(dev_cfg, rtype, address, _words_of(data_type, rtype))
+        if _k is not None:
+            raise HTTPException(status_code=422, detail={"errors": [
+                _conflict_text(address, getattr(rule, 'name', '') if rule is not None else '', _k)],
+                "status": "rejected", "through_command": _k['command'], "channel": _k['channel']})
         prefer_fc6 = flag(payload, 'prefer_fc6', False)
         if rtype == 'holding':
             try:
@@ -4748,63 +7259,37 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
                 raise HTTPException(status_code=422, detail={"errors": [
                     f"value {payload.get('value')} encodes to {_raw}, outside {data_type} "
                     f"[{_rng[0]}, {_rng[1]}]"]})
-        # under the endpoint's command lock so a raw write cannot land inside a
-        # command's guard-read → write → verify sequence
-        with _cmd_lock_for(client):
-            ok, err, words = client.write_value(address, rtype, data_type,
-                                                payload.get('value'), scale=scale,
-                                                offset=_w_offset, prefer_fc6=prefer_fc6)
         _who = getattr(request.state, "user", None) or ("api-key" if _api_key else "anon")
         _src = request.client.host if request.client else "?"
-        logger.warning("MODBUS WRITE %s: by=%s@%s device=%s addr=%s type=%s dtype=%s value=%r words=%s%s",
-                       "OK" if ok else "FAILED", _who, _src, device_id, address, rtype, data_type,
-                       payload.get('value'), words, "" if ok else f" err={err}")
-        audit_log.append(user=_who, ip=_src, action="modbus write",
-                         target=f"{device_id} {rtype}@{address}",
-                         status="ok" if ok else "failed",
-                         detail={"value": payload.get('value'), "data_type": data_type,
-                                 "words": list(words) if words else None,   # what actually went out (F-15)
-                                 "lease_ms": lease_ms,
-                                 **({"unguarded": True} if unguarded else {})})
-        if not ok:
-            raise HTTPException(status_code=502, detail={"errors": [f"write failed: {err}"]})
-        # arm/renew (or cancel) the dead-man lease for this register
-        if lease_ms > 0:
-            _revert = _make_lease_revert(device_id, rtype, address, data_type, scale,
-                                         _safe, off=_w_offset)
-            meta = {'device': device_id, 'register_type': rtype, 'address': address,
-                    'data_type': data_type, 'scale': scale, 'offset': _w_offset,
-                    'safe_value': _safe,
-                    'lease_ms': lease_ms}
-            _lease_mgr.arm(device_id, rtype, address, lease_ms, _revert, meta=meta)
-        else:
-            _lease_mgr.clear(device_id, rtype, address)
-        read_back, verified = None, None
-        try:
-            raw_back = client.read_register(address, data_type, rtype)
-            if raw_back is not None:
-                want = payload.get('value')
-                if rtype == 'coil':
-                    read_back = bool(raw_back)
-                    verified = read_back == _coil_truthy(want)
-                else:
-                    # read_register returns the RAW value; the write applied *scale,
-                    # so divide back to engineering units before comparing to `want`
-                    # (otherwise `verified` is always false for any scale != 1).
-                    read_back = float(raw_back) / (scale or 1.0) + _w_offset
-                    verified = abs(read_back - float(want)) <= max(1e-6, abs(float(want)) * 1e-4)
-                # write-then-refresh: reflect the new value in the live store now
-                _push_readback_to_store(device_id, address, read_back, rtype)
-        except Exception:  # noqa: BLE001
-            pass
-        return {"ok": True, "device": device_id, "address": address, "register_type": rtype,
-                "data_type": data_type, "written": payload.get('value'),
-                "words": words, "read_back": read_back, "verified": verified,
-                "lease_ms": lease_ms or None,
-                "reverts_to": _safe if lease_ms > 0 else None,
-                "unguarded": unguarded or None}
+        ctx = {'dev': dev_cfg, 'rtype': rtype, 'address': address,
+               'register': getattr(rule, 'name', '') if rule is not None else '',
+               'data_type': data_type, 'scale': float(scale), 'offset': _w_offset, 'value': payload.get('value'),
+               'prefer_fc6': prefer_fc6, 'unguarded': unguarded, 'lease_ms': lease_ms, 'safe': _safe,
+               'via': 'api', 'who': _who, 'ip': _src}
+        # a lane job (ADR-0022 D5): latest-wins on the register, an expiry,
+        # the bus never held by the HTTP thread; waited for here
+        job = _submit_raw(ctx, client)
+        code, res = _cmd_dispatch.wait_for(job, DEFAULT_MAX_AGE_S + _raw_exec_timeout(client) + 1.0)
+        if code != 200:
+            # the shape the UI reads (res.detail.errors), with the lane's word
+            raise HTTPException(status_code=code, detail={
+                "errors": [res.get('reason') or res.get('status') or 'not written'],
+                "status": res.get('status'),
+                **{k: res[k] for k in ('queued_ms', 'words', 'id') if res.get(k) is not None}})
+        out = {"ok": True, "device": device_id, "address": address, "register_type": rtype,
+               "data_type": data_type, "written": payload.get('value'),
+               "words": res.get('words'), "read_back": res.get('read_back'), "verified": res.get('verified'),
+               "lease_ms": lease_ms or None,
+               "reverts_to": _safe if lease_ms > 0 else None,
+               "unguarded": unguarded or None}
+        if res.get('queued_ms') is not None:
+            out['queued_ms'] = res['queued_ms']
+        if res.get('reason'):
+            out['reason'] = res['reason']                   # why it is unverified (RP-11)
+        return out
 
     @app.post("/api/devices/{device_id}/write-lock")
+    @_device_write
     @_serialized_mutation
     def set_device_write_lock(device_id: str, request: Request, payload: Dict = Body(...)):
         """Set/clear the per-device write lock (F3a). A locked device refuses
@@ -4841,8 +7326,17 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
         rtype = normalize_register_type(register_type)
         rule = _write_rule(dev_cfg, address, rtype)
         declared = bool(rule is not None and rule.writable)
+        # a register a command writes is never written raw (ADR-0022 D4): the
+        # dialog points to the command instead
+        try:
+            _k = _raw_channel_conflict(dev_cfg, rtype, int(address),
+                                       _words_of(rule.data_type if declared else 'uint16', rtype))
+        except Exception:  # noqa: BLE001
+            _k = None
         return {
             "device": device_id, "address": address, "register_type": rtype,
+            "through_command": _k['command'] if _k else None,
+            "channel": _k['channel'] if _k else None,
             "writes_enabled": bool(config.security.allow_writes),
             "write_locked": bool(dev_cfg.write_locked),
             "declared": declared,
@@ -4876,6 +7370,7 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
             n: {"interval": g.interval, "description": g.description} for n, g in groups.items()}}
 
     @app.post("/api/devices/{device_id}/poll-groups")
+    @_device_write
     def set_device_poll_groups(device_id: str, payload: Dict = Body(...)):
         """Update a device's poll-group intervals and live-restart its pollers so
         each group re-samples at its own rate (e.g. slow down a fragile HTTP/
@@ -4883,53 +7378,50 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
         idx, dev_cfg, client = _find_device(device_id)
         if dev_cfg is None:
             raise HTTPException(status_code=404, detail="device not found")
+        from .device_patch import poll_groups_clean
         groups_in = payload.get("poll_groups", payload) or {}
-        clean = {}
-        for name, g in groups_in.items():
-            if g is None:                          # back to the default rhythm
-                clean[str(name)] = None
-                continue
-            try:
-                iv = float(g.get("interval") if isinstance(g, dict) else g)
-            except (TypeError, ValueError):
-                raise HTTPException(status_code=400, detail=f"{name}: interval must be a number")
-            if not (0.05 <= iv <= 86400):
-                raise HTTPException(status_code=400, detail=f"{name}: interval must be 0.05..86400 s")
-            # a description not sent is kept (the save merges per key)
-            clean[str(name)] = {"interval": iv, **({"description": str(g["description"] or "")}
-                                                   if isinstance(g, dict) and "description" in g else {})}
-        if not clean:
-            raise HTTPException(status_code=400, detail="no poll groups given")
-        # a group removed falls back to the gateway's own group of that name;
-        # one the gateway does not have would send its registers to 'normal'
-        # (an hourly group polled every few seconds) — refused while in use
-        dropped = [n for n, g in clean.items() if g is None and n not in config.default_poll_groups]
-        if dropped:
-            used = set()
-            for src in [None] + list(getattr(dev_cfg, 'sources', None) or []):
-                try:
-                    regs, _g = config.load_device_registers(dev_cfg, source=src)
-                except Exception:  # noqa: BLE001
-                    continue
-                used |= {r.poll_group for r in regs}
-            busy = [n for n in dropped if n in used]
-            if busy:
-                msgs = {f"poll_groups.{n}": (f"{n}: selected registers still poll in this group and the gateway "
-                                             f"has no group of that name — removing it would poll them at "
-                                             f"'normal'; move them to another group first") for n in busy}
-                raise HTTPException(status_code=422, detail={"errors": list(msgs.values()), "fields": msgs})
+        if not isinstance(groups_in, dict):
+            groups_in = {}
+        clean, why = poll_groups_clean(groups_in)
+        if why:
+            raise HTTPException(status_code=400, detail=why)
+        _refuse_busy_poll_groups(dev_cfg, clean)
         try:
             clean = config.save_device_poll_groups(device_id, clean)
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e))
-        # live-restart this device's pollers with the new intervals
+        _reload_poll_groups(dev_cfg, client)
+        return {"status": "ok", "device": device_id, "poll_groups": clean}
+
+    def _refuse_busy_poll_groups(dev_cfg, clean: Dict, field: str = "poll_groups") -> None:
+        """A group removed falls back to the gateway's own group of that name;
+        one the gateway does not have would send its registers to 'normal'
+        (an hourly group polled every few seconds) — refused (422) while in use."""
+        dropped = [n for n, g in clean.items() if g is None and n not in config.default_poll_groups]
+        if not dropped:
+            return
+        used = set()
+        for src in [None] + list(getattr(dev_cfg, 'sources', None) or []):
+            try:
+                regs, _g = config.load_device_registers(dev_cfg, source=src)
+            except Exception:  # noqa: BLE001
+                continue
+            used |= {r.poll_group for r in regs}
+        busy = [n for n in dropped if n in used]
+        if busy:
+            msgs = {f"{field}.{n}": (f"{n}: selected registers still poll in this group and the gateway "
+                                     f"has no group of that name — removing it would poll them at "
+                                     f"'normal'; move them to another group first") for n in busy}
+            raise HTTPException(status_code=422, detail={"errors": list(msgs.values()), "fields": msgs})
+
+    def _reload_poll_groups(dev_cfg, client) -> None:
+        """Live-restart a device's pollers with its new intervals."""
         target = modbus_client if dev_cfg.primary else client
         if target:
             regs, groups = config.load_device_registers(dev_cfg)
             target.update_registers(regs, groups)
             if hasattr(target, 'reload_registers'):
                 target.reload_registers()
-        return {"status": "ok", "device": device_id, "poll_groups": clean}
 
     def _vmeter_sources() -> Dict[str, Set[str]]:
         """Virtual-meter template id -> the device ids it reads: the
@@ -4995,7 +7487,7 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
                     sn = r.name.lower().replace('[', '_').replace(']', '').replace('_g_', '')
                     dk = getattr(r, 'discovery_key', '') or f"{r.address}_{sn}"
                     mqtt_publisher._publish(
-                        f"{pref}/sensor/mbg_dev_{device_id}/{dk}/config",
+                        f"{pref}/sensor/{mqtt_publisher._ha_node(device_id, dev_cfg.ha_node)}/{dk}/config",
                         "", retain=True)          # empty retained payload = delete
             except Exception as e:  # noqa: BLE001
                 logger.warning(f"clearing discovery for {device_id} failed: {e}")
@@ -5147,7 +7639,8 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
         return dev_cfg, client
 
     @app.delete("/api/devices/{device_id}")
-    def delete_device(device_id: str, dry_run: bool = False):
+    @_device_write
+    def delete_device(device_id: str, request: Request, dry_run: bool = False):
         """Delete a non-primary device (its selected-registers file is kept
         on disk for safety). Refused (409) while a rule, a sequence, another
         device's formula, a device it measures or a virtual meter uses it or
@@ -5158,18 +7651,23 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
         disable or a write lock never waits on the walk), then asked again
         under the lock, where the delete happens."""
         _device_deletable(device_id)
+        _if_match = request.headers.get('if-match')     # checked by @_device_write; again under the lock
         ans = _refuse_if_used('device', device_id, f"'{device_id}'", dry_run)
         if ans is not None:
             return ans
-        return _delete_device_locked(device_id)
+        return _delete_device_locked(device_id, _if_match)
 
     @_serialized_mutation
-    def _delete_device_locked(device_id: str):
+    def _delete_device_locked(device_id: str, if_match: Optional[str] = None):
         dev_cfg, client = _device_deletable(device_id)
+        _check_if_match(if_match, device_id)          # again, now nothing can change under it
         # anything that uses it (or one of its components) would break —
         # again, now nothing can change under it
         _refuse_if_used('device', device_id, f"'{device_id}'", False)
         comps = config.component_devices(device_id)
+        # what Undo (its restore) will set back to safe, said with the answer
+        _raw_now = config.get_raw_device(device_id)
+        resets, resumes = _restore_resets(_raw_now), _restore_resumes(_raw_now)
         # its components go with it (the tombstone keeps their list)
         for c in comps:
             _drop_component_runtime(c)
@@ -5185,7 +7683,10 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
             _reload_linked_to(_x)
         _sync_device_discovery()
         logger.info(f"device {device_id}: deleted")
-        return {"status": "deleted"}
+        # what an Undo names (review m1); none kept: nothing to undo (m2)
+        _ts = config.last_tombstone_ts(device_id)
+        return {"status": "deleted", "restorable": _ts is not None, "deleted_ts": _ts,
+                "restore_resets": resets, "restore_resumes": resumes}
 
     # ── components: what a device holds, added by instance ───────────────────
     # A component is an ordinary device
@@ -5247,6 +7748,7 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
                 'components': [_component_view(d) for d in config.component_devices(device_id)]}
 
     @app.post("/api/devices/{device_id}/components")
+    @_device_write
     @_serialized_mutation
     def add_component(device_id: str, payload: Dict = Body(...)):
         """Add one component: {type, instance, name?, id?, enabled?}. It reads
@@ -5259,73 +7761,98 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
                           "installation's unit or a component itself)")
         elif dev_cfg.protocol != 'mqtt':
             errors.append("components are read over MQTT only, for now")
+        held = {(d.component_type, d.component_instance) for d in config.component_devices(device_id)}
+        entry, cid, errs = _new_component(device_id, types, payload, held, set())
+        errors += errs
+        if errors:
+            raise HTTPException(status_code=422, detail=_errors_detail(errors))
+        try:
+            new = config.add_component(device_id, dict(entry, id=cid))
+        except ValueError as e:
+            raise HTTPException(status_code=422, detail={"errors": [str(e)]})
+        _start_new_component(new)
+        _sync_device_discovery()
+        logger.info(f"device {device_id}: component {cid} added ({entry['type']} {entry['instance']})")
+        return {"status": "created", "component": _component_view(new)}
+
+    def _new_component(parent_id: str, types: Dict, payload: Dict, held: Set[tuple],
+                       taken: Set[str]) -> Tuple[Optional[Dict], str, List[str]]:
+        """One component a request adds, checked: (its entry without the id,
+        its id, errors). ``held``: the (type, instance) the parent holds
+        already; ``taken``: ids the same request takes (a create's own)."""
+        errors: List[str] = []
         ctype = str(payload.get('type', '') or '').strip()
         inst = '' if payload.get('instance') is None else str(payload.get('instance')).strip()
         if ctype not in types:
             errors.append(f"type: '{ctype}' is not one of {', '.join(sorted(types)) or 'none (the template declares no components)'}")
         if not config.COMPONENT_INSTANCE_RE.match(inst):
             errors.append("instance: 1-32 letters, digits, _ . -")
-        elif any(d.component_type == ctype and d.component_instance == inst
-                 for d in config.component_devices(device_id)):
-            errors.append(f"instance: {ctype} {inst} is already a component of '{device_id}'")
-        cid = str(payload.get('id') or config.component_id(device_id, ctype, inst)).strip().lower()
+        elif (ctype, inst) in held:
+            errors.append(f"instance: {ctype} {inst} is already a component of '{parent_id}'")
+        cid = str(payload.get('id') or config.component_id(parent_id, ctype, inst)).strip().lower()
         if not _DEVICE_ID_RE.match(cid):
             errors.append(f"id: '{cid}' is not a device id (a-z 0-9 - _, 2-64 chars) — give it a shorter id")
-        elif registry.has(cid) or config.get_device(cid) is not None:
+        elif cid in taken or registry.has(cid) or config.get_device(cid) is not None:
             errors.append(f"id: '{cid}' already exists")
+        else:
+            from .topic_prefix import prefix_errors
+            errors += [f"mqtt.topic_prefix: {e}"
+                       for e in prefix_errors(config.default_topic_prefix(cid), config, {f"device:{cid}"})]
         if errors:
-            raise HTTPException(status_code=422, detail={"errors": errors})
+            return None, cid, errors
         name = str(payload.get('name') or f"{types[ctype].get('name') or ctype} {inst}").strip()[:80]
         entry = {'type': ctype, 'instance': inst, 'name': name,
                  'enabled': flag(payload, 'enabled', True),
                  # its routing identity, fixed from now on
                  'mqtt': {'topic_prefix': config.default_topic_prefix(cid)}}
-        try:
-            new = config.add_component(device_id, dict(entry, id=cid))
-        except ValueError as e:
-            raise HTTPException(status_code=422, detail={"errors": [str(e)]})
-        from .device_seed import autoselect_template_registers
-        autoselect_template_registers(config, template_registry, new, topics_must_match=True)
-        try:
-            attributes.drop('device', cid, reason='a new component at this id')
-        except Exception:  # noqa: BLE001
-            logger.exception("attributes: could not clear what %s held", cid)
-        _ensure_device_bucket(new)
-        registry.add(new, _start_device_client(new))
-        _sync_device_discovery()
-        logger.info(f"device {device_id}: component {cid} added ({ctype} {inst})")
-        return {"status": "created", "component": _component_view(new)}
+        _set_new_node(entry['mqtt'], cid)
+        return entry, cid, []
 
-    @app.patch("/api/devices/{device_id}/organise")
-    @_serialized_mutation
-    def organise_device(device_id: str, payload: Dict = Body(...), dry_run: bool = False):
-        """How a device is filed, not how it is read: ``{kind}`` — one of the
-        kinds, or null to derive it again (device_kind.py). Never restarts it.
-        `?dry_run=true` checks and changes nothing."""
-        from .device_kind import OVERRIDABLE, normalize
-        dev = config.get_device(device_id)
-        if dev is None:
-            raise HTTPException(status_code=404, detail="device not found")
-        if not isinstance(payload, dict) or 'kind' not in payload:
-            raise HTTPException(status_code=422, detail={"errors": ["kind: send it (null to derive it again)"],
-                                                         "fields": {"kind": "required (null to derive it again)"}})
-        raw_kind = payload.get('kind')
-        if raw_kind in (None, ''):
+    def _kind_of_payload(dev, payload: Dict) -> Tuple[str, Optional[str]]:
+        """The stored form of the type a payload gives a device ({type} or
+        {kind}; null = derive it again): (kind, None), or ('', why not).
+        The rule of /organise, which PATCH's identity.type shares."""
+        from . import device_types as _dtypes
+        raw_kind, why = _dtypes.from_payload(payload)
+        if why:
+            return '', why
+        if raw_kind is None:
             kind = ''
         else:
-            kind = normalize(raw_kind) or ''
-            if kind not in OVERRIDABLE:
-                msg = (f"{raw_kind!r}: one of {', '.join(OVERRIDABLE)}, or null to derive it again"
-                       if kind != 'other' else "other: send null — a device with no kind of its own shows other")
-                raise HTTPException(status_code=422, detail={"errors": [f"kind: {msg}"], "fields": {"kind": msg}})
+            msg = _dtypes.override_error(raw_kind)
+            if msg:
+                return '', msg
+            kind = _dtypes.stored_form(raw_kind)
         if dev.protocol == 'none':
             # a device measured only by its meters has no template to derive a
             # kind from, and is never a meter itself (nor `other`)
             from .device_kind import METER_ONLY
-            if kind not in METER_ONLY:
-                msg = (f"a device measured only by its meters is one of {', '.join(METER_ONLY)} "
-                       "(it has no template to derive a kind from, and it is not a meter)")
-                raise HTTPException(status_code=422, detail={"errors": [f"kind: {msg}"], "fields": {"kind": msg}})
+            msg = (_dtypes.override_error(kind, meter_only=True) if kind else
+                   f"a device measured only by its meters is one of {', '.join(METER_ONLY)} or a user type "
+                   "(it has no template to derive a kind from, and it is not a meter)")
+            if msg:
+                return '', msg
+        return kind, None
+
+    @app.patch("/api/devices/{device_id}/organise")
+    @_device_write
+    @_serialized_mutation
+    def organise_device(device_id: str, payload: Dict = Body(...), dry_run: bool = False):
+        """How a device is filed, not how it is read: ``{type}`` (or ``{kind}``,
+        its older word) — a built-in kind or a user type (device_types.py), or
+        null to derive it again. Never restarts it. `?dry_run=true` checks and
+        changes nothing."""
+        dev = config.get_device(device_id)
+        if dev is None:
+            raise HTTPException(status_code=404, detail="device not found")
+        _field = 'type' if isinstance(payload, dict) and 'type' in payload else 'kind'
+        if not isinstance(payload, dict) or ('kind' not in payload and 'type' not in payload):
+            _msg = "required: type (or kind) — null to derive it again"
+            raise HTTPException(status_code=422, detail={"errors": [f"type: {_msg}"],
+                                                         "fields": {"type": _msg, "kind": _msg}})
+        kind, msg = _kind_of_payload(dev, payload)
+        if msg:
+            raise HTTPException(status_code=422, detail={"errors": [f"{_field}: {msg}"], "fields": {_field: msg}})
         why = ("the primary device's kind comes from its template" if dev.primary
                else f"a unit's kind is its group's role on its installation ({dev.endpoint_id})"
                if dev.endpoint_id else None)
@@ -5339,7 +7866,8 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
             stored = None
         if stored == (kind or None) or (stored in (None, '') and not kind):
             k, src = _device_kind(dev, template_registry)
-            return {"status": "unchanged", "device_id": device_id, "kind": k, "kind_source": src}
+            return {"status": "unchanged", "device_id": device_id, "kind": k, "kind_source": src,
+                    **dict(zip(("type", "type_label"), _device_type_of(dev)))}
         if dry_run:
             return {"status": "valid", "would": "update"}
         try:
@@ -5350,9 +7878,16 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
         registry.replace(device_id, new_cfg)          # keep the running client
         k, src = _device_kind(new_cfg, template_registry)
         logger.info(f"device {device_id}: kind {'set to ' + kind if kind else 'derived again'} → {k} ({src})")
-        return {"status": "updated", "device_id": device_id, "kind": k, "kind_source": src}
+        try:
+            attributes.invalidate()         # its meta says its new kind at once
+            _publish_attribute_meta()       # and its type (ADR-0027)
+        except Exception:  # noqa: BLE001 — publishing never fails a save
+            logger.exception("attributes meta after a type change")
+        return {"status": "updated", "device_id": device_id, "kind": k, "kind_source": src,
+                **dict(zip(("type", "type_label"), _device_type_of(new_cfg)))}
 
     @app.patch("/api/devices/{device_id}/components/{component_id}")
+    @_device_write
     @_serialized_mutation
     def update_component(device_id: str, component_id: str, payload: Dict = Body(...)):
         """Rename a component or switch it on or off: {name?, enabled?}."""
@@ -5376,6 +7911,7 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
         return {"status": "updated", "component": _component_view(new)}
 
     @app.delete("/api/devices/{device_id}/components/{component_id}")
+    @_device_write
     def delete_component(device_id: str, component_id: str, dry_run: bool = False):
         """Remove a component. Its measurements stay on disk: adding the same
         instance again resumes them. Refused (409) while anything uses it
@@ -5401,16 +7937,15 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
         return {"status": "deleted", "id": component_id}
 
     @app.post("/api/devices/{device_id}/components/discover")
+    @_device_runtime
     def discover_components(device_id: str):
         """What the device says it holds: listens through its connection for a
         few seconds after asking it to republish everything (a read; nothing
         is written). [{type, instance, product, name, added, device_id}]"""
-        import json as _json
-        import re as _re
+        from . import component_discover as _cd
         from . import mqtt_link
         dev_cfg, _c = _parent_or_404(device_id)
-        types = {k: c for k, c in _component_types(dev_cfg).items()
-                 if isinstance(c.get('discover'), dict) and c['discover'].get('topic')}
+        types = _cd.discoverable(_component_types(dev_cfg))
         if not types:
             raise HTTPException(status_code=422, detail={"errors": [
                 "the template does not say how to find its components"]})
@@ -5420,63 +7955,71 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
                 f"'{device_id}' is not connected — finding its components reads through its connection"]})
         tvars = {str(k): str(v) for k, v in ((dev_cfg.mqtt_in or {}).get('vars') or {}).items()}
 
-        def fill(t: str) -> str:
-            return _re.sub(r'\{([A-Za-z0-9_]+)\}', lambda m: tvars.get(m.group(1), m.group(0)), t)
-
-        def text(payload) -> str:
-            raw = (payload or b'').decode('utf-8', 'replace').strip()
-            try:
-                v = _json.loads(raw)
-                v = v.get('value') if isinstance(v, dict) else v
-            except ValueError:
-                v = raw
-            return '' if v is None else str(v).strip()[:64]
-
-        found: Dict[tuple, Dict] = {}
-        taps = []
-        lock = threading.Lock()
-        for ctype, c in types.items():
-            for key, tmpl in (('product', c['discover']['topic']),
-                              ('name', c['discover'].get('name_topic') or '')):
-                if not tmpl:
-                    continue
-                pattern = fill(tmpl).replace('{instance}', '+')
-                idx = pattern.split('/').index('+') if '+' in pattern.split('/') else -1
-                if idx < 0:
-                    continue
-
-                def cb(msg, ctype=ctype, key=key, idx=idx):
-                    parts = msg.topic.split('/')
-                    inst = parts[idx] if idx < len(parts) else ''
-                    if not config.COMPONENT_INSTANCE_RE.match(inst):
-                        return
-                    with lock:
-                        found.setdefault((ctype, inst), {})[key] = text(msg.payload)
-                link.tap(pattern, cb)
-                taps.append((pattern, cb))
-        try:
+        def keepalive():
             # the device's own keepalive, as its input keeps it, asked for
             # everything: what was asked at connect has gone by already
             drv = _mqtt_driver_of(_c)
             if drv is not None:
                 drv.send_keepalive(first=True)
-            time.sleep(4.0)
-        finally:
-            for pattern, cb in taps:
-                link.untap(pattern, cb)
+        found = _cd.listen(link, types, tvars, config.COMPONENT_INSTANCE_RE, 4.0, before=keepalive)
         have = {(d.component_type, d.component_instance): d.id for d in config.component_devices(device_id)}
-
-        def order(k):
-            return (k[0], int(k[1]) if k[1].isdigit() else 10 ** 9, k[1])
-        out = []
-        for (ctype, inst) in sorted(found, key=order):
-            v = found[(ctype, inst)]
-            if not v.get('product') and not v.get('name'):
-                continue                    # a service that has gone
-            out.append({'type': ctype, 'instance': inst, 'product': v.get('product', ''),
-                        'name': v.get('name', ''), 'added': (ctype, inst) in have,
-                        'device_id': have.get((ctype, inst), '')})
+        out = [dict(f, added=(f['type'], f['instance']) in have, device_id=have.get((f['type'], f['instance']), ''))
+               for f in found]
         return {'device': device_id, 'found': out}
+
+    @app.post("/api/devices/components/discover")
+    def discover_components_unsaved(request: Request, payload: Dict = Body(...)):
+        """What a device not saved yet holds (ADR-0031 §5): {template,
+        connection (MQTT), seconds?} — a short-lived connection of its own to
+        the broker, subscribe only, for ``seconds`` (1..10, default 4); it
+        publishes nothing (a GX that nobody keeps alive says nothing: the
+        answer is then empty). [{type, instance, product, name}]. Admin only
+        (it makes the gateway connect where the body says); two at a time
+        (429 beyond); a broker not reached answers the same 409, after the
+        same wait, whatever the port did."""
+        from . import component_discover as _cd
+        if auth_state.enabled and getattr(request.state, 'role', None) != 'admin':
+            raise HTTPException(status_code=403, detail="finding components before saving is for the admin")
+        errors: List[str] = []
+        tid = str((payload or {}).get('template') or '').strip()
+        tpl = template_registry.get(tid) if tid else None
+        if tpl is None:
+            errors.append(f"template: '{tid}' not found" if tid else "template: required")
+        conn = (payload or {}).get('connection')
+        if not isinstance(conn, dict) or str(conn.get('protocol', '')).lower() != 'mqtt':
+            errors.append("connection.protocol: components are found over MQTT only, for now")
+        elif not str(conn.get('broker', '')).strip():
+            errors.append("connection.broker: required")
+        else:
+            try:
+                if not (1 <= int(conn.get('port', 1883)) <= 65535):
+                    raise ValueError
+            except (TypeError, ValueError):
+                errors.append("connection.port: must be 1..65535")
+        types = _cd.discoverable(dict(getattr(tpl, 'components', None) or {})) if tpl is not None else {}
+        if tpl is not None and not types:
+            errors.append("template: it does not say how to find its components")
+        if errors:
+            raise HTTPException(status_code=422, detail=_errors_detail(errors))
+        tvars = {str(k): str(v) for k, v in (conn.get('vars') or {}).items()} if isinstance(conn.get('vars'), dict) else {}
+        if not _cd.SLOTS.acquire(blocking=False):
+            raise HTTPException(status_code=429, headers={'Retry-After': str(int(_cd.CONNECT_S + _cd.MAX_S))},
+                                detail={"errors": [f"busy: {_cd.MAX_AT_ONCE} searches are running — try again "
+                                                   "in a few seconds"]})
+        try:
+            link = _cd.open_link(conn)
+            if link is None:
+                raise HTTPException(status_code=409, detail={"errors": [
+                    f"connection.broker: {conn['broker']}:{conn.get('port', 1883)} could not be reached "
+                    f"within {_cd.CONNECT_S:g} s"]})
+            try:
+                found = _cd.listen(link, types, tvars, config.COMPONENT_INSTANCE_RE,
+                                   _cd.seconds_of((payload or {}).get('seconds')))
+            finally:
+                _cd.close(link)
+        finally:
+            _cd.SLOTS.release()
+        return {'template': tid, 'found': found}
 
     # ── endpoints: one template × N unit ids behind one endpoint ──────────────
     # An endpoint materializes into N ordinary devices (own socket each — unit-
@@ -5795,6 +8338,9 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
                 # each enabled by a binding on the group (raw binding kept so
                 # the editor round-trips faces / lease untouched)
                 'commands': _group_commands(pid, gid),
+                # the group's own channel overrides, as stored: the editor
+                # writes them back (ADR-0019)
+                'channels': {k: dict(v) for k, v in (g.get('channels') or {}).items() if isinstance(v, dict)},
                 'cmd_topic_prefix': _group_cmd_prefix(pid, gid, [d for d in config.endpoint_devices(pid)
                                                                  if (getattr(d, 'group_id', '') or 'units') == gid]),
                 'aggregates': {} if one else agg,
@@ -6094,9 +8640,13 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
                 out.append(u)                      # no override → stays bare
         return out
 
-    def _validate_commands(cmds, errors, prefix: str = ""):
+    def _validate_commands(cmds, errors, prefix: str = "", tpl=None, safe_def=None, warnings=None, stored=None):
         """Bindings: `{name}` enables a template preset; one that carries
-        `writes` is an inline recipe and must parse as a command."""
+        `writes` is an inline recipe and must parse as a command. A `safe`
+        is checked through the command's own bounds — a revert that would
+        fail only when the dead-man fires is refused now (CMD-Q-11); a lease
+        without any safe value is said in ``warnings`` (stored configs keep
+        loading, ADR-0019)."""
         if cmds is None:
             return
         if not isinstance(cmds, list):
@@ -6121,13 +8671,95 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
                                  or set(b['faces']) - {'api', 'mqtt', 'ha'}
                                  or not all(isinstance(v, bool) for v in b['faces'].values())):
                 errors.append(f"{w}.faces: an object of api / mqtt / ha → true|false")
-            if 'lease_s' in b and not (isinstance(b['lease_s'], int) and 0 <= b['lease_s'] <= 86400):
+            if 'lease_s' in b and not (isinstance(b['lease_s'], int) and not isinstance(b['lease_s'], bool)
+                                       and 0 <= b['lease_s'] <= 86400):
                 errors.append(f"{w}.lease_s: 0..86400 seconds")
+            cdef = safe_def
             if b.get('writes') is not None:
                 try:
-                    parse_command_def(name or 'x', b)
+                    cdef = parse_command_def(name or 'x', b)
                 except (ValueError, TypeError, KeyError) as e:
                     errors.append(f"{w}: {e}")
+            elif cdef is None and tpl is not None and name in (getattr(tpl, 'commands', None) or {}):
+                try:
+                    cdef = parse_command_def(name, tpl.commands[name])
+                except (ValueError, TypeError, KeyError):
+                    cdef = None
+            safe = b.get('safe')
+            # a stored safe that this save does not change is not judged again:
+            # a template update that moved a bound must not block an unrelated
+            # save (ADR-0006, CR2-5)
+            kept = next((x.get('safe') for x in (stored or []) if isinstance(x, dict)
+                         and x.get('name') == name), None)
+            if safe is not None and not (stored is not None and safe == kept):
+                if not isinstance(safe, dict) or not safe:
+                    errors.append(f"{w}.safe: an object {{param: value}}, e.g. {{value: 0}}")
+                elif cdef is not None:
+                    try:
+                        # every parameter it names exists and is within the
+                        # command's bounds, as a run would be judged
+                        normalize_params(cdef, {**{k: v.default for k, v in cdef.params.items()
+                                                   if v.default is not None},
+                                                **(cdef.safe or {}), **safe})
+                    except ValueError as e:
+                        errors.append(f"{w}.safe: {e}")
+            if isinstance(b.get('lease_s'), int) and b['lease_s'] > 0 \
+                    and not safe and not (cdef is not None and cdef.safe):
+                msg = f"{w}: lease_s {b['lease_s']} without a safe value never fires"
+                if warnings is not None:
+                    warnings.append(msg)
+                else:
+                    logger.warning("command binding: %s", msg)
+
+    def _validate_channels(chs, errors, prefix: str = "", tpl=None, stored=None, units=None):
+        """Channel overrides `{<channel or command name>: {min_interval_s, …}}`
+        (ADR-0019). The keys are judged against the template only when the
+        block changes (ADR-0006): a template update that drops a channel
+        leaves an orphan, listed, never a save that fails."""
+        if chs is None:
+            return
+        if not isinstance(chs, dict):
+            errors.append(f"{prefix}channels: an object {{channel: {{{', '.join(CHANNEL_OVERRIDE_KEYS)}}}}}")
+            return
+        for key, val in chs.items():
+            for k, why in _channel_override_errors(val).items():
+                errors.append(f"{prefix}channels.{key}.{k}: {why}" if k != 'channel'
+                              else f"{prefix}channels.{key}: {why}")
+        if tpl is not None and chs != (stored or {}):
+            defs = {}
+            for n, raw in (getattr(tpl, 'commands', None) or {}).items():
+                try:
+                    defs[n] = parse_command_def(n, raw)
+                except (ValueError, TypeError, KeyError):
+                    continue
+            declared = {d.channel for d in defs.values() if d.channel}
+            ids = assign_channels(defs) if defs else {}
+            taken: Dict[str, str] = {}
+            for key in sorted(chs, key=lambda k: (k not in declared, k)):
+                if key not in declared and key not in defs:
+                    errors.append(f"{prefix}channels.{key}: not a channel or a command of template '{tpl.id}'")
+                    continue
+                cid = _override_cid(key, defs, ids)
+                if cid in taken:
+                    # one channel, one key (CR2-14)
+                    errors.append(f"{prefix}channels.{key}: channel '{cid}' is already overridden under "
+                                  f"'{taken[cid]}'")
+                else:
+                    taken[cid] = key
+                # a pace this save sets on a channel an armed steps rule with a
+                # fast step drives on one of these units: refused (ADR-0022, Q5)
+                val, before = chs.get(key), ((stored or {}).get(key) or {})
+                paced = sorted(k for k in PACE_KEYS if isinstance(val, dict) and val.get(k)
+                               and val.get(k) != (before.get(k) if isinstance(before, dict) else None))
+                _rt = getattr(app.state, 'rules_runtime', None)
+                for dev in (units or []) if (paced and _rt is not None) else []:
+                    rid = _rt.fast_rule_on(dev, cid)
+                    if rid is not None:
+                        errors.append(f"{prefix}channels.{key}: channel '{cid}' of {dev} is driven by the armed "
+                                      f"rule '{rid}', a steps rule with a fast step — a pace ({', '.join(paced)}) "
+                                      f"would hold its other reasserts while its emergency step passes it; put "
+                                      f"the rule in shadow or remove `fast` first")
+                        break
 
     _HTTP_URL_RE = re.compile(r'^https?://\S+$')
 
@@ -6322,6 +8954,12 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
         template_id = str(payload.get('template', '')).strip()
         if template_id and template_registry.get(template_id) is None:
             errors.append(f"template: '{template_id}' not found")
+        # a flat installation's role: a type from the catalog, judged when it
+        # changes (ADR-0027, ADR-0006); a hand-written one stored is kept
+        from .device_types import role_error as _flat_role_error
+        _frerr = _flat_role_error(payload.get('role'), (prev or {}).get('role'))
+        if _frerr:
+            errors.append(f"role: {_frerr}")
         # ── groups: the kinds of thing this installation holds ──
         groups = payload.get('groups')
         if groups is not None:
@@ -6359,6 +8997,11 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
                 if gt and template_registry.get(gt) is None:
                     errors.append(f"{w}.template: '{gt}' not found")
                 sg = stored_groups.get(gid)
+                # its role: a type from the catalog, judged when it changes (ADR-0027)
+                from .device_types import role_error as _role_error
+                _rerr = _role_error(g.get('role'), (sg or {}).get('role'))
+                if _rerr:
+                    errors.append(f"{w}.role: {_rerr}")
                 # read through a connection (its own or the installation's)
                 # with no map anywhere: a device with nothing to read. Judged
                 # on a new group, or when its way in or its map changes
@@ -6375,11 +9018,33 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
                                   f"connection or sources, or the installation one")
                 _validate_sources(g.get('sources'), errors, gt, prefix=w + '.',
                                   stored=(sg or {}).get('sources'))
-                _validate_commands(g.get('commands'), errors, prefix=w + '.')
+                # the commands' template: the one a command writes through —
+                # a Modbus source's, else an MQTT one's, else the group's (as
+                # _modbus_template_of); a group read through sources has no
+                # template of its own and its `safe` went unchecked (CR2-5)
+                _ctid = next((str(s.get('template')) for proto in (_POLLED_MODBUS, ('mqtt',))
+                              for s in (g.get('sources') or payload.get('sources') or [])
+                              if isinstance(s, dict) and s.get('template')
+                              and str(s.get('protocol') or 'tcp').lower() in proto), '') or gt
+                _ctpl = template_registry.get(_ctid) if _ctid else None
+                _validate_commands(g.get('commands'), errors, prefix=w + '.', tpl=_ctpl,
+                                   stored=(sg or {}).get('commands'))
+                _validate_channels(g.get('channels'), errors, prefix=w + '.', tpl=_ctpl,
+                                   stored=(sg or {}).get('channels'),
+                                   units=[u['id'] for u in (gunits or []) if isinstance(u, dict) and u.get('id')])
         # ── sources: the ordered ways of reaching this endpoint's units ──
         srcs = payload.get('sources')
         _validate_sources(srcs, errors, template_id, stored=(prev or {}).get('sources'))
-        _validate_commands(payload.get('commands'), errors)
+        _validate_commands(payload.get('commands'), errors,
+                           tpl=template_registry.get(template_id) if template_id else None,
+                           stored=(prev or {}).get('commands'))
+        # an installation without groups: its units' channel overrides live on
+        # it, as their bindings do (CR2-4)
+        _validate_channels(payload.get('channels'), errors,
+                           tpl=template_registry.get(template_id) if template_id else None,
+                           stored=(prev or {}).get('channels'),
+                           units=[u['id'] for u in config._endpoint_units({'id': pid, 'units': payload.get('units')})
+                                  if isinstance(u, dict) and u.get('id')])
         probe = {'id': pid, 'units': payload.get('units')}
         units = config._endpoint_units(probe)
         if not units and not _grouped:
@@ -6410,6 +9075,9 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
             **({'sources': srcs} if srcs else {}),
             **({'groups': groups} if groups else {}),
             **({'commands': payload['commands']} if payload.get('commands') else {}),
+            **({'channels': payload['channels']} if payload.get('channels') else {}),
+            # a flat installation's role: a catalog type when it changes (ADR-0027)
+            **({'role': payload['role']} if isinstance(payload.get('role'), str) and payload['role'] else {}),
         }
         if payload.get('aggregates') is not None:
             raw['aggregates'] = flag(payload, 'aggregates')
@@ -6432,7 +9100,7 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
             # the form does not send would vanish: a locked endpoint silently
             # unlocked itself and `aggregates: false` came back on, one save
             # after the operator set them.
-            for key in ('write_locked', 'aggregates', 'http_output', 'rest_push', 'opcua'):
+            for key in ('write_locked', 'aggregates', 'http_output', 'rest_push', 'opcua', 'role'):
                 if key not in raw and key in prev:
                     raw[key] = prev[key]
             # What a group owns but the group form does not edit — its own
@@ -6465,6 +9133,12 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
                     old = (prev.get(sect) or {}).get(k)
                     if old is not None:
                         raw.setdefault(sect, {})[k] = old
+            # the units' Home Assistant node: as stored, or none (ADR-0026 §3)
+            _node = (prev.get('mqtt') or {}).get('ha_node')
+            if _node:
+                raw.setdefault('mqtt', {})['ha_node'] = _node
+            elif isinstance(raw.get('mqtt'), dict):
+                raw['mqtt'].pop('ha_node', None)
             # Static tags and extra outputs are the operator's to edit, from
             # the endpoint page — but a form that does not speak of them (the
             # settings dialog) must not wipe them.
@@ -6475,6 +9149,20 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
         errors = _influx_block_errors(raw.get('influxdb') or {}, 'influxdb', outputs=True)
         if errors:
             raise HTTPException(status_code=422, detail={"errors": errors})
+        _agg = str((raw.get('mqtt') or {}).get('aggregate_prefix', '') or '')
+        if _agg and _agg != str(((prev or {}).get('mqtt') or {}).get('aggregate_prefix', '') or ''):
+            _agg = _agg.strip().strip('/')            # as endpoint_aggregator reads it
+            # an aggregate root being set (ADR-0026 §4); its own units may sit under it
+            from .topic_prefix import aggregate_roots, conflicts, claims, shape_error
+            _shape = shape_error(_agg.replace('${endpoint_id}', pid).replace('${group_id}', 'g')
+                                 .replace('${id}', pid))
+            _errs = [_shape] if _shape else [
+                c for root in aggregate_roots(raw) for c in conflicts(root, claims(config), {f"installation:{pid}"})]
+            if _errs:
+                raise HTTPException(status_code=422, detail={
+                    "errors": [f"mqtt.aggregate_prefix: {e}" for e in _errs],
+                    "fields": {"mqtt.aggregate_prefix": _errs[0]}})
+        _endpoint_claim_check(raw, pid, prev)
         return raw
 
     def _stop_endpoint_devices(pid: str) -> None:
@@ -6495,13 +9183,24 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
             out.append(_device_entry(dev_cfg, client))
         return out
 
+    def _connection_matrix_extras() -> Dict[str, Any]:
+        from .connection_matrix import INVALID, defaults
+        return {'invalid': copy.deepcopy(INVALID), 'defaults': defaults(config)}
+
     @app.get("/api/protocols")
     def list_protocols():
         """The protocols each editor may offer (device, installation source,
         installation, group), and which of them are serial lines here."""
+        from .connection_spec import LABELS, MATRIX
         return {**{k: list(v) for k, v in PROTOCOLS_BY_CONTEXT.items()},
-                'serial': list(SERIAL_PROTOCOLS + ('rtu_tap',)),
-                'network': list(NETWORK_PROTOCOLS)}
+                'serial': list(SERIAL_PROTOCOLS + ('rtu_tap',) + VIRTUAL_MAP_SERIAL),
+                'network': list(NETWORK_PROTOCOLS + VIRTUAL_MAP_OVER_TCP),
+                # the valid cells per editor, each with the connection it is
+                # saved as, and the words for the axes (ADR-0026 §1)
+                'matrix': copy.deepcopy(MATRIX), 'labels': copy.deepcopy(LABELS),
+                # the cells no device may have, with their reasons, and every
+                # advanced key's default with its source (ADR-0031 §5)
+                **_connection_matrix_extras()}
 
     @app.get("/api/endpoints")
     def list_endpoints():
@@ -6536,6 +9235,14 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
             if hc.url and isinstance(res.get('message'), str):
                 # an error text may quote the URL, token and all
                 res['message'] = res['message'].replace(hc.url, res['where'])
+            return res
+        if proto in _POLLED_MODBUS and _listening_template(src.template or dev.template):
+            # a map written for listening: the runtime taps it (ADR-0025) —
+            # what it hears, never a question on the bus
+            drv = _driver_of(client, src) if client is not None else None
+            res = _tap_hearing(dev, drv) if drv is not None else {
+                'ok': None, 'message': "listen-only — this source taps its bus; nothing to ask"}
+            res['where'] = src.connection.bus
             return res
         if proto in _POLLED_MODBUS:
             conn = dataclasses.asdict(src.connection)
@@ -6622,6 +9329,12 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
         each from the template and hot-start their pollers (no restart)."""
         raw = _validate_endpoint_payload(payload)
         raw.setdefault('opcua', {'enabled': False})      # a new endpoint: not on OPC UA until chosen
+        _set_new_node(raw.setdefault('mqtt', {}), '${device_id}')   # each unit's node, by pattern
+        if not raw['mqtt']:
+            # nothing to store (legacy scope, no route): an empty block would
+            # read as changed against the validated one on every later save (QA-R1-05)
+            raw.pop('mqtt')
+        raw['write_locked'] = True                       # …and writes nothing until unlocked (ADR-0025)
         try:
             made = config.upsert_raw_endpoint(raw)
         except ValueError as e:
@@ -6758,6 +9471,100 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
         re-materializes them (stop → rebuild → start); an edit that only changes
         endpoint-level settings keeps every poller running and just refreshes the
         config behind it."""
+        return _update_endpoint_locked(endpoint_id, payload)
+
+    def _unit_device_id(endpoint_id: str, unit: str) -> Optional[str]:
+        """The device id of an installation's unit, named by its id or by its
+        unit address; None when it has no such unit."""
+        u = str(unit or '').strip().lower()
+        for d in config.endpoint_devices(endpoint_id):
+            if d.id == u:
+                return d.id
+        for d in config.endpoint_devices(endpoint_id):
+            if u.isdigit() and int(d.connection.unit_id) == int(u):
+                return d.id
+        return None
+
+    def _unit_write(fn):
+        """A write to one unit of an installation, checked against the UNIT's
+        device ETag (the tag its page holds, ADR-0030) and answering its new
+        one; under the installation's entry lock."""
+        def _did(kw):
+            return _unit_device_id(kw.get('endpoint_id'), kw.get('unit'))
+        return _etag_guard.guard(fn, 'check',
+                                 check=lambda im, kw: _check_if_match(im, _did(kw)),
+                                 tag=lambda kw: _device_tag_now(_did(kw)),
+                                 lock=lambda kw: _entry_lock(_did(kw)))
+
+    @app.patch("/api/endpoints/{endpoint_id}/units/{unit}")
+    @_unit_write
+    @_serialized_mutation
+    def rename_endpoint_unit(endpoint_id: str, unit: str, payload: Dict = Body(...)):
+        """Rename one unit of an installation (L3-F12): {name} ('' = the
+        installation's naming again). Only that unit's entry changes; nothing
+        restarts. `If-Match`: the unit's own ETag (checked when sent)."""
+        prev = config.get_raw_endpoint(endpoint_id)
+        if prev is None:
+            raise HTTPException(status_code=404, detail="endpoint not found")
+        u = str(unit or '').strip()
+        if u.isdigit():
+            # a unit address written in several groups names no one unit
+            where = []
+            for g in ([g for g in (prev.get('groups') or []) if isinstance(g, dict)] or [prev]):
+                for x in g.get('units') or []:
+                    try:
+                        if int(x.get('unit_id') if isinstance(x, dict) else x) == int(u):
+                            where.append(str(g.get('id') or 'units'))
+                    except (TypeError, ValueError):
+                        continue
+            if len(where) > 1:
+                msg = (f"unit {u} is in several groups ({', '.join(where)}) — name it by its id "
+                       f"({', '.join(d.id for d in config.endpoint_devices(endpoint_id) if int(d.connection.unit_id) == int(u))})")
+                raise HTTPException(status_code=422, detail={"errors": [f"unit: {msg}"], "fields": {"unit": msg}})
+        did = _unit_device_id(endpoint_id, unit)
+        if did is None:
+            raise HTTPException(status_code=404, detail=f"no unit '{unit}' on '{endpoint_id}'")
+        if not isinstance(payload, dict) or set(payload) != {'name'} or not isinstance(payload.get('name'), str):
+            raise HTTPException(status_code=422, detail={"errors": ["name: required, the only key — text ('' = "
+                                                                    "the installation's naming)"],
+                                                         "fields": {"name": "required"}})
+        name = payload['name'].strip()
+        if len(name) > 80:
+            raise HTTPException(status_code=422, detail={"errors": ["name: up to 80 characters"],
+                                                         "fields": {"name": "up to 80 characters"}})
+        body = copy.deepcopy(prev)
+        pid = str(body.get('id', endpoint_id))
+        holders = [g for g in (body.get('groups') or []) if isinstance(g, dict)] or [body]
+        hit = False
+        for h in holders:
+            units = h.get('units') or []
+            for i, u in enumerate(units):
+                uid = u.get('unit_id') if isinstance(u, dict) else u
+                try:
+                    own = str((u.get('id') if isinstance(u, dict) else None) or f"{pid}-u{int(uid)}").strip()
+                except (TypeError, ValueError):
+                    continue
+                if own != did:
+                    continue
+                new = dict(u) if isinstance(u, dict) else {'unit_id': u}
+                if name:
+                    new['name'] = name
+                else:
+                    new.pop('name', None)
+                units[i] = new if set(new) != {'unit_id'} or isinstance(u, dict) else u
+                hit = True
+                break                           # the one unit named, never a repeat of it
+            if hit:
+                break
+        if not hit:
+            raise HTTPException(status_code=404, detail=f"no unit '{unit}' on '{endpoint_id}'")
+        out = _update_endpoint_locked(endpoint_id, body)
+        _i, dev, client = registry.find(did)
+        return {"status": out.get("status"), "endpoint_id": endpoint_id, "unit": did,
+                "device": _device_entry(dev, client) if dev is not None else None,
+                "restarted": out.get("restarted", [])}
+
+    def _update_endpoint_locked(endpoint_id: str, payload: Dict):
         prev_raw = config.get_raw_endpoint(endpoint_id)
         if prev_raw is None:
             raise HTTPException(status_code=404, detail="endpoint not found")
@@ -6876,6 +9683,7 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
         return {"status": "refreshed", "units": results}
 
     @app.post("/api/devices/{device_id}/refresh-from-template")
+    @_device_write
     @_serialized_mutation
     def refresh_device_from_template(device_id: str, add_new: bool = False):
         """The same for one device (an installation's unit refreshes through
@@ -6942,10 +9750,13 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
         protocol-level answer (even a Modbus exception) proves a live device;
         only silence/timeouts fail. Used by the wizard's Test connection button."""
         from pymodbus.pdu import ExceptionResponse
+        from .bus_claims import canonical_serial
         from .config import ModbusConfig
         from .modbus_client import _build_client
         proto = str(conn.get('protocol', 'tcp')).lower()
         rtu = proto in SERIAL_PROTOCOLS              # a serial port here (RTU or ASCII)
+        # a bus a device only listens to is never asked (ADR-0025)
+        _refuse_if_listened("A Test", proto, conn)
         if not rtu:
             # same LAN-egress policy as every /api/discover/* route — without
             # it the probe doubles as an internal TCP port scanner (audit L1)
@@ -6968,7 +9779,8 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
             _tp = int(conn.get('port', 502) or 502)
             _busy = next((_d for _d in config.devices
                           if getattr(_d, 'enabled', False) and getattr(_d, 'protocol', '') == proto
-                          and ((rtu and str(getattr(_d.connection, 'serial_port', '')).strip() == sp.strip())
+                          and ((rtu and canonical_serial(getattr(_d.connection, 'serial_port', ''))
+                                == canonical_serial(sp))
                                or (not rtu and str(getattr(_d.connection, 'host', '')).strip().lower() == _th
                                    and int(getattr(_d.connection, 'port', 0) or 0) == _tp))), None)
             if _busy is not None:
@@ -6981,7 +9793,7 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
         try:
             if not c.connect():
                 return {"ok": False,
-                        "message": (f"Serial open of {where} failed — check the port/permissions"
+                        "message": ((_serial_missing(sp) or f"Serial open of {where} failed — check the port/permissions")
                                     if rtu else
                                     f"{_PROTO_WORDS.get(proto, 'TCP')} connect to {where} failed — check IP/port/firewall")}
             rr = c.read_holding_registers(address=address, count=2, device_id=unit_id)
@@ -7104,11 +9916,39 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
                         "message": f"connected · message on {got['topic']}: {got['msg'][:80]}"}
             return {"ok": True, "connected": True, "message_received": False,
                     "message": "connected — no message on the topic within 3s (it may be idle)"}
+        if protocol in CAN_PROTOCOLS:
+            from .can_client import connection_errors as _can_errors
+            _ce = _can_errors(conn)
+            if _ce:
+                raise HTTPException(status_code=422, detail={"errors": _ce})
+            return _can_test(conn)
         if protocol == 'rtu_tap':
             # nothing to ask: a tap never transmits, and the tty may already be
             # held by a running tap — the saved device's test reports what it hears
             return {"ok": None, "message": "listen-only — nothing to probe; save "
                                            "the device, then Test shows what the tap hears"}
+        _tid = str(payload.get('template') or (conn.get('template') if isinstance(conn, dict) else '')
+                   or (_stored or {}).get('template') or '').strip()
+        if protocol in VIRTUAL_MAP_PROTOCOLS:
+            # a map only ever heard (the Seplos inter-pack tap) is never asked,
+            # whatever mode the form says: a question there collides with the
+            # master pack (SV2-6)
+            from .device_template import template_listens_only
+            _ttpl = template_registry.get(_tid) if _tid else None
+            if _ttpl is not None and template_listens_only(_ttpl):
+                return {"ok": None, "message": f"listen-only: template '{_tid}' is heard on a bus another "
+                                               "master polls — nothing to ask; save the device, then Test "
+                                               "shows what it hears"}
+            if _vmap_mode_missing(conn, (_stored or {}).get('connection')):
+                raise HTTPException(status_code=422, detail={"errors": [
+                    "connection.mode: choose poll or listen before a test"]})
+            return _virtual_map_probe(protocol, conn)
+        if _listening_template(_tid):
+            # a Modbus map written for listening runs as a tap whatever the
+            # form says (ADR-0025): nothing to ask
+            return {"ok": None, "message": f"listen-only: template '{_tid}' is heard on a bus another "
+                                           "master polls — nothing to ask; save the device as listen only, "
+                                           "then Test shows what it hears"}
         if protocol in SERIAL_PROTOCOLS and not str(conn.get('serial_port', '')).strip():
             raise HTTPException(status_code=422, detail={"errors": ["connection.serial_port required"]})
         if protocol in NETWORK_PROTOCOLS and not str(conn.get('host', '')).strip():
@@ -7116,6 +9956,111 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
         return _modbus_probe(conn, int(conn.get('unit_id', 1)),
                              float(conn.get('timeout', 3)),
                              int(payload.get('address', 0)))
+
+    def _virtual_map_bus_refusal(protocol: str, conn: Dict) -> str:
+        """Why a poll Test must not transmit on this bus, or '' when it may.
+        A bus another device holds is asked only when that device POLLS it
+        with the same protocol (the Test then takes turns on its transport);
+        a bus listened to (a master already polls it), a tap, or another
+        protocol (Modbus) is never written to."""
+        from .bus_claims import canonical_serial
+        serial = protocol in VIRTUAL_MAP_SERIAL
+        sp = canonical_serial(conn.get('serial_port', ''))
+        host = str(conn.get('host', '') or '').strip().lower()
+        try:
+            port = int(conn.get('port', 0) or 0)
+        except (TypeError, ValueError):
+            port = 0
+        for d in config.devices:
+            dproto = str(getattr(d, 'protocol', '') or '').lower()
+            c = d.connection
+            if serial:
+                same = (dproto in SERIAL_PROTOCOLS + ('rtu_tap',) + VIRTUAL_MAP_SERIAL
+                        and canonical_serial(getattr(c, 'serial_port', '')) == sp)
+                where = f"'{sp}'"
+            else:
+                same = (dproto not in ('http', 'mqtt', 'none') and dproto not in SERIAL_PROTOCOLS + VIRTUAL_MAP_SERIAL
+                        and str(getattr(c, 'host', '') or '').strip().lower() == host
+                        and int(getattr(c, 'port', 0) or 0) == port)
+                where = f"{host}:{port}"
+            if not same:
+                continue
+            if dproto != protocol:
+                return (f"{where} is used by device '{d.id}' as {dproto} — a Seplos question there would "
+                        f"land on another protocol's bus; nothing sent")
+            if _vmap_mode(c) == 'listen':
+                return (f"{where} is listened to by device '{d.id}' — a master pack polls that bus, and a "
+                        f"question from here would collide with it; nothing sent")
+        return ''
+
+    def _virtual_map_probe(protocol: str, conn: Dict) -> Dict:
+        """One read request to an unsaved virtual-map device (listen mode asks
+        nothing), through the bus's shared transport."""
+        import importlib
+        from .config import ModbusConfig
+        from .device_runtime import VIRTUAL_MAP_DRIVERS
+        if protocol in VIRTUAL_MAP_SERIAL and not str(conn.get('serial_port', '')).strip():
+            raise HTTPException(status_code=422, detail={"errors": ["connection.serial_port required"]})
+        if protocol in VIRTUAL_MAP_OVER_TCP and not str(conn.get('host', '')).strip():
+            raise HTTPException(status_code=422, detail={"errors": ["connection.host required"]})
+        if _vmap_mode(conn) == 'poll':
+            if protocol in VIRTUAL_MAP_OVER_TCP:
+                # the LAN-egress policy of every probe (audit L1)
+                from .discovery import lan_host_error
+                _e = lan_host_error(conn.get('host', ''), config.security.allow_nonlan_http_devices)
+                if _e:
+                    return {"ok": False, "message": f"blocked: {_e}"}
+            _refuse_if_listened("A Test", protocol, conn)       # ADR-0025
+            _busy = _virtual_map_bus_refusal(protocol, conn)
+            if _busy:
+                return {"ok": False, "message": _busy}
+        try:
+            mc = ModbusConfig(host=str(conn.get('host', '') or ''), port=int(conn.get('port', 0) or 0),
+                              unit_id=int(conn.get('unit_id', 0) or 0), protocol=protocol,
+                              serial_port=str(conn.get('serial_port', '') or ''),
+                              baudrate=int(conn.get('baudrate', 9600) or 9600),
+                              parity=str(conn.get('parity', 'N') or 'N'),
+                              stopbits=int(conn.get('stopbits', 1) or 1),
+                              bytesize=int(conn.get('bytesize', 8) or 8), mode=_vmap_mode(conn))
+            timeout = float(conn.get('timeout', 3) or 3)
+        except (TypeError, ValueError) as e:
+            raise HTTPException(status_code=422, detail={"errors": [f"connection: {e}"]})
+        mod = importlib.import_module(f".{VIRTUAL_MAP_DRIVERS[protocol][0]}", __package__)
+        return mod.probe(mc, timeout=timeout)
+
+    def _virtual_map_hearing(dev_cfg, client) -> Dict:
+        """A saved virtual-map device's test: what its running client has got
+        (polled: answers and errors; listening: what it heard) — never a
+        second master on the bus."""
+        c = dev_cfg.connection
+        srcs = dev_cfg.sources or []
+        drv = _driver_of(client, srcs[0]) if (client is not None and srcs) else None
+        if drv is None or not hasattr(drv, 'get_stats'):
+            return {"ok": False, "message": f"not reading {c.bus} (device disabled or not started)"}
+        st = drv.get_stats()
+        bus = st.get('bus') or {}
+        if bus.get('open_error'):
+            return {"ok": False, "message": f"{c.bus}: {bus['open_error']}"}
+        ec = st.get('error_counts') or {}
+        good, age = int(st.get('successful_reads') or 0), st.get('staleness_age_s')
+        errs = ", ".join(f"{k.replace('_', ' ')} {v}" for k, v in ec.items() if v)
+        listen = _vmap_mode(c) == 'listen'
+        if not good:
+            if listen:
+                frames = int(bus.get('frames') or 0)
+                why = (f"the bus is live ({frames} frames) but no answer from pack {c.unit_id} yet"
+                       if frames else f"{c.bus} is open but silent (master pack off? A/B swapped? "
+                                      f"line not {c.baudrate} {c.parity})")
+                if bus.get('warning'):
+                    why += f" — {bus['warning']}"
+            else:
+                why = f"no answer from pack {c.unit_id} yet" + (f" — {errs}" if errs else "")
+            return {"ok": False, "message": why}
+        said = (f"{'hearing' if listen else 'reading'} pack {c.unit_id} — {good} answers, "
+                f"last {age} s ago" + (f" · {errs}" if errs else ""))
+        if st.get('last_latency_ms') is not None:
+            said += f" · {st['last_latency_ms']} ms"
+        return {"ok": True, "message": said}
 
     def _tap_hearing(dev_cfg, client) -> Dict:
         """A tap's "test": not a probe (it never transmits) but what it has
@@ -7209,6 +10154,7 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
         return None
 
     @app.post("/api/devices/{device_id}/test")
+    @_device_runtime
     def test_device(device_id: str):
         """Probe a saved device (TCP or RTU). Uses its first selected register
         (a real address beats address 0) when one exists."""
@@ -7225,9 +10171,38 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
         finally:
             _test_done(f"device:{device_id}")
 
+    def _can_test(can_cfg: Dict, client=None) -> Dict:
+        """A CAN device's Test: the interface (exists, up, listen-only) and
+        what it carries for ~2 s, heard on a receive-only socket; for a saved
+        device, what its running driver has counted too. One at a time per
+        interface."""
+        from .can_client import hear, hear_verdict, stats_summary
+        key = f"can:{can_cfg.get('channel') or 'can0'}"
+        _one_test_at_a_time(key)
+        try:
+            h = hear(can_cfg, seconds=2.0)
+        finally:
+            _test_done(key)
+        ok, msg = hear_verdict(h)
+        out = {"ok": ok, "message": msg, "can": h}
+        drv = stats_summary(client.get_stats() or {}) if client is not None and hasattr(client, 'get_stats') else None
+        if drv:
+            out["driver"] = drv
+            out["message"] += (f" · the device has counted {drv.get('frames') or 0} frames, "
+                               f"{drv.get('unknown_frames') or 0} on unknown ids, "
+                               f"{drv.get('decode_errors') or 0} decode errors")
+        return out
+
     def _test_saved_device(dev_cfg, _client) -> Dict:
-        if dev_cfg.protocol == 'rtu_tap':
+        if dev_cfg.protocol in CAN_PROTOCOLS:
+            srcs = dev_cfg.sources or []
+            return _can_test(dict(getattr(srcs[0], 'can', None) or {}) if srcs else {}, _client)
+        if dev_cfg.protocol == 'rtu_tap' or (dev_cfg.protocol in MODBUS_PROTOCOLS
+                                             and _listening_template(dev_cfg.template)):
+            # a tap, or a stored device the runtime starts as one (ADR-0025)
             return _tap_hearing(dev_cfg, _client)
+        if dev_cfg.protocol in VIRTUAL_MAP_PROTOCOLS:
+            return _virtual_map_hearing(dev_cfg, _client)
         # every source it is read through, each the way that source reads it
         # (a pushed MQTT source: what its running input hears)
         srcs = [x for x in (dev_cfg.sources or []) if getattr(x, 'enabled', True)]
@@ -7311,6 +10286,7 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
                         registers=config.selected_registers,
                         publish_mode=config.mqtt.publish_mode,
                         heartbeat_interval=getattr(config.mqtt, 'heartbeat_interval', 0),
+                        has_primary=config.primary_device is not None,
                     )
                     ctx.mqtt_publisher = mqtt_publisher   # mirror for route modules
                     alert_mgr.mqtt = mqtt_publisher       # else alerts publish to the dead ref
@@ -7569,7 +10545,8 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
             headers={"Content-Disposition": 'attachment; filename="multibus-config-backup.zip"'})
 
     @app.post("/api/config/import")
-    async def import_config(request: Request, apply: bool = Query(default=True)):
+    async def import_config(request: Request, apply: bool = Query(default=True),
+                            restore_identity: bool = Query(default=False)):
         """Restore a ZIP backup produced by /api/config/export. The raw ZIP is
         sent as the request body (application/zip) — no multipart dependency.
         Writes the files back under the config dir (paths validated — no
@@ -7613,7 +10590,7 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
                 user_tpl_dir=_Path(getattr(template_registry, "user_dir", _UDIR)),
                 registers_path_for=config.device_registers_path,
                 replace_config=False)
-            s["_identity_rotated"] = _reload_from_disk(apply)
+            s["_identity_rotated"] = _reload_from_disk(apply, restore_identity=restore_identity)
             return s
         try:
             # N fsyncs and a full Modbus reconnect: off the event loop (F-38, 3.83.0)
@@ -7621,8 +10598,13 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
         except ValueError as e:
             raise HTTPException(status_code=422, detail={"errors": [str(e)]})
         _rotated = summary.pop("_identity_rotated", False)
+        _restart = len(config.devices) > 1 or _reload_state['primary_changed']
         summary["note"] = ("imported; a restart is recommended so newly-added "
-                           "devices start polling") if len(config.devices) > 1 else "imported"
+                           "devices start polling") if _restart else "imported"
+        if _reload_state['primary_changed']:
+            summary["note"] = ("imported; the legacy primary device (primary_device) "
+                               "changed — restart the gateway to apply it")
+        summary["restart_required"] = _restart
         logger.info(f"config import: {summary}")
         resp = {"status": "ok", **summary, "dangling": _dangling_after_restore("config import")}
         if _rotated:
@@ -7660,13 +10642,29 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
                 getattr(u, "operator_username", "") or "",
                 getattr(u, "operator_password", "") or "")
 
-    def _reload_from_disk(apply: bool = True) -> bool:
+    _reload_state: Dict[str, bool] = {'primary_changed': False}
+
+    def _reload_from_disk(apply: bool = True, restore_identity: bool = False) -> bool:
         """Reload config + registries from disk and hot-apply — the shared tail
         of backup import and snapshot restore (restart-lite). Returns True when
         the reload rotated identity: all sessions were revoked, so the caller
         should re-issue its own cookie (like update_ui_security does)."""
         _before = _identity_fields()
+        _primary_before = config.primary_enabled
+        _gw_before = (config.identity_scope, config.gateway_id)
         config.load()
+        if not restore_identity and (config.identity_scope, config.gateway_id) != _gw_before:
+            # how this gateway names new devices is its own, not the bundle's
+            # (another gateway's backup, last month's snapshot): kept unless
+            # the restore asks for it (ADR-0026 §3)
+            config.set_identity(scope=_gw_before[0], gateway_id=_gw_before[1])
+            try:
+                config.save_yaml_config()
+            except Exception:  # noqa: BLE001 — kept in memory; the next save writes it
+                logger.exception("restore: the live gateway identity could not be written back")
+        # device #1 appearing or going (ADR-0024) changes the pollers, the
+        # publishers' HA identity and the live store: only a restart builds them
+        _reload_state['primary_changed'] = config.primary_enabled != _primary_before
         attributes._invalidate()          # a restored or imported attributes.yaml
         # hot-apply imported login settings so a backup that enables/disables auth
         # or rotates credentials takes effect immediately (the middleware reads
@@ -7809,7 +10807,8 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
                 **diff_bundles(p.read_bytes(), newer)}
 
     @app.post("/api/config/snapshots/{sid}/restore")
-    def restore_snapshot(request: Request, sid: str, apply: bool = Query(default=True)):
+    def restore_snapshot(request: Request, sid: str, apply: bool = Query(default=True),
+                         restore_identity: bool = Query(default=False)):
         """Roll the config back to a snapshot. The current state is snapshotted
         first ('pre-restore'), so a rollback is itself reversible. Snapshots are
         verbatim, so config.yaml is REPLACED, not merged."""
@@ -7835,13 +10834,13 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
                     replace_config=True)
         except (ValueError, zipfile.BadZipFile) as e:
             raise HTTPException(status_code=422, detail={"errors": [str(e)]})
-        _rotated = _reload_from_disk(apply)
+        _rotated = _reload_from_disk(apply, restore_identity=restore_identity)
         event_log.add("warn", "snapshots", f"config rolled back to snapshot {sid}")
         logger.warning(f"config restored from snapshot {sid}: {summary}")
         # _reload_from_disk hot-applies the PRIMARY only; non-primary devices are
         # reconstructed on the next restart, so tell the operator when one is
         # needed (more than one device present) rather than leave it implicit.
-        restart_required = len(config.devices) > 1
+        restart_required = len(config.devices) > 1 or _reload_state['primary_changed']
         resp = {"status": "ok", "restored": sid, "restart_required": restart_required,
                 **summary, "dangling": _dangling_after_restore(f"snapshot {sid} restore")}
         if _rotated:
@@ -7885,7 +10884,7 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
             # Send initial data
             await websocket.send_json({
                 'type': 'init',
-                'device': config.primary_device.id,   # the snapshot is the primary's
+                'device': config.primary_id,   # the snapshot is the primary's
                 # snapshot, NOT the live dict (external audit: json.dumps
                 # walking the live store while pollers insert raises
                 # 'dictionary changed size' and drops the socket — the same
@@ -7988,6 +10987,10 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
         winds the pollers and outputs down or up, off the request thread
         (reconnecting devices takes time)."""
         standby = new != 'active'
+        if standby:
+            # nothing waiting for a bus is written by a standby; it says
+            # nothing on cmd/result either (ADR-0018 D10, D12)
+            _cmd_dispatch.cancel(reason=f"the gateway became {new} — nothing written")
 
         def run():
             for _dc, client in registry.pairs():
@@ -8080,7 +11083,11 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
         ip_allowed=_ip_allowed,   # WS routes enforce the allowlist themselves
         rule_fields_changed=_fields_cache.clear,
         dependents_of=_dependents,
-        mutation_lock=_device_mutation_lock,
+        mutation_lock=_device_mutation_lock, entry_lock=_entry_lock,
+        device_write=_device_write, device_runtime=_device_runtime,
+        device_write_query=_device_write_query,
+        validate_connection=_dry_run_connection,
+        write_primary_modbus=_write_primary_modbus,
     )
     app.state.ctx = ctx
     for _mod in (calculated, commissioning, config_routes,
@@ -8091,11 +11098,40 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
                  attributes_routes):
         app.include_router(_mod.build(ctx))
     app.include_router(auth_routes.build_passkeys(ctx))
+    from .routes import device_types as device_types_routes      # ADR-0027
+    app.include_router(device_types_routes.build(ctx))
+    from .routes import buses as buses_routes                    # ADR-0031 §5
+    app.include_router(buses_routes.build(ctx))
+    from .routes import previews as previews_routes              # ADR-0031 §5, L3.8
+    app.include_router(previews_routes.build(ctx))
+    from .routes import bus_scan as bus_scan_routes              # ADR-0031 §2, L3.7
+    app.include_router(bus_scan_routes.build(ctx))
+
+    # One device, as the list shows it. Registered after every static
+    # /api/devices/<word> route (restorable, …), which it would otherwise hide.
+    @app.get("/api/devices/{device_id}")
+    def get_device(device_id: str, request: Request, response: Response):
+        """One device's entry (as in GET /api/devices), with its
+        ``connection_spec``, and its ``ETag`` (what ``If-Match`` names on
+        PUT / DELETE)."""
+        _i, dev_cfg, client = _find_device(device_id)
+        if dev_cfg is None:
+            raise HTTPException(status_code=404, detail="device not found")
+        _role = getattr(request.state, "role", None)
+        response.headers['ETag'] = _device_etag(dev_cfg)
+        return {"device": _device_entry(dev_cfg, client, redact=_role is not None and _role != "admin")}
 
     # --- Static files ---
 
     # Mount static files last
     app.mount("/static", StaticFiles(directory="ui"), name="static")
+
+    # stored topic prefixes that share topics: said once, never refused (ADR-0026 §4)
+    try:
+        from .topic_prefix import report_stored
+        report_stored(config)
+    except Exception:  # noqa: BLE001 — a report must never stop the gateway
+        logger.debug("topic prefix report skipped", exc_info=True)
 
     # Register the WRITE-AWARE discovery hooks at boot (external audit):
     # main.py used to append its own hooks that published device discovery
@@ -8107,5 +11143,9 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
     # silently died. ONE owner now: this call (publish is skipped while the
     # broker is still disconnected; the hooks fire on connect).
     _sync_device_discovery()
+
+    # the dead-man sweeper last: every revert it may fire (boot recovery's
+    # first) finds the whole write path defined (RP-12)
+    _lease_mgr.start()
 
     return app, ws_manager

@@ -1,0 +1,411 @@
+{
+  "device_template": {
+    "schema_version": 1,
+    "id": "huawei_luna2000",
+    "name": "Huawei LUNA2000 battery (via SUN2000)",
+    "vendor": "Huawei",
+    "model": "LUNA2000 behind a SUN2000 hybrid inverter",
+    "kind": "battery",
+    "version": "0.1.0",
+    "author": "Stefan Maldaianu",
+    "description": "The LUNA2000 battery a Huawei SUN2000 hybrid inverter manages, served by the INVERTER: the storage aggregate block at 37758-37787 (rated capacity, SOC, running status, bus voltage and current, charge/discharge power, total and daily charged/discharged energy) carries the canonical names; battery unit 1 at 37000-37025 (status, power, bus voltage, SOC, working mode, rated powers, fault ID, temperature, remaining time) and the maximum charge/discharge power (37046/37048) are diagnostics. Add it as a further device on the same connection and unit ID as the huawei_sun2000 device, only where the site has a LUNA2000. Sign: Huawei reports + while charging, which is already the gateway's battery_power/battery_current convention: nothing is inverted. Read-only: no working-mode or charge command. Field notes: enable Modbus TCP on the SDongle in FusionSolar (Dongle parameters -> Modbus TCP -> Enable unrestricted); unit ID = the inverter's RS485 address (usually 1); the dongle serves ONE Modbus client only, so keep a single gateway connection and poll every 10-30 s; port 502 on the SDongle, 6607 on the inverter's own WLAN access point; Modbus RTU direct on the inverter's RS485 is 9600 8N1. The inverter is the master of its RS485 bus to the DTSU666 meter: never add a second master there, use the listen-only rtu_tap mode to watch it. SunSpec (40000) is a quick alternative without battery, meter or alarms.",
+    "source_document": "Huawei 'Solar Inverter Modbus Interface Definitions', energy storage registers 37000-37048 and 37758-37787; cross-read against wlcrs/huawei-solar-lib (storage_* and storage_unit_1_* definitions). Not yet checked on hardware.",
+    "protocol": {
+      "line": {"baudrate": 9600, "parity": "N", "bytesize": 8, "stopbits": 1},
+      "transports": [
+        "tcp",
+        "rtu"
+      ],
+      "byte_order": "big",
+      "default_unit_id": 1,
+      "default_register_type": "holding",
+      "max_registers_per_read": 64,
+      "connect_settle_s": 3
+    },
+    "poll_groups": {
+      "fast": {
+        "interval": 10,
+        "description": "SOC, power, bus voltage and current"
+      },
+      "normal": {
+        "interval": 30,
+        "description": "status, working mode, unit 1 diagnostics"
+      },
+      "energy": {
+        "interval": 60,
+        "description": "energy counters"
+      },
+      "static": {
+        "interval": 3600,
+        "description": "rated capacity, rated and maximum powers"
+      }
+    },
+    "categories": {
+      "battery": {
+        "label": "Battery (all units)",
+        "order": 1
+      },
+      "energy": {
+        "label": "Energy",
+        "order": 2
+      },
+      "unit1": {
+        "label": "Battery unit 1",
+        "order": 3
+      },
+      "limits": {
+        "label": "Limits",
+        "order": 4
+      }
+    },
+    "canonical": false,
+    "notes": [
+      {
+        "level": "warning",
+        "text": "Not yet checked on hardware: compare SOC and power with FusionSolar; battery_power must be positive while the battery charges.",
+        "fields": [
+          "soc",
+          "battery_power",
+          "battery_current"
+        ]
+      },
+      {
+        "level": "info",
+        "text": "Without a LUNA2000 the inverter answers 0 or 'illegal data address' here; do not add this device then. Same connection as the inverter: the SDongle takes one client."
+      },
+      {
+        "level": "info",
+        "text": "The maximum charge/discharge power (37046/37048) sits in a read of its own; if this firmware refuses it, list 37046-37049 in the device's illegal registers.",
+        "fields": [
+          "max_charge_power",
+          "max_discharge_power"
+        ]
+      }
+    ],
+    "registers": [
+      {
+        "address": 37000,
+        "name": "unit1_status",
+        "label": "Unit 1 running status",
+        "unit": "",
+        "data_type": "uint16",
+        "register_type": "holding",
+        "access": "RD",
+        "category": "unit1",
+        "poll_group": "normal",
+        "description": "37000. Battery unit 1 running status. Source: Huawei 'Solar Inverter Modbus Interface Definitions', cross-read against wlcrs/huawei-solar-lib.",
+        "enum": {
+          "0": "Offline",
+          "1": "Standby",
+          "2": "Running",
+          "3": "Fault",
+          "4": "Sleep mode"
+        }
+      },
+      {
+        "address": 37001,
+        "name": "unit1_power",
+        "label": "Unit 1 charge/discharge power",
+        "unit": "W",
+        "data_type": "int32",
+        "register_type": "holding",
+        "access": "RD",
+        "category": "unit1",
+        "poll_group": "fast",
+        "description": "37001. Battery unit 1 power, W, + charging (Huawei's sign is already the gateway's). Source: Huawei 'Solar Inverter Modbus Interface Definitions', cross-read against wlcrs/huawei-solar-lib."
+      },
+      {
+        "address": 37003,
+        "name": "unit1_bus_voltage",
+        "label": "Unit 1 bus voltage",
+        "unit": "V",
+        "data_type": "uint16",
+        "register_type": "holding",
+        "access": "RD",
+        "category": "unit1",
+        "poll_group": "normal",
+        "scale": 10,
+        "description": "37003. Battery unit 1 bus voltage, 0.1 V. Source: Huawei 'Solar Inverter Modbus Interface Definitions', cross-read against wlcrs/huawei-solar-lib."
+      },
+      {
+        "address": 37004,
+        "name": "unit1_soc",
+        "label": "Unit 1 SOC",
+        "unit": "%",
+        "data_type": "uint16",
+        "register_type": "holding",
+        "access": "RD",
+        "category": "unit1",
+        "poll_group": "normal",
+        "scale": 10,
+        "description": "37004. Battery unit 1 state of capacity, 0.1 %. Source: Huawei 'Solar Inverter Modbus Interface Definitions', cross-read against wlcrs/huawei-solar-lib."
+      },
+      {
+        "address": 37006,
+        "name": "working_mode",
+        "label": "Working mode",
+        "unit": "",
+        "data_type": "uint16",
+        "register_type": "holding",
+        "access": "RD",
+        "category": "unit1",
+        "poll_group": "normal",
+        "description": "37006. Battery working mode as unit 1 reports it. Source: Huawei 'Solar Inverter Modbus Interface Definitions', cross-read against wlcrs/huawei-solar-lib.",
+        "enum": {
+          "0": "None",
+          "1": "Forcible charge/discharge",
+          "2": "Time of use (LG)",
+          "3": "Fixed charge/discharge",
+          "4": "Maximise self consumption",
+          "5": "Fully fed to grid",
+          "6": "Time of use (LUNA2000)",
+          "7": "Remote scheduling: max self use",
+          "8": "Remote scheduling: full excess",
+          "9": "Remote scheduling: time of use",
+          "10": "AI energy management and scheduling"
+        }
+      },
+      {
+        "address": 37007,
+        "name": "unit1_rated_charge_power",
+        "label": "Unit 1 rated charge power",
+        "unit": "W",
+        "data_type": "uint32",
+        "register_type": "holding",
+        "access": "RD",
+        "category": "unit1",
+        "poll_group": "static",
+        "description": "37007. Battery unit 1 rated charge power, W. Source: Huawei 'Solar Inverter Modbus Interface Definitions', cross-read against wlcrs/huawei-solar-lib.",
+        "entity_category": "diagnostic"
+      },
+      {
+        "address": 37009,
+        "name": "unit1_rated_discharge_power",
+        "label": "Unit 1 rated discharge power",
+        "unit": "W",
+        "data_type": "uint32",
+        "register_type": "holding",
+        "access": "RD",
+        "category": "unit1",
+        "poll_group": "static",
+        "description": "37009. Battery unit 1 rated discharge power, W. Source: Huawei 'Solar Inverter Modbus Interface Definitions', cross-read against wlcrs/huawei-solar-lib.",
+        "entity_category": "diagnostic"
+      },
+      {
+        "address": 37014,
+        "name": "unit1_fault_id",
+        "label": "Unit 1 fault ID",
+        "unit": "",
+        "data_type": "uint16",
+        "register_type": "holding",
+        "access": "RD",
+        "category": "unit1",
+        "poll_group": "normal",
+        "description": "37014. Battery unit 1 fault ID, 0 = none. Source: Huawei 'Solar Inverter Modbus Interface Definitions', cross-read against wlcrs/huawei-solar-lib."
+      },
+      {
+        "address": 37021,
+        "name": "unit1_bus_current",
+        "label": "Unit 1 bus current",
+        "unit": "A",
+        "data_type": "int16",
+        "register_type": "holding",
+        "access": "RD",
+        "category": "unit1",
+        "poll_group": "normal",
+        "scale": 10,
+        "description": "37021. Battery unit 1 bus current, 0.1 A, + charging. Source: Huawei 'Solar Inverter Modbus Interface Definitions', cross-read against wlcrs/huawei-solar-lib."
+      },
+      {
+        "address": 37022,
+        "name": "unit1_temperature",
+        "label": "Unit 1 temperature",
+        "unit": "°C",
+        "data_type": "int16",
+        "register_type": "holding",
+        "access": "RD",
+        "category": "unit1",
+        "poll_group": "normal",
+        "scale": 10,
+        "description": "37022. Battery unit 1 temperature, 0.1 °C. Source: Huawei 'Solar Inverter Modbus Interface Definitions', cross-read against wlcrs/huawei-solar-lib."
+      },
+      {
+        "address": 37025,
+        "name": "unit1_remaining_time",
+        "label": "Unit 1 remaining charge/discharge time",
+        "unit": "min",
+        "data_type": "uint16",
+        "register_type": "holding",
+        "access": "RD",
+        "category": "unit1",
+        "poll_group": "normal",
+        "description": "37025. Battery unit 1 remaining charge/discharge time, minutes. Source: Huawei 'Solar Inverter Modbus Interface Definitions', cross-read against wlcrs/huawei-solar-lib."
+      },
+      {
+        "address": 37046,
+        "name": "max_charge_power",
+        "label": "Maximum charge power",
+        "unit": "W",
+        "data_type": "uint32",
+        "register_type": "holding",
+        "access": "RD",
+        "category": "limits",
+        "poll_group": "static",
+        "description": "37046. Maximum charge power of the storage, W. Source: Huawei 'Solar Inverter Modbus Interface Definitions', cross-read against wlcrs/huawei-solar-lib.",
+        "entity_category": "diagnostic"
+      },
+      {
+        "address": 37048,
+        "name": "max_discharge_power",
+        "label": "Maximum discharge power",
+        "unit": "W",
+        "data_type": "uint32",
+        "register_type": "holding",
+        "access": "RD",
+        "category": "limits",
+        "poll_group": "static",
+        "description": "37048. Maximum discharge power of the storage, W. Source: Huawei 'Solar Inverter Modbus Interface Definitions', cross-read against wlcrs/huawei-solar-lib.",
+        "entity_category": "diagnostic"
+      },
+      {
+        "address": 37758,
+        "name": "rated_capacity",
+        "label": "Rated capacity",
+        "unit": "Wh",
+        "data_type": "uint32",
+        "register_type": "holding",
+        "access": "RD",
+        "category": "battery",
+        "poll_group": "static",
+        "description": "37758. Rated capacity of all battery units, Wh. Source: Huawei 'Solar Inverter Modbus Interface Definitions', cross-read against wlcrs/huawei-solar-lib.",
+        "entity_category": "diagnostic"
+      },
+      {
+        "address": 37760,
+        "name": "soc",
+        "label": "SOC",
+        "unit": "%",
+        "data_type": "uint16",
+        "register_type": "holding",
+        "access": "RD",
+        "category": "battery",
+        "poll_group": "fast",
+        "scale": 10,
+        "description": "37760. State of capacity of the whole storage, 0.1 %. Source: Huawei 'Solar Inverter Modbus Interface Definitions', cross-read against wlcrs/huawei-solar-lib."
+      },
+      {
+        "address": 37762,
+        "name": "battery_status",
+        "label": "Running status",
+        "unit": "",
+        "data_type": "uint16",
+        "register_type": "holding",
+        "access": "RD",
+        "category": "battery",
+        "poll_group": "normal",
+        "description": "37762. Running status of the storage. Source: Huawei 'Solar Inverter Modbus Interface Definitions', cross-read against wlcrs/huawei-solar-lib.",
+        "enum": {
+          "0": "Offline",
+          "1": "Standby",
+          "2": "Running",
+          "3": "Fault",
+          "4": "Sleep mode"
+        }
+      },
+      {
+        "address": 37763,
+        "name": "pack_voltage",
+        "label": "Bus voltage",
+        "unit": "V",
+        "data_type": "uint16",
+        "register_type": "holding",
+        "access": "RD",
+        "category": "battery",
+        "poll_group": "fast",
+        "scale": 10,
+        "description": "37763. Storage bus voltage, 0.1 V. Source: Huawei 'Solar Inverter Modbus Interface Definitions', cross-read against wlcrs/huawei-solar-lib."
+      },
+      {
+        "address": 37764,
+        "name": "battery_current",
+        "label": "Bus current",
+        "unit": "A",
+        "data_type": "int16",
+        "register_type": "holding",
+        "access": "RD",
+        "category": "battery",
+        "poll_group": "fast",
+        "scale": 10,
+        "description": "37764. Storage bus current, 0.1 A, + charging (Huawei's sign is already the gateway's). Source: Huawei 'Solar Inverter Modbus Interface Definitions', cross-read against wlcrs/huawei-solar-lib."
+      },
+      {
+        "address": 37765,
+        "name": "battery_power",
+        "label": "Charge/discharge power",
+        "unit": "W",
+        "data_type": "int32",
+        "register_type": "holding",
+        "access": "RD",
+        "category": "battery",
+        "poll_group": "fast",
+        "description": "37765. Storage charge/discharge power, W. Huawei: + charging, - discharging, which is already the gateway's battery_power convention: no inversion. Source: Huawei 'Solar Inverter Modbus Interface Definitions', cross-read against wlcrs/huawei-solar-lib."
+      },
+      {
+        "address": 37780,
+        "name": "battery_energy_charged_total",
+        "label": "Charged (total)",
+        "unit": "Wh",
+        "data_type": "uint32",
+        "register_type": "holding",
+        "access": "RD",
+        "category": "energy",
+        "poll_group": "energy",
+        "scale": 0.1,
+        "description": "37780. Total charged energy, 0.01 kWh, served in Wh. Source: Huawei 'Solar Inverter Modbus Interface Definitions', cross-read against wlcrs/huawei-solar-lib.",
+        "monotonic": true
+      },
+      {
+        "address": 37782,
+        "name": "battery_energy_discharged_total",
+        "label": "Discharged (total)",
+        "unit": "Wh",
+        "data_type": "uint32",
+        "register_type": "holding",
+        "access": "RD",
+        "category": "energy",
+        "poll_group": "energy",
+        "scale": 0.1,
+        "description": "37782. Total discharged energy, 0.01 kWh, served in Wh. Source: Huawei 'Solar Inverter Modbus Interface Definitions', cross-read against wlcrs/huawei-solar-lib.",
+        "monotonic": true
+      },
+      {
+        "address": 37784,
+        "name": "battery_energy_charged_today",
+        "label": "Charged today",
+        "unit": "Wh",
+        "data_type": "uint32",
+        "register_type": "holding",
+        "access": "RD",
+        "category": "energy",
+        "poll_group": "energy",
+        "scale": 0.1,
+        "description": "37784. Energy charged today, 0.01 kWh, served in Wh. Source: Huawei 'Solar Inverter Modbus Interface Definitions', cross-read against wlcrs/huawei-solar-lib.",
+        "daily": true
+      },
+      {
+        "address": 37786,
+        "name": "battery_energy_discharged_today",
+        "label": "Discharged today",
+        "unit": "Wh",
+        "data_type": "uint32",
+        "register_type": "holding",
+        "access": "RD",
+        "category": "energy",
+        "poll_group": "energy",
+        "scale": 0.1,
+        "description": "37786. Energy discharged today, 0.01 kWh, served in Wh. Source: Huawei 'Solar Inverter Modbus Interface Definitions', cross-read against wlcrs/huawei-solar-lib.",
+        "daily": true
+      }
+    ]
+  }
+}

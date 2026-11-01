@@ -1,5 +1,5 @@
 # Multi-Bus Gateway — multi-protocol Modbus/HTTP/MQTT acquisition gateway.
-# Copyright (C) 2024-2026 Stefan Maldaianu <sm26449@diysolar.ro>
+# Copyright (C) 2024-2026 Stefan Maldaianu <stefan@multibus.dev>
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU Affero General Public License as published by
@@ -46,7 +46,7 @@ def build(ctx) -> APIRouter:
             or dev.influxdb_bucket
 
     def _device(device: str):
-        did = device or config.primary_device.id
+        did = device or config.primary_id
         for d in config.devices:
             if d.id == did:
                 return d
@@ -141,6 +141,7 @@ def build(ctx) -> APIRouter:
             return res
 
     @r.post("/api/pq/config")
+    @ctx.device_write_query
     async def pq_config(payload: Dict = Body(...),
                         device: str = Query(default="")):
         """Set a device's PQ recorder config and (re)start its poller.
@@ -154,6 +155,15 @@ def build(ctx) -> APIRouter:
         cfg = {k: payload[k] for k in
                ("enabled", "poll_s", "archive_waveforms", "base_url", "bucket")
                if k in payload}
+        # the interval: a number of seconds, at least 30 (the recorder's own
+        # floor) — a word, a boolean or a blank is refused, never stored
+        # (review of L3.11b, m5)
+        if "poll_s" in cfg:
+            v = cfg["poll_s"]
+            if isinstance(v, bool) or not isinstance(v, (int, float)) or v != v or v < 30:
+                raise HTTPException(status_code=422, detail={
+                    "errors": ["poll_s: seconds, a number of at least 30"],
+                    "fields": {"poll_s": "seconds, a number of at least 30"}})
         try:
             config.set_pq_recorder(dev.id, cfg)
         except ValueError as e:

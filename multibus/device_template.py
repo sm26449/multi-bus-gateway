@@ -1,5 +1,5 @@
 # Multi-Bus Gateway — multi-protocol Modbus/HTTP/MQTT acquisition gateway.
-# Copyright (C) 2024-2026 Stefan Maldaianu <sm26449@diysolar.ro>
+# Copyright (C) 2024-2026 Stefan Maldaianu <stefan@multibus.dev>
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU Affero General Public License as published by
@@ -139,6 +139,13 @@ class TemplateRegister:
     # The template teaches the endpoint aggregator the vendor's semantics —
     # soc can fan out to pack_average_soc/pack_min_soc/pack_max_soc at once.
     aggregates: Optional[Dict[str, str]] = None
+    # a CAN signal (can_signal.py, ADR-0020): the frame and its bits, DBC's
+    # words; None = not a CAN row. `address` stays synthetic.
+    can_id: Optional[int] = None
+    can_id_extended: bool = False
+    start_bit: Optional[int] = None
+    bit_length: Optional[int] = None
+    byte_order: str = ""
 
     def to_dict(self) -> Dict[str, Any]:
         d: Dict[str, Any] = {
@@ -205,6 +212,8 @@ class TemplateRegister:
             d['suggested_display_precision'] = self.suggested_display_precision
         if self.aggregates:
             d['aggregates'] = self.aggregates
+        from .can_signal import can_fields
+        d.update(can_fields(self))
         return d
 
 
@@ -271,10 +280,13 @@ class DeviceTemplate:
     author: str = ""
     description: str = ""
     source_document: str = ""
-    # what the equipment is, in the vocabulary installation groups use for
-    # their role (attribute_catalog.KINDS): the attributes that fit it are
-    # offered first. Empty: unknown (guessed from the canonical names)
+    # what the equipment is: a built-in kind (device_kind.KINDS); the
+    # attributes that fit it are offered first. Empty: unknown (guessed from
+    # the canonical names)
     kind: str = ""
+    # the user device types it also suits (ADR-0027): a type's template list
+    # holds the templates of its built-in kind and the ones that name it
+    types: List[str] = field(default_factory=list)
     schema_version: int = SCHEMA_VERSION
     protocol: Dict[str, Any] = field(default_factory=dict)
     poll_groups: Dict[str, Dict[str, Any]] = field(default_factory=dict)
@@ -342,6 +354,7 @@ class DeviceTemplate:
             'description': self.description,
             'source_document': self.source_document,
             **({'kind': self.kind} if self.kind else {}),
+            **({'types': list(self.types)} if self.types else {}),
             'protocol': self.protocol,
             'poll_groups': self.poll_groups,
             'categories': self.categories,
@@ -367,6 +380,7 @@ class DeviceTemplate:
             'model': self.model, 'version': self.version,
             'builtin': self.builtin, 'registers': len(self.registers),
             'kind': self.kind or kind_from_names(self),
+            **({'types': list(self.types)} if self.types else {}),
             'categories': len(self.categories),
             'transport': template_transport(self),   # 'modbus' | 'http'
             'commands': sorted(self.commands.keys()),
@@ -378,7 +392,16 @@ class DeviceTemplate:
                if self.components else {}),
             **({'component_of': self.component_of, 'component_key': self.component_key}
                if self.component_of else {}),
+            # what connecting to it takes (ADR-0031 §5): speaks, listen_only,
+            # transports, default_unit_id, setup, identify, ports, line,
+            # http_path, master_hint
+            **_connection_facts(self),
         }
+
+
+def _connection_facts(tpl) -> Dict[str, Any]:
+    from .template_facts import connection_facts
+    return connection_facts(tpl)
 
 
 def kind_from_names(tpl) -> str:
@@ -409,8 +432,8 @@ def mppt_count_of(tpl) -> int:
 
 
 def template_transport(tpl) -> str:
-    """Which device transport this template's register map is for: ``'http'`` or
-    ``'modbus'``. A map is transport-specific — Modbus reads by register address,
+    """Which device transport this template's register map is for: ``'http'``,
+    ``'mqtt'``, a virtual-map family (``'seplos_v2'``) or ``'modbus'``. A map is transport-specific — Modbus reads by register address,
     HTTP/JSON by ``json_path`` — so a template can't be shared across the two.
 
     Decided by the declared ``protocol.transports`` when present, else inferred
@@ -419,18 +442,67 @@ def template_transport(tpl) -> str:
     transports = [str(x).lower() for x in ((getattr(tpl, 'protocol', {}) or {}).get('transports') or [])]
     if 'mqtt' in transports:
         return 'mqtt'
-    from .config import MODBUS_PROTOCOLS
+    from .can_signal import CAN_TRANSPORTS
+    # a map of CAN signals (ADR-0020): frames, read only by the CAN driver
+    if any(x in CAN_TRANSPORTS for x in transports):
+        return 'can'
+    from .config import MODBUS_PROTOCOLS, VIRTUAL_MAP_FAMILY
+    # a map for a virtual-map bus (seplos_v2) is read only by that bus's driver
+    families = {VIRTUAL_MAP_FAMILY[x] for x in transports if x in VIRTUAL_MAP_FAMILY}
+    if families:
+        return sorted(families)[0]
     if any(x in MODBUS_PROTOCOLS for x in transports):
         return 'modbus'
     if 'http' in transports:
         return 'http'
     regs = getattr(tpl, 'registers', None) or []
+    if regs and any(getattr(r, 'can_id', None) is not None for r in regs):
+        return 'can'
     # MQTT maps carry a per-register topic; HTTP maps carry json_path only.
     if regs and any(getattr(r, 'topic', '') for r in regs):
         return 'mqtt'
     if regs and all(getattr(r, 'json_path', '') for r in regs):
         return 'http'
     return 'modbus'
+
+
+def template_listens_only(tpl) -> bool:
+    """A map that is only ever heard (``protocol.listen_only``): a device
+    made from it must listen, never poll (a Seplos V2 inter-pack tap)."""
+    proto = getattr(tpl, 'protocol', None) if not isinstance(tpl, dict) else tpl.get('protocol')
+    return isinstance(proto, dict) and proto.get('listen_only') is True
+
+
+def template_listens(tpl) -> bool:
+    """A map only ever heard, of any family (ADR-0025): ``protocol.listen_only``,
+    or a Modbus map whose only transport is ``rtu_tap``. A device made from
+    it never transmits."""
+    if template_listens_only(tpl):
+        return True
+    proto = getattr(tpl, 'protocol', None) if not isinstance(tpl, dict) else tpl.get('protocol')
+    transports = [str(x).lower() for x in ((proto or {}).get('transports') or [])] \
+        if isinstance(proto, dict) else []
+    return bool(transports) and all(x == 'rtu_tap' for x in transports)
+
+
+def _listen_only_errors(proto) -> List[str]:
+    if not isinstance(proto, dict) or 'listen_only' not in proto:
+        return []
+    if not isinstance(proto['listen_only'], bool):
+        return ["protocol.listen_only: true or false"]
+    from .config import VIRTUAL_MAP_FAMILY
+    transports = [str(x).lower() for x in (proto.get('transports') or [])]
+    # a virtual-map bus whose mode is chosen per device, or a Modbus map
+    # that is only tapped (ADR-0025): never next to a transport that polls
+    if proto['listen_only'] and not (transports and (all(x in VIRTUAL_MAP_FAMILY for x in transports)
+                                                     or all(x == 'rtu_tap' for x in transports))):
+        return ["protocol.listen_only: only for a map that is only heard — a virtual-map bus "
+                f"({', '.join(sorted(VIRTUAL_MAP_FAMILY))}) or Modbus through rtu_tap alone"]
+    return []
+
+
+# the one check of protocol.http.path lives with the other connection facts
+from .template_facts import HTTP_PATH_PLACEHOLDERS, http_path_errors  # noqa: E402,F401
 
 
 def validate_template(data: Dict[str, Any], *, extras: bool = True) -> List[str]:
@@ -640,10 +712,16 @@ def validate_template(data: Dict[str, Any], *, extras: bool = True) -> List[str]
     gap = (t.get('protocol') or {}).get('min_write_gap_s') if isinstance(t.get('protocol'), dict) else None
     if gap is not None and (isinstance(gap, bool) or not isinstance(gap, (int, float)) or not 0 <= gap <= 60):
         errors.append("protocol.min_write_gap_s: seconds between two writes, 0..60")
+    settle = (t.get('protocol') or {}).get('connect_settle_s') if isinstance(t.get('protocol'), dict) else None
+    if settle is not None and (isinstance(settle, bool) or not isinstance(settle, (int, float)) or not 0 <= settle <= 30):
+        errors.append("protocol.connect_settle_s: seconds to wait after connecting, 0..30")
     single = (t.get('protocol') or {}).get('single_register_writes') if isinstance(t.get('protocol'), dict) else None
     if single is not None and not isinstance(single, bool):
         errors.append("protocol.single_register_writes: true or false")
     errors.extend(_availability_errors(t.get('protocol')))
+    errors.extend(_listen_only_errors(t.get('protocol')))
+    from .can_signal import template_errors as _can_errors
+    errors.extend(_can_errors(t))
     if isinstance(t.get('protocol'), dict) and t['protocol'].get('keepalive') is not None:
         from .mqtt_input import keepalive_errors
         errors.extend(keepalive_errors(t['protocol']['keepalive'], 'protocol.keepalive'))
@@ -929,17 +1007,36 @@ def extra_errors(data: Dict[str, Any]) -> List[str]:
     t = (data or {}).get('device_template') or {}
     regs = t.get('registers') if isinstance(t.get('registers'), list) else []
     calcs = t.get('calculated') if isinstance(t.get('calculated'), list) else []
+    from .template_facts import protocol_hint_errors
+    # protocol.line / http.path / master_hint (ADR-0031 §5): a file on disk
+    # that gets one wrong still loads, a save asks for it to be fixed
     return (_register_extra_errors(regs, calcs) + _category_errors(t) + _command_errors(t) + _channel_errors(t)
-            + _kind_errors(t))
+            + _kind_errors(t) + protocol_hint_errors(t.get('protocol')))
+
+
+TYPES_MAX = 32
 
 
 def _kind_errors(t: Dict[str, Any]) -> List[str]:
-    """``kind``: the attribute catalog's vocabulary, or nothing."""
+    """``kind``: a built-in kind, or nothing; ``types``: user type ids (a
+    template travels between gateways, so a type unknown here is kept)."""
+    from .device_kind import KINDS
+    from .device_types import ID_RE
+    out: List[str] = []
     k = t.get('kind')
-    if k in (None, ''):
-        return []
-    from .attribute_catalog import KINDS
-    return [] if k in KINDS else [f"kind: one of {', '.join(KINDS)} (or empty)"]
+    if k not in (None, '') and k not in KINDS:
+        out.append(f"kind: one of {', '.join(KINDS)} (or empty)")
+    ts = t.get('types')
+    if ts is not None:
+        if not isinstance(ts, list):
+            out.append("types: a list of device type ids")
+        elif len(ts) > TYPES_MAX:
+            out.append(f"types: at most {TYPES_MAX}")
+        else:
+            bad = [x for x in ts if not isinstance(x, str) or not ID_RE.match(x)]
+            if bad:
+                out.append(f"types: {str(bad[0])[:40]!r} is not a type id (a-z 0-9 _, 2–32 characters)")
+    return out
 
 
 AGGREGATE_OPS = ('sum', 'avg', 'min', 'max', 'spread', 'mode')
@@ -1083,7 +1180,8 @@ def _channel_errors(t: Dict[str, Any]) -> List[str]:
         if not isinstance(c, dict):
             out.append(f"{w}: an object")
             continue
-        unknown = set(c) - {'combine', 'min_on_s', 'min_off_s', 'max_starts_per_h', 'min_interval_s', 'label'}
+        unknown = set(c) - {'combine', 'min_on_s', 'min_off_s', 'max_starts_per_h', 'min_interval_s',
+                            'max_age_s', 'label'}
         if unknown:
             out.append(f"{w}: unknown {', '.join(sorted(unknown))}")
         if c.get('combine', 'priority') not in CHANNEL_COMBINE:
@@ -1092,6 +1190,11 @@ def _channel_errors(t: Dict[str, Any]) -> List[str]:
             v = c.get(k)
             if v is not None and (isinstance(v, bool) or not isinstance(v, (int, float)) or not 0 <= v <= 7 * 86400):
                 out.append(f"{w}: {k} 0..604800")
+        # how long a command may wait for its bus before it is not written
+        # (ADR-0018); 0 would expire everything
+        v = c.get('max_age_s')
+        if v is not None and (isinstance(v, bool) or not isinstance(v, (int, float)) or not 1 <= v <= 86400):
+            out.append(f"{w}: max_age_s 1..86400")
     from .commands import _COND
     for cname, c in (t.get('commands') or {}).items() if isinstance(t.get('commands'), dict) else ():
         if not isinstance(c, dict):
@@ -1202,6 +1305,15 @@ def _command_errors(t: Dict[str, Any]) -> List[str]:
             out.append(f"{w}: refresh_s must be 0 (off) or 10..86400 seconds")
         if rf and not c.get('safe'):
             out.append(f"{w}: refresh_s needs safe parameters — they are what stops the refresh")
+        for k in ('coalesce', 'skip_if_set'):
+            if k in c and not isinstance(c[k], bool):
+                out.append(f"{w}: {k} must be true or false")
+        # "already set" judged from a polled reading would let a device-side
+        # timer fire (Fronius power_limit re-writes its revert timer) or end a
+        # refresh the device needs (ADR-0018 D6)
+        if c.get('skip_if_set') is True and (rf or 'revert_s' in params):
+            out.append(f"{w}: skip_if_set cannot go with refresh_s or a revert_s parameter — "
+                       "the write itself is what the device needs")
     return out
 
 
@@ -1389,6 +1501,7 @@ def parse_template(data: Dict[str, Any], *, builtin: bool = False,
         suggested_display_precision=r.get('suggested_display_precision'),
         aggregates=(dict(r['aggregates'])
                     if isinstance(r.get('aggregates'), dict) else None),
+        **_can_row_kwargs(r),
     ) for r in t['registers']]
     calcs = [TemplateCalculated(
         name=str(c['name']), expr=str(c.get('expr', '') or ''),
@@ -1414,6 +1527,7 @@ def parse_template(data: Dict[str, Any], *, builtin: bool = False,
         description=t.get('description', ''),
         source_document=t.get('source_document', ''),
         kind=str(t.get('kind', '') or ''),
+        types=[str(x) for x in t['types'] if isinstance(x, str)] if isinstance(t.get('types'), list) else [],
         schema_version=int(t.get('schema_version', SCHEMA_VERSION)),
         protocol=t.get('protocol', {}) or {},
         poll_groups=t.get('poll_groups', {}) or {},
@@ -1432,6 +1546,18 @@ def parse_template(data: Dict[str, Any], *, builtin: bool = False,
         components={str(k): dict(v) for k, v in (t.get('components') or {}).items()
                     if isinstance(v, dict)} if isinstance(t.get('components'), dict) else {},
     )
+
+
+def _can_row_kwargs(r: Dict[str, Any]) -> Dict[str, Any]:
+    """A template row's CAN fields as TemplateRegister keywords (validated
+    before this runs; {} for a row that is not a CAN signal)."""
+    from .can_signal import parse_can_id
+    cid = parse_can_id(r.get('can_id'))
+    if cid is None:
+        return {}
+    return {'can_id': cid, 'can_id_extended': bool(r.get('can_id_extended', False)),
+            'start_bit': int(r['start_bit']), 'bit_length': int(r['bit_length']),
+            'byte_order': str(r.get('byte_order') or 'little').lower()}
 
 
 def load_template(path: str, *, builtin: bool = False) -> DeviceTemplate:
@@ -1482,6 +1608,11 @@ class TemplateRegistry:
                             f"id {t.id!r} already provided by "
                             f"{self._templates[t.id].path}")
                     self._put(t)
+                    # CAN signals on the same bits of one frame: legal, said
+                    from .can_signal import overlap_warnings
+                    _ov = overlap_warnings(t.registers)
+                    if _ov:
+                        self.load_warnings[f.name] = " · ".join(_ov[:8])
                     # opt-in canonical checks (warnings, not load failures):
                     # flag non-canonical names, and duplicate names — which
                     # collide on one MQTT topic / InfluxDB field (raw vendor maps
@@ -1517,7 +1648,10 @@ class TemplateRegistry:
                             warns.append(f"{len(dups)} duplicate name(s) (MQTT/InfluxDB "
                                          f"collision): {', '.join(dups[:8])}")
                         if warns:
-                            self.load_warnings[f.name] = " · ".join(warns)
+                            # after the CAN overlap warnings, never instead of them
+                            self.load_warnings[f.name] = " · ".join(
+                                ([self.load_warnings[f.name]] if f.name in self.load_warnings else [])
+                                + warns)
                 except Exception as e:  # noqa: BLE001
                     self.load_errors[f.name] = str(e)
                     logger.warning("device template %s skipped: %s", f.name, e)

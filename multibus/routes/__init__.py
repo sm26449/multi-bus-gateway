@@ -1,5 +1,5 @@
 # Multi-Bus Gateway — multi-protocol Modbus/HTTP/MQTT acquisition gateway.
-# Copyright (C) 2024-2026 Stefan Maldaianu <sm26449@diysolar.ro>
+# Copyright (C) 2024-2026 Stefan Maldaianu <stefan@multibus.dev>
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU Affero General Public License as published by
@@ -60,6 +60,18 @@ class ApiCtx:
                          device, an installation or a template (dependents.py)
       mutation_lock      the device-mutation lock: a delete that must not
                          interleave with a device create or edit takes it
+      entry_lock         callable(device id) -> threading.Lock|None — the lock a
+                         checked device write holds (ADR-0030); a bus-wide
+                         edit tries every one of its devices' without waiting
+      device_write       decorator: a /api/devices/{device_id} route that
+                         changes the stored entry (If-Match, ETag; ADR-0030)
+      device_write_query decorator: the same for a route naming its device by
+                         the `device` query parameter (the PQ recorder)
+      device_runtime     decorator: one that acts but stores nothing (the
+                         ETag said, never 412)
+      write_primary_modbus callable(conn dict) — Settings → Modbus: the
+                         primary's connection judged and written as its
+                         PUT / PATCH do (422 HTTPException when refused)
     """
 
     def __init__(self, **kw):

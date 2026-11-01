@@ -29,14 +29,33 @@ table (health, hand-written ids and names), the per-unit probe, the
 endpoint-totals toggle, a unit rename, and the endpoint-aware unit workspace.
 
 ```bash
-cd tools/e2e
-MBG_URL=http://localhost:18080 ENDPOINT=sunfield node endpoint_page_e2e.mjs
+tools/e2e/fixture_up.sh endpoint 18089
+CHROMIUM_PATH=<chrome> MBG_URL=http://127.0.0.1:18089 ENDPOINT=sunfield node tools/e2e/endpoint_page_e2e.mjs
+docker rm -f mbg-fx-endpoint
 ```
 
-It writes (toggles a setting, renames a unit), so point it at an EPHEMERAL
-instance. The header of the script carries the throwaway-container line and the
-config it expects — an endpoint on a TEST-NET host, so the offline/degraded paths
-are the ones under test.
+It writes (toggles a setting, renames a unit): start the fixture fresh. The
+`endpoint` variant reads over Modbus TCP at a port that refuses (127.0.0.1:9
+inside the container), so the offline/degraded paths are the ones under test.
+
+## Fronius installations (F1)
+
+`fronius_endpoint_e2e.mjs` checks the two ways a Fronius plant is read, side by
+side: inverters through the datalogger's Solar API (answered by
+`fake_solar_api.mjs`, 4200 W each) and the meter directly over SunSpec Modbus
+(a refusing port). It covers the installations in the devices list with their
+units nested, the unit's Read via and Outputs (locked to the installation), the
+installation and group dialogs naming each template, and the delete refusal.
+
+```bash
+tools/e2e/fixture_up.sh fronius 18094
+CHROMIUM_PATH=<chrome> MBG_URL=http://127.0.0.1:18094 node tools/e2e/fronius_endpoint_e2e.mjs
+docker rm -f mbg-fx-fronius mbg-fx-fronius-solar
+```
+
+`fixture_up.sh fronius` starts the stand-in in a companion container
+(`<name>-solar`, image `node:24-slim` or `NODE_IMAGE`) inside the gateway's
+network namespace: it answers on the gateway's 127.0.0.1:18099 and nowhere else.
 
 ## Device logs
 
@@ -142,6 +161,26 @@ and puts the name back.
 and both wizards, screenshots each (light, dark, phone width) and reports raw
 i18n keys, horizontal overflow and console errors to `/tmp/audit/report.json`.
 It is the regression walk behind the installations UI audit (operator notes).
+
+`qa_397_sweep_e2e.mjs` is the release sweep (3.97): every page and its tabs,
+every device's tabs and sub-tabs, every installation, the ⋯ menu, every dialog
+an "open/add/new/import/view" control opens, Add Device (every protocol, the
+RTU modes, steps 1–3) and Add Installation — in en and ro, 1440 and 390 px,
+light and dark. Per screen it reports console errors, failed requests, page
+scroll at phone width and what sticks out, clipped text, raw i18n keys,
+English left on a ro page, controls without a name (or named only by a
+placeholder), text under AA contrast and empty cards; per dialog, that Tab
+stays inside, Esc closes it and focus returns. Not pass/fail: a report.
+
+```bash
+MBG_FX_NAME=qa-types tools/e2e/fixture_up.sh types 18540
+CHROMIUM_PATH=<chrome> MBG_URL=http://127.0.0.1:18540 OUT=/tmp/qa SHOTS=1 \
+  node tools/e2e/qa_397_sweep_e2e.mjs        # → /tmp/qa/report.json (+ shots of problem screens)
+```
+
+The full product with dialogs takes hours on a busy host: `DIALOGS=0` walks
+the screens only; `COMBOS=en/1440/light,ro/390/dark` picks combinations;
+`PAGES`, `DEVS`, `PARTS`, `ONLY` narrow the walk.
 
 ## Unit page
 
@@ -299,6 +338,8 @@ and `multibus/` (image `MBG_IMAGE`, default `multi-bus-gateway:latest`):
 |---|---|---|
 | `safety` | installation `sunfield`: `inverters` (units 1, 2; sources `solar_api` http + `sunspec` tcp; power_limit/restore), `grid` (unit 240 as `sunfield-meter-240`), `spare` (unit 7, no template → idle) | `installation_safety_e2e`, `rules_e2e`, `commands_e2e`, `attributes_e2e` (`ATTR_DEVICE=sunfield-meter-240`), `attributes_use_e2e`, `endpoint_outputs_e2e`, `new_user_e2e` |
 | `plant` | `sunfield` with `inverters` (1, 2; `sunspec`) and `grid` (240) only | `plant_groups_e2e` |
+| `endpoint` | `sunfield` over Modbus TCP at a refusing port: units 1, 2 and `sunfield-east` "East roof", `max_connections: 2`; no primary meter | `endpoint_page_e2e`, `device_logs_e2e` (`DEVICE=sunfield-u1`, after ~20 s) |
+| `fronius` | `fronius-inverters` (Solar API, units 1, 2, answered by `fake_solar_api.mjs`) and `fronius-meter` (SunSpec, unit 240, refusing); no primary meter | `fronius_endpoint_e2e` |
 | `drive` | `vfd1` (delta_vfd_el, `run_at` enabled) | `rules_trim_e2e`, `rules_schedule_e2e`, `rules_timers_e2e`; with `--writes --login`: `rules_layers_e2e`, `sequences_e2e` (`MBG_USER=admin MBG_PASS=<pass>`) |
 
 Run the safety scripts on a fresh start (`rules_e2e` and `commands_e2e`
@@ -349,20 +390,34 @@ themes. On the safety fixture; the one rule it saves is deleted at the end:
 
 ## The device page's tabs (`lib/device-page.mjs`)
 
-The device page shows its tabs in three groups (Live, Configure, Diagnose),
-one strip at a time: a tab of another group is out of sight until its group
-is picked. A script opens a tab as a user does — `openDeviceTab(page, 'meters')`
-clicks the group, then the tab (`edit` is the earlier name of `connection`) —
-and `deviceAction(page, '#ddvDeleteBtn')` opens the header's ⋯ menu and
-clicks an item (a held-back item still answers, it says why). The next
-reorganisation then changes this file only. `device_page_e2e.mjs` covers the
-groups, the keyboard, links, the Meters tab and a meter-only device on the
-`safety` fixture with `--writes`.
+The device page (L3.3, ADR-0031 §3) shows its tabs in four groups (Live,
+Data, Setup, Diagnose), one strip at a time: a tab of another group is out
+of sight until its group is picked; a group of one tab (Setup) shows no
+strip. Nothing in the page body edits: editing opens from the ⋯ menu (or E),
+until the Edit modal (L3.4) today's editors in place, under an "Editing" bar
+with Done. A script opens a tab as a user does — `openDeviceTab(page,
+'measurements')` clicks the group, then the tab — or an editor —
+`openDeviceEditor(page, 'commands')` opens ⋯ and its item; `openDeviceTab`
+with a tab that left (`connection`, `edit`, `outputs`, `attributes`,
+`meters`) opens its editor the same way — and `deviceAction(page,
+'#ddvDeleteBtn')` clicks any ⋯ item (a held-back item still answers, it says
+why). The next reorganisation then changes this file only.
+`device_page_e2e.mjs` covers the groups, the keyboard, links, the meters
+editor and a meter-only device on the `safety` fixture with `--writes`.
+
+`device_view_e2e.mjs` covers the view itself on the `qa` fixture with login
+(`MBG_FX_NAME=mbg-fx-view tools/e2e/fixture_up.sh qa 18331 --login e2e-pass`,
+then `MBG_PASS=e2e-pass`): the one-line summary per kind (the same on the list
+row and the bridge card), the ⋯ menu per role and by keyboard, no Save in the
+page body, editing from ⋯ and E, Setup read-only for a viewer, links to the
+tabs that left, the dirty guard on Esc and ✕, a 390 px phone and Romanian.
+`node tools/e2e/device_view_model_test.mjs` checks the summary renderer and
+the menu builder without a browser.
 
 ## The connection form (`connform_e2e.mjs`, `connform_model_test.mjs`)
 
 One form says how a device is reached, in Add Device and on a device's
-Configure → Connection tab (`ui/js/app-connform.js`); its model and what it
+connection editor, ⋯ → Edit connection… (`ui/js/app-connform.js`); its model and what it
 sends are `ui/js/connform-model.js`. Three checks, chained:
 
 - `tests/test_connform_payloads.py` serves every way a device is reached
@@ -384,3 +439,168 @@ around a save: off a gateway's bus, Test after leaving a bridge and on an
 edited bridged device, arrow keys on the segments, Back in Add Device with a
 typed address, the components lock, a local tap, a meter-only and an HTTP
 device saved untouched.
+
+## The guide's UI gaps (UI-G1..G4)
+
+`node tools/e2e/ui_g_findings_test.mjs` runs the page's own scripts in a
+sandbox, no browser, against both dictionaries: a fleet row of a device
+measured by meters (G1), the line under Add Device's connection choice (G2),
+what the History chart draws at desktop and phone sizes (G3), and the
+Monitor's group headings (G4).
+
+`ui_g_findings_e2e.mjs` checks the same in a browser on the demo gateway
+(`tools/demo/demo_up.sh`), read-only: the UPS's row against `/api/fleet`,
+its page's `/api/values` and its input meter; every connection kind in en and
+ro; History at 1440 and 390 px; the Monitor's headings and their keyboard
+use. Screenshots go to `SHOTS_DIR`.
+
+```bash
+cd tools/e2e && MBG_URL=http://127.0.0.1:18100 node ui_g_findings_e2e.mjs
+```
+
+## Board UARTs in the pickers (ADR-0016)
+
+`bridge_ports_model_test.mjs` checks `ui/js/bridge-ports.js` with no browser:
+which ports a picker may offer (only `ok` with a data port), how `no-access`,
+`reserved`, `busy` and `excluded` are told apart, and that a bridge older than
+board UARTs (no `status`, no `kind`) still reads right.
+
+```bash
+node tools/e2e/bridge_ports_model_test.mjs
+```
+
+`bridge_ports_e2e.mjs` drives Add Device's Scan and a bridge's Buses dialog
+with the serial bridge's answers faked in the browser (no bridge, no
+hardware): the served USB adapter and HAT channel can be picked; the
+no-access channel and the console are listed disabled, each with why, the
+no-access one with its command and a Copy button; RS-485 only on the board
+port, sent by Save; Romanian words; a phone width with no sideways scroll.
+It saves nothing on the gateway.
+
+```bash
+tools/e2e/fixture_up.sh safety 18087
+CHROMIUM_PATH=<chrome> MBG_URL=http://127.0.0.1:18087 node tools/e2e/bridge_ports_e2e.mjs
+```
+
+## Line health of a bridged bus (ADR-0017)
+
+`bridge_diag_model_test.mjs` checks `ui/js/bridge-diag.js` with no browser:
+the chip's level per diagnosis, line counters with `null` kept `null` (a
+CH340 is never shown as a clean 0), the activity of a bus.
+
+```bash
+node tools/e2e/bridge_diag_model_test.mjs
+```
+
+`bridge_diag_e2e.mjs` fakes what the gateway knows about one bridge (an FTDI
+bus with frame errors and timeouts, a CH340 bus) and checks the card's health
+chips, the Health dialog (diagnosis, counters with their rate, "not
+counted", client, the gateway's own counts, events), the Buses dialog's
+column, Config → Alerts (the bus-health signal and its limits, sent by Save),
+Romanian, and a phone width. It saves nothing on the gateway.
+
+```bash
+tools/e2e/fixture_up.sh safety 18087
+CHROMIUM_PATH=<chrome> MBG_URL=http://127.0.0.1:18087 node tools/e2e/bridge_diag_e2e.mjs
+```
+
+## Gateway identity (`identity_e2e.mjs`, ADR-0026)
+
+Settings → General's "Gateway identity" card (labels, hints, keyboard, a
+refused id said at its field, Romanian), the default patterns on the MQTT
+and InfluxDB tabs (empty = the identity scope's default), a device added
+afterwards getting the scoped topic and bucket in Add Device step 3, a topic
+prefix another device holds refused at its field in the wizard, and the
+device page still saving (200, never 412). It writes; on a fresh safety
+fixture, removed after:
+
+    MBG_FX_NAME=mbg-fx-l1 tools/e2e/fixture_up.sh safety 18120
+    CHROMIUM_PATH=… MBG_URL=http://127.0.0.1:18120 OUT=<dir> node tools/e2e/identity_e2e.mjs
+    docker rm -f mbg-fx-l1
+
+## The serial port picker (ADR-0028)
+
+`serial_ports_model_test.mjs` checks `ui/js/serial-ports.js` with no browser:
+poll or listen per mode, which port may be picked and why not, what is stored
+(a USB adapter's by-id link), the device being edited not its own conflict.
+
+```bash
+node tools/e2e/serial_ports_model_test.mjs
+```
+
+`serial_ports_e2e.mjs` fakes `GET /api/serial-ports` (the Pi 5 bench: an FTDI
+with a by-id link, a CH340, HAT ch0 listened to, HAT ch1 polled, a board UART
+not mapped, a hidden console) and checks the list (kinds, states), the
+listened port aria-disabled with its reason, the not-mapped port's
+`--device` and compose lines, Refresh, keyboard selection, the tap's rules,
+the POST carrying the by-id link, the device page (its own port picked, a
+new pick in the PUT), Romanian, and a phone width. It creates one device
+(`sp-e2e`, disabled) and deletes it.
+
+```bash
+tools/e2e/fixture_up.sh safety 18087
+CHROMIUM_PATH=<chrome> MBG_URL=http://127.0.0.1:18087 node tools/e2e/serial_ports_e2e.mjs
+```
+
+## Device types and identity (ADR-0027)
+
+`device_types_e2e.mjs` drives Templates → Device types (a type of one's own
+added from the keyboard with English and Romanian words, an icon and what it
+behaves like; a clash with a built-in refused in words; the templates for a
+type), the template editor's kind and "also suits these types", a device given
+that type from its ⋯ menu (its wire kind is the type's `behaves_like`), the
+identity attribute in its attributes editor, ⋯ → About (a wrong label named, labels shown as
+chips), the type and the label as Find facets, a type in use refused for
+deletion with its users named, and the same pages in Romanian. It cleans up
+after itself, so it can run again on the same gateway.
+
+```bash
+tools/e2e/fixture_up.sh types 18093
+CHROMIUM_PATH=<chrome> MBG_URL=http://127.0.0.1:18093 node tools/e2e/device_types_e2e.mjs
+docker rm -f mbg-fx-types
+```
+
+## Release 3.97 design conformance (QA)
+
+`qa_397_conformance_e2e.mjs` holds one check per user-visible decision of
+ADR-0025..0029, in sections (`ONLY=A,B,…` runs some): A new devices
+write-locked and the Write protection card; B Test, SunSpec walk and a
+bridge's bus scan refused on a listened bus, before any port is opened; C a
+poll onto a listened bus and a listener onto a polled one refused at the
+field (wizard, device page, the bridge's bus hints); D Settings → Gateway
+identity; E refused topic prefixes in Add Device; F two tabs on one device
+(the second save must be told — open until L3, FINDINGS QA-D-08); G the
+serial port picker; H the type catalog, "+ Add type", Find facets, template
+filter and editor; I identity attributes, the published meta and the privacy
+switches; J the InfluxDB heartbeat; K the removed switches; L Home Assistant
+discovery following MQTT; M en/ro for every key the UI asks for.
+
+The `qa` fixture holds a tap and a poller on serial paths that do not exist
+(a refusal that came after an open would say "no such file"), a tap and a
+poller on a bridge on 127.0.0.1, a meter-only device and an installation with
+roles. Its MQTT goes to 127.0.0.1:1883 of the gateway's own network
+namespace, where a throwaway broker answers; the meta and the discovery
+entries are read from it (`QA_BROKER`; without it those checks are skipped).
+It writes: start the fixture fresh.
+
+```bash
+MBG_FX_NAME=qa3-a tools/e2e/fixture_up.sh qa 18431
+docker run -d --rm --name qa3-broker --network container:qa3-a eclipse-mosquitto:2.1.2-alpine
+CHROMIUM_PATH=<chrome> MBG_URL=http://127.0.0.1:18431 QA_BROKER=qa3-broker \
+  node tools/e2e/qa_397_conformance_e2e.mjs
+docker rm -f qa3-broker qa3-a
+```
+
+## Refused live-data socket (WS-LOG-1)
+
+`ws_session_gone_e2e.mjs` ends a signed-in page's session behind its back and
+restarts the gateway: the page must show the login screen and stop dialling
+`/ws`; with `/api/auth/status` stubbed to say the session lives, it must back
+off (3, 6, 12… s) instead of re-dialling every 3 s. It restarts the container.
+
+```bash
+MBG_FX_NAME=mbg-fx-wslog tools/e2e/fixture_up.sh drive 18190 --login <pass>
+MBG_URL=http://127.0.0.1:18190 MBG_PASS=<pass> MBG_CONTAINER=mbg-fx-wslog \
+  CHROMIUM_PATH=<chrome> node tools/e2e/ws_session_gone_e2e.mjs
+docker rm -f mbg-fx-wslog
+```

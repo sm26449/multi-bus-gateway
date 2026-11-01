@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-// Copyright (C) 2024-2026 Stefan Maldaianu <sm26449@diysolar.ro>
+// Copyright (C) 2024-2026 Stefan Maldaianu <stefan@multibus.dev>
 //
 // bridges — augments JanitzaMonitor.prototype
 //
@@ -29,6 +29,143 @@ Object.assign(JanitzaMonitor.prototype, {
 
     _bridgeType(id) { return (this._bridgeTypes || []).find(t => t.id === id) || {}; },
 
+    // ── a serial port the bridge lists (bridge-ports.js): what it is, and
+    //    for one it cannot serve, why and what fixes it ────────────────────
+    _portStatusText(st) {
+        const t = (k, d) => this.t(k, d);
+        return ({
+            ok: t('bridges.st.ok', 'ready'),
+            busy: t('bridges.st.busy', 'in use'),
+            'no-access': t('bridges.st.noAccess', 'no access'),
+            'not-enabled': t('bridges.st.notEnabled', 'not enabled'),
+            reserved: t('bridges.st.reserved', 'reserved'),
+            excluded: t('bridges.excluded', 'excluded'),
+        })[st] || t('bridges.st.unknown', 'not available');
+    },
+
+    _portKindText(a) {
+        return BridgePorts.kind(a) === 'board'
+            ? this.t('bridges.kindBoard', 'Board UART') : this.t('bridges.kindUsb', 'USB');
+    },
+
+    _portStatusHint(st) {
+        const t = (k, d) => this.t(k, d);
+        return ({
+            'no-access': t('bridges.stHint.noAccess', 'The bridge container may not open this port yet. On the bridge’s host:'),
+            'not-enabled': t('bridges.stHint.notEnabled', 'A UART of the board itself. It may already be in use — a GPS, a login console, a modem — and a program that does not lock it cannot be seen, so the bridge serves it only once you enable it.'),
+            reserved: t('bridges.stHint.reserved', 'The system uses this port (kernel console or Bluetooth); the bridge never serves it.'),
+            busy: t('bridges.stHint.busy', 'Another program holds this port. Stop it, or let that program keep the port.'),
+            excluded: t('bridges.stHint.excluded', 'Listed in BRIDGE_EXCLUDE: another service owns it.'),
+        })[st] || t('bridges.stHint.unknown', 'The bridge does not serve this port.');
+    },
+
+    // the ports a picker cannot offer, each with its reason and the fix to
+    // copy; with a bridge record (its Buses dialog), a board UART that is
+    // only waiting for an opt-in gets its Enable button
+    _portBlockedHtml(list, bridgeId = null) {
+        if (!list || !list.length) return '';
+        const t = (k, d, p) => this.t(k, d, p);
+        const items = list.map(a => {
+            const st = BridgePorts.status(a);
+            const pill = (st === 'reserved' || st === 'excluded') ? 'off' : 'warn';
+            return `<li class="br-blocked-item" data-status="${this._esc(st)}">
+              <div><span class="sink-pill ${pill}">${this._esc(this._portStatusText(st))}</span>
+                <b>${this._esc(this._portKindText(a))} · ${this._esc(BridgePorts.label(a))}</b>
+                ${a.dev ? `<code>${this._esc(a.dev)}</code>` : ''}</div>
+              <div class="field-hint">${this._esc(this._portStatusHint(st))}</div>
+              ${a.fix ? `<div class="br-fix"><code class="br-fix-cmd">${this._esc(a.fix)}</code>
+                <button type="button" class="btn btn-secondary btn-sm" ${this._act('copyText', [a.fix], { el: true })}
+                  title="${this._esc(t('bridges.copyFix', 'Copy the command'))}" aria-label="${this._esc(t('bridges.copyFix', 'Copy the command'))}"><i aria-hidden="true" class="bi bi-clipboard"></i></button></div>` : ''}
+              ${st === 'not-enabled' ? (bridgeId
+                ? `<div class="br-fix"><button type="button" data-admin class="btn btn-secondary btn-sm" ${this._act('bridgeEnablePort', [bridgeId, a.key || a.stable_id, true])}>${this._esc(t('bridges.enable', 'Enable'))}</button></div>`
+                : `<div class="field-hint">${this._esc(t('bridges.enableWhere', 'Enable it in the bridge’s Buses dialog (Devices → the bridge), or list it in BRIDGE_INCLUDE.'))}</div>`) : ''}
+              ${a.reason && st !== 'not-enabled' ? `<div class="field-hint br-reason">${this._esc(a.reason)}</div>` : ''}
+            </li>`;
+        }).join('');
+        return `<div class="br-blocked" role="group" aria-label="${this._esc(t('bridges.blockedTitle', 'Ports that cannot be used yet'))}">
+            <div class="form-label">${this._esc(t('bridges.blockedTitle', 'Ports that cannot be used yet'))}</div>
+            <ul class="br-blocked-list">${items}</ul></div>`;
+    },
+
+    // what the bridge warns about itself: a device-rule slot a kernel update
+    // left stale (ADR-0016), with the command that rewrites it
+    _bridgeWarningsHtml(warnings) {
+        if (!warnings || !warnings.length) return '';
+        const t = (k, d) => this.t(k, d);
+        return `<div class="br-warnings" role="alert">${warnings.map(w => `<div class="br-blocked-item" data-warning>
+            <div><span class="sink-pill warn">${this._esc(t('bridges.warning', 'warning'))}</span>
+              <b>${this._esc(t('bridges.staleSlot', 'A device rule of the bridge is out of date'))}</b></div>
+            <div class="field-hint">${this._esc(t('bridges.staleSlotHint', 'Usually after a kernel update: an RS-485 HAT got another device number. On the bridge’s host, run this again and recreate the container:'))}</div>
+            ${w.fix ? `<div class="br-fix"><code class="br-fix-cmd">${this._esc(w.fix)}</code>
+              <button type="button" class="btn btn-secondary btn-sm" ${this._act('copyText', [w.fix], { el: true })}
+                title="${this._esc(t('bridges.copyFix', 'Copy the command'))}" aria-label="${this._esc(t('bridges.copyFix', 'Copy the command'))}"><i aria-hidden="true" class="bi bi-clipboard"></i></button></div>` : ''}
+            <div class="field-hint br-reason">${this._esc(w.message || '')}</div></div>`).join('')}</div>`;
+    },
+
+    // buses the bridge guard keeps off the wire: the adapter a bus was bound
+    // to is now on another port of its bridge, or gone. Never read from the
+    // other bus; one click follows the adapter (bridge_guard.py)
+    _guardBannerHtml(problems, devices) {
+        if (!problems || !problems.length) return '';
+        const t = (k, d, p) => this.t(k, d, p);
+        const refused = problems.filter(p => !p.allowed);
+        const on = (p) => (devices || []).filter(d => String(d.host || d.connection?.host || '') === p.host
+            && +(d.port || d.connection?.port) === +p.port).map(d => d.id);
+        const hosts = [...new Set(problems.filter(p => p.status === 'moved').map(p => p.host))];
+        const items = problems.map(p => {
+            const ids = on(p);
+            const what = p.status === 'moved'
+                ? t('guard.moved', 'Bus {host}:{port} — its adapter {adapter} is now on :{now}. Not read until it follows.', { host: p.host, port: p.port, adapter: p.adapter, now: p.now_at })
+                : p.status === 'missing'
+                    ? t('guard.missing', 'Bus {host}:{port} — its adapter {adapter} is missing. Not read until it is back.', { host: p.host, port: p.port, adapter: p.adapter })
+                    : t('guard.unverified', 'Bus {host}:{port} — the bridge cannot be asked which adapter serves it. Not verified, still reading as {adapter}.', { host: p.host, port: p.port, adapter: p.adapter });
+            return `<li class="br-blocked-item" data-guard="${this._esc(p.status)}">
+                <div><span class="sink-pill ${p.allowed ? 'warn' : 'bad'}">${this._esc(p.allowed ? t('guard.stillRead', 'not verified') : t('guard.notRead', 'not read'))}</span> <b>${this._esc(what)}</b></div>
+                ${ids.length ? `<div class="field-hint">${this._esc(t('guard.devices', 'Devices: {ids}', { ids: ids.join(', ') }))}</div>` : ''}
+                <div class="field-hint br-reason">${this._esc(p.detail || '')}</div></li>`;
+        }).join('');
+        const follow = hosts.map(h => `<button type="button" data-admin class="btn btn-primary btn-sm" ${this._act('bridgeGuardFollow', [h])}>
+            <i aria-hidden="true" class="bi bi-signpost-split"></i> ${this._esc(t('guard.follow', 'Follow the adapters on {host}', { host: h }))}</button>`).join(' ');
+        return `<div class="br-warnings" role="alert" id="guardBanner">
+            <div class="form-label">${this._esc(refused.length ? t('guard.title', 'A bus moved on a serial bridge') : t('guard.titleWarn', 'A serial bridge cannot be checked'))}</div>
+            <ul class="br-blocked-list">${items}</ul>
+            ${follow ? `<div class="br-fix">${follow}</div>` : ''}</div>`;
+    },
+
+    async bridgeGuardFollow(host) {
+        const t = (k, d, p) => this.t(k, d, p);
+        if (!await this.confirmAction({
+            title: t('guard.followTitle', 'Follow the adapters?'),
+            message: t('guard.followConfirm', 'Each device bound to a moved adapter is re-pointed to the port its adapter has now, and restarts there. Nothing is read from a bus it was not bound to.'),
+            confirmLabel: t('guard.followGo', 'Follow'),
+        })) return;
+        const r = await fetch('/api/bridge-guard/follow', { method: 'POST',
+            headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ host }) });
+        const d = await r.json().catch(() => ({}));
+        if (!r.ok) { this.showToast('error', t('guard.followFail', 'Not followed'), (d.detail?.errors || [r.statusText]).join(' ')); return; }
+        const moves = Object.entries(d.moved || {}).map(([a, b]) => `:${a} → :${b}`).join(', ');
+        this.showToast('success', t('guard.followed', 'Adapters followed'), moves);
+        this.renderDevicesList();
+    },
+
+    // serve (or stop serving) one of the board's own UARTs: opt-in, with a
+    // warning — the bridge cannot see a program that uses it without a lock
+    async bridgeEnablePort(id, key, on) {
+        const t = (k, d, p) => this.t(k, d, p);
+        if (on && !await this.confirmAction({
+            title: t('bridges.enableTitle', 'Serve this UART?'),
+            message: t('bridges.enableWarn', 'Make sure nothing else uses it — a GPS, a login console, a modem, a device mapped straight into the gateway. Once served, anyone who can reach the bridge’s data port talks to whatever is on this line.'),
+            confirmLabel: t('bridges.enable', 'Enable'),
+        })) return;
+        const r = await fetch(`/api/bridges/${encodeURIComponent(id)}/ports/${encodeURIComponent(key)}/enable`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ enabled: !!on }) });
+        const d = await r.json().catch(() => ({}));
+        if (!r.ok) { this.showToast('error', t('bridges.enableFail', 'Not changed'), (d.detail?.errors || [r.statusText]).join(' ')); return; }
+        this.showToast('success', on ? t('bridges.enabled', 'Port enabled') : t('bridges.disabled', 'Port no longer served'),
+            `${d.label || key} · ${this._portStatusText(d.status)}`);
+        this.bridgeScan(id);
+    },
+
     // ── the Devices page section ────────────────────────────────────────────
     _bridgesSectionHtml(bridges, healthColor) {
         if (!bridges.length) return '';
@@ -51,6 +188,7 @@ Object.assign(JanitzaMonitor.prototype, {
                     ${p.serial_text || p.serial ? `<span class="dev-chip">${this._esc(p.serial_text || p.serial)}</span>` : ''}
                     <span class="field-hint">${this.tn('bridges.nDevices', (p.devices || []).length, '{n} devices')}</span>
                     ${p.busy ? this._busyMeter(p) : ''}
+                    ${p.diag ? this._diagChip(b.id, p) : ''}
                     ${p.tapped ? `<span class="sink-pill ${p.wire?.error ? 'bad' : 'ok'}" title="${this._esc(p.wire?.error || t('bridges.tappedHint', 'Another master polls this bus; the gateway only listens. Scan, Check mode and polled devices are off here — they would transmit.'))}"><i aria-hidden="true" class="bi bi-ear"></i> ${p.wire?.error ? this._esc(t('bridges.tapLost', 'listening — link lost')) : this._esc(t('bridges.tapped', 'listening · {frames} frames · {crc} CRC errors', { frames: p.wire?.frames ?? 0, crc: p.wire?.crc_errors ?? 0 }))}</span>` : ''}
                     ${p.tapped ? '' : `<span class="bridge-port-actions">
                       <button data-admin class="btn btn-ghost btn-sm" ${this._act('busScan', [b.id, p.port])} title="${this._esc(t('bridges.scanBusHint', 'Ask every unit id on this bus who answers, and what it probably is'))}"><i aria-hidden="true" class="bi bi-search"></i> ${t('bridges.scanBus', 'Scan')}</button>
@@ -59,15 +197,21 @@ Object.assign(JanitzaMonitor.prototype, {
                       <button class="btn btn-ghost btn-sm" ${this._act('openBusMonitor', [`${b.host}:${p.port}`])} title="${this._esc(t('bridges.monitorHint', 'Diagnostics, this bus only: every question and answer on the wire, and the register probe for any unit on it'))}"><i aria-hidden="true" class="bi bi-reception-4"></i> ${t('bridges.monitor', 'Monitor')}</button>
                     </span>`}
                   </div>
-                  ${(p.devices || []).map(d => `
-                    <div class="bridge-dev" role="button" tabindex="0" data-f="${this._esc(d.id)}" ${this._act(d.endpoint_id ? 'openEndpointDetail' : 'openDeviceDetail', [d.endpoint_id || d.id])}>
+                  ${p.tapped ? `<div class="field-hint bridge-tap-why"><i aria-hidden="true" class="bi bi-ear"></i> ${this._esc(t('bridges.tappedHint', 'Another master polls this bus; the gateway only listens. Scan, Check mode and polled devices are off here — they would transmit.'))}</div>` : ''}
+                  ${(p.devices || []).map(d => {
+                    // the device's own line and ⋯ (the device page's, one builder —
+                    // a unit's too); a unit opens its installation, which says how it is read
+                    const full = (this._devices || []).find(x => x.id === d.id);
+                    return `
+                    <div class="bridge-dev" role="button" tabindex="0" data-f="${this._esc(d.id)}" ${this._act(d.endpoint_id ? 'openEndpointDetail' : 'openDeviceDetail', [d.endpoint_id || d.id], { guard: '.dev-row-menu' })}>
                       <span class="status-dot" style="--dot:${healthColor[d.health] || healthColor.idle}"></span>
                       <span class="dev-chip">${this._esc(this.t('common.unitN', 'unit {n}', { n: d.unit_id }))}</span>
                       ${d.tap ? `<span class="dev-chip" title="${this._esc(t('bridges.tapDevHint', 'listen-only'))}"><i aria-hidden="true" class="bi bi-ear"></i></span>` : ''}
                       <span>${this._esc(d.name || d.id)}</span>
+                      ${full && !d.endpoint_id ? `<span class="field-hint bridge-dev-sum">${this._devSummaryHtml(full, { compact: true })}</span>` : ''}
                       ${d.endpoint_id ? `<span class="field-hint">${t('bridges.inInstallation', 'in an installation')}</span>` : ''}
-                      ${!d.endpoint_id ? `<button data-admin class="btn btn-ghost btn-sm bridge-move" ${this._act('openDeviceEdit', [d.id])} title="${this._esc(t('bridges.moveHint', 'Edit — or move it to another bus or bridge; its topics and history stay'))}" aria-label="${this._esc(t('common.edit', 'Edit'))}"><i aria-hidden="true" class="bi bi-arrow-left-right"></i></button>` : ''}
-                    </div>`).join('') || `<div class="field-hint bridge-dev">${t('bridges.noDevices', 'No device on this bus yet.')}</div>`}
+                      ${full ? this._devRowMenuHtml(full, 'bridge') : ''}
+                    </div>`; }).join('') || `<div class="field-hint bridge-dev">${t('bridges.noDevices', 'No device on this bus yet.')}</div>`}
                 </div>`).join('');
             return `
             <div class="bridge-card" data-bridge="${this._esc(b.id)}">
@@ -126,6 +270,157 @@ Object.assign(JanitzaMonitor.prototype, {
         return [t('bridges.busyLead', 'Measured share of the wire in the last minute, per device:'), ...lines, advice].filter(Boolean).join('\n');
     },
 
+    // ── bus health: what the serial bridge measures on the line, next to what
+    //    the gateway sees (bridge_diag.py, bridge-diag.js, ADR-0017) ─────────
+    _diagText(code) {
+        const t = (k, d) => this.t(k, d);
+        return ({
+            ok: t('bridges.diag.ok', 'line healthy'),
+            line_noise: t('bridges.diag.lineNoise', 'line errors, reads still fine'),
+            host_overrun: t('bridges.diag.hostOverrun', 'bridge host too busy'),
+            wiring: t('bridges.diag.wiring', 'RS-485 wiring, termination or baud'),
+            device_silent: t('bridges.diag.deviceSilent', 'device off or disconnected'),
+            network: t('bridges.diag.network', 'network between the gateway and the bridge'),
+            timeouts: t('bridges.diag.timeouts', 'a slave does not answer'),
+            collecting: t('bridges.diag.collecting', 'measuring…'),
+            no_data: t('bridges.diag.noData', 'bridge not answering'),
+            unsupported: t('bridges.diag.none', 'no line statistics'),
+        })[code] || t('bridges.diag.none', 'no line statistics');
+    },
+
+    _diagAdvice(code) {
+        const t = (k, d) => this.t(k, d);
+        return ({
+            ok: t('bridges.diagHint.ok', 'No line errors, and the gateway’s reads are answered.'),
+            line_noise: t('bridges.diagHint.lineNoise', 'The UART saw frame or parity errors, but every read was answered. Watch it: a loose terminal or a missing termination gets worse.'),
+            host_overrun: t('bridges.diagHint.hostOverrun', 'The UART on the bridge’s host lost bytes (overrun): the host did not read them in time. Lighten its load, or use an adapter with a deeper buffer.'),
+            wiring: t('bridges.diagHint.wiring', 'Timeouts or garbled answers together with frame or parity errors on the line: check A/B polarity, the 120 Ω termination at both ends, the ground, and that every device uses the same baud and parity.'),
+            device_silent: t('bridges.diagHint.deviceSilent', 'The gateway asks and nothing at all comes back from the bus: the device is off, unplugged, or its cable is cut. The line itself shows no errors.'),
+            network: t('bridges.diagHint.network', 'Timeouts while the line is clean and the TCP connection to the bridge keeps being reopened: look at the network between the gateway and the bridge (Wi-Fi, a switch, a firewall dropping idle connections).'),
+            timeouts: t('bridges.diagHint.timeouts', 'Some reads time out while the line is clean and the bus answers otherwise: check that slave’s unit id, its settings and its response time.'),
+            collecting: t('bridges.diagHint.collecting', 'The first numbers need two polls of the bridge (about a minute).'),
+            no_data: t('bridges.diagHint.noData', 'The bridge’s control API does not answer the gateway: is it running, is its control port reachable, is the token right?'),
+        })[code] || t('bridges.diagHint.none', 'An older bridge: update it to see line statistics.');
+    },
+
+    _diagPill(lvl) {
+        return ({ ok: 'ok', warn: 'warn', info: 'info', unknown: 'off' })[lvl] || 'off';
+    },
+
+    _diagChip(bridgeId, p) {
+        const t = (k, d, x) => this.t(k, d, x);
+        const d = p.diag;
+        const code = BridgeDiag.code(d);
+        const text = this._diagText(code);
+        const errs = BridgeDiag.lineErrors(d);
+        const lpm = d.rates?.line_errors_per_min;
+        const parts = [text,
+            errs === null ? t('bridges.diag.lineUncounted', 'line errors not counted by this adapter')
+                : t('bridges.diag.lineErrs', 'line errors: {n} ({rate}/min)', { n: errs, rate: lpm ?? '—' }),
+            d.client ? t('bridges.diag.client', 'client {addr}', { addr: d.client }) : t('bridges.diag.noClient', 'no client connected'),
+        ];
+        return `<button type="button" class="sink-pill ${this._diagPill(BridgeDiag.level(d))} br-diag-chip" data-diag="${this._esc(code)}"
+                  ${this._act('openBridgeHealth', [bridgeId, p.port])}
+                  title="${this._esc(parts.join('\n'))}"
+                  aria-label="${this._esc(t('bridges.diag.aria', 'Line health of bus :{port}: {text}', { port: p.port, text }))}">
+                  <i aria-hidden="true" class="bi bi-heart-pulse"></i> ${this._esc(text)}</button>`;
+    },
+
+    _diagLineName(f) {
+        const t = (k, d) => this.t(k, d);
+        return ({ frame: t('bridges.diag.frame', 'Frame errors'), parity: t('bridges.diag.parity', 'Parity errors'),
+                  overrun: t('bridges.diag.overrun', 'UART overruns'), brk: t('bridges.diag.brk', 'Breaks'),
+                  buf_overrun: t('bridges.diag.bufOverrun', 'Buffer overruns') })[f] || f;
+    },
+
+    _diagEventText(kind) {
+        const t = (k, d) => this.t(k, d);
+        return ({
+            client_connected: t('bridges.ev.clientConnected', 'client connected'),
+            client_left: t('bridges.ev.clientLeft', 'client left'),
+            line_errors: t('bridges.ev.lineErrors', 'line errors'),
+            adapter_gone: t('bridges.ev.adapterGone', 'adapter gone'),
+            adapter_back: t('bridges.ev.adapterBack', 'adapter back'),
+            adapter_new: t('bridges.ev.adapterNew', 'adapter appeared'),
+            port_moved: t('bridges.ev.portMoved', 'data port moved'),
+            dev_renamed: t('bridges.ev.devRenamed', 'device node renamed'),
+            status: t('bridges.ev.status', 'status changed'),
+            ser2net_restart: t('bridges.ev.ser2netRestart', 'ser2net restarted'),
+            ser2net_exited: t('bridges.ev.ser2netExited', 'ser2net stopped'),
+            slot_warning: t('bridges.ev.slotWarning', 'device rule out of date'),
+            started: t('bridges.ev.started', 'bridge started'),
+        })[kind] || kind;
+    },
+
+    _secsText(s) {
+        if (s === null || s === undefined) return '—';
+        if (s < 120) return this.t('bridges.diag.secs', '{n} s', { n: Math.round(s) });
+        if (s < 7200) return this.t('bridges.diag.mins', '{n} min', { n: Math.round(s / 60) });
+        return this.t('bridges.diag.hours', '{n} h', { n: Math.round(s / 3600) });
+    },
+
+    _bridgeHealthHtml(port, v, now) {
+        const t = (k, d, x) => this.t(k, d, x);
+        if (!v) return `<p class="field-hint">${this._esc(t('bridges.diag.notYet', 'No numbers for this bus yet: the gateway asks the bridge every 30 s.'))}</p>`;
+        const code = BridgeDiag.code(v);
+        const st = v.stats || {};
+        const act = BridgeDiag.activity(st, now);
+        const ago = s => (s === null ? '—' : this._esc(t('bridges.diag.agoText', '{d} ago', { d: this._secsText(s) })));
+        const rows = BridgeDiag.lineRows(st, v.rates).map(r => `<tr><th scope="row">${this._esc(this._diagLineName(r.field))}</th>
+            <td>${r.known ? this._esc(r.total) : `<span class="field-hint">${this._esc(t('bridges.diag.notCounted', 'not counted'))}</span>`}</td>
+            <td>${r.perMin === null ? '—' : this._esc(r.perMin)}</td></tr>`).join('');
+        const m = v.mbg;
+        const when = e => {
+            const ms = BridgeDiag.eventTime(e);
+            return ms === null ? '' : `<time datetime="${new Date(ms).toISOString()}">${this._esc(new Date(ms).toLocaleString(this._loc()))}</time>`;
+        };
+        const ev = (Array.isArray(v.events) ? v.events : []).filter(e => e && typeof e === 'object').slice().reverse().map(e => `<li>${when(e)}
+            <b>${this._esc(this._diagEventText(e.kind))}</b> <span class="field-hint">${this._esc(e.message || '')}</span></li>`).join('');
+        const dl = items => `<dl class="br-diag-dl">${items.map(([k, val]) => `<dt>${this._esc(k)}</dt><dd>${val}</dd>`).join('')}</dl>`;
+        return `<section class="br-health" aria-label="${this._esc(t('bridges.diag.title', 'Line health · bus :{port}', { port }))}">
+          <p role="status"><span class="sink-pill ${this._diagPill(BridgeDiag.level(v))}" data-diag="${this._esc(code)}">${this._esc(this._diagText(code))}</span>
+            ${v.diagnosis?.confidence === 'low' ? `<span class="field-hint">${this._esc(t('bridges.diag.lowConfidence', '(this adapter does not count line errors, so the line cannot be ruled out)'))}</span>` : ''}</p>
+          <p class="field-hint">${this._esc(this._diagAdvice(code))}</p>
+          ${v.error ? `<p class="field-error">${this._esc(v.error)}</p>` : ''}
+          <h4 class="tplu-h">${this._esc(t('bridges.diag.lineTitle', 'The line (kernel counters on the bridge)'))}</h4>
+          ${st.line_note ? `<p class="field-hint">${this._esc(st.line_note)}</p>` : ''}
+          <div class="br-table-wrap"><table class="tplu-table br-diag-table"><thead><tr><th scope="col">${this._esc(t('bridges.diag.counter', 'Counter'))}</th>
+            <th scope="col">${this._esc(t('bridges.diag.total', 'Total'))}</th><th scope="col">${this._esc(t('bridges.diag.perMin', 'Per minute'))}</th></tr></thead>
+            <tbody>${rows}</tbody></table></div>
+          <h4 class="tplu-h">${this._esc(t('bridges.diag.activityTitle', 'Connection and activity'))}</h4>
+          ${dl([
+            [t('bridges.diag.clientLabel', 'Client'), act.client ? `<code>${this._esc(act.client)}</code>` : this._esc(t('bridges.diag.noClient', 'no client connected'))],
+            [t('bridges.diag.reconnects', 'Connects in the last 10 min'), this._esc(st.connects_10min ?? '—')],
+            [t('bridges.diag.silent', 'Bus silent for'), this._esc(this._secsText(act.silentS))],
+            [t('bridges.diag.lastRx', 'Last byte from the bus'), ago(act.lastRxAgoS)],
+            [t('bridges.diag.lastTx', 'Last byte to the bus'), ago(act.lastTxAgoS)],
+          ])}
+          <h4 class="tplu-h">${this._esc(t('bridges.diag.mbgTitle', 'What the gateway saw on this bus (last 5 min)'))}</h4>
+          ${m ? dl([
+            [t('bridges.diag.answered', 'Answered reads'), this._esc(m.ok ?? '—')],
+            [t('bridges.diag.timeoutsLabel', 'Timeouts'), this._esc(m.timeouts ?? '—')],
+            [t('bridges.diag.connErrors', 'Connection errors'), this._esc(m.connection ?? '—')],
+            [t('bridges.diag.exceptions', 'Exceptions (the slave said no)'), this._esc(m.exceptions ?? '—')],
+          ]) : `<p class="field-hint">${this._esc(t('bridges.diag.noMbg', 'No device of the gateway reads this bus.'))}</p>`}
+          <h4 class="tplu-h">${this._esc(t('bridges.diag.eventsTitle', 'Recent events on the bridge'))}</h4>
+          ${ev ? `<ul class="br-diag-events">${ev}</ul>` : `<p class="field-hint">${this._esc(t('bridges.diag.noEvents', 'None.'))}</p>`}
+        </section>`;
+    },
+
+    async openBridgeHealth(bridgeId, port) {
+        const t = (k, d, x) => this.t(k, d, x);
+        const title = t('bridges.diag.title', 'Line health · bus :{port}', { port });
+        let v = null, err = '';
+        try {
+            const r = await fetch(`/api/bridges/${encodeURIComponent(bridgeId)}/diagnostics`);
+            const d = await r.json().catch(() => ({}));
+            if (!r.ok) err = (d.detail?.errors || [r.statusText]).join(' ');
+            else v = (d.ports || {})[String(port)] || null;
+        } catch (e) { err = String(e.message || e); }
+        this._bridgeInfo(title, err ? `<div class="field-error">${this._esc(err)}</div>`
+            : this._bridgeHealthHtml(port, v, Date.now() / 1000));
+    },
+
     // ── scan a bus ──────────────────────────────────────────────────────────
     async busScan(bridgeId, port) {
         const t = (k, d, x) => this.t(k, d, x);
@@ -134,9 +429,20 @@ Object.assign(JanitzaMonitor.prototype, {
           <div class="bus-scan-bar"><div id="busScanFill"></div></div>
           <p class="field-hint" id="busScanState">${t('bridges.scanStarting', 'starting…')}</p>
           <div id="busScanResult"></div>`);
-        const r = await fetch(`/api/bridges/${encodeURIComponent(bridgeId)}/ports/${port}/scan`, {
-            method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
-        const d = await r.json().catch(() => ({}));
+        const ask = async body => {
+            const r = await fetch(`/api/bridges/${encodeURIComponent(bridgeId)}/ports/${port}/scan`, {
+                method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+            return { r, d: await r.json().catch(() => ({})) };
+        };
+        let { r, d } = await ask({});
+        // nobody can say whether another master holds this port (a converter
+        // that does not report its client): asked, never assumed (L3.7)
+        if (r.status === 409 && !d.detail?.config_blocked && d.detail?.client === 'unknown') {
+            const ok = await this.confirmAction({ title: t('am.confirmTitle', 'Open a connection to this bus?'),
+                message: (d.detail.errors || [])[0] || '', confirmLabel: t('am.confirmOpen', 'Open it and scan'), danger: true });
+            if (!ok) { document.getElementById('busScanState').textContent = t('am.notSent', 'Nothing was sent.'); return; }
+            ({ r, d } = await ask({ confirm_open: true }));
+        }
         if (!r.ok) { document.getElementById('busScanState').textContent = (d.detail?.errors || [r.statusText]).join(' '); return; }
         this._busScanJob = d.job;
         const tick = async () => {
@@ -438,29 +744,41 @@ Object.assign(JanitzaMonitor.prototype, {
         const s = await r.json().catch(() => ({}));
         if (!r.ok) { this._bridgeInfo(t('bridges.scanTitle', 'Buses'), `<div class="field-error">${this._esc((s.detail?.errors || [r.statusText]).join(' '))}</div>`); return; }
         const PAR = ['N', 'E', 'O'], BAUD = [1200, 2400, 4800, 9600, 19200, 38400, 57600, 115200];
-        const rows = (s.ports || []).map((p, i) => {
+        // the buses it serves are rows; a port it cannot serve (a HAT channel
+        // the container may not open yet, the console) is listed under them
+        const { usable, blocked } = BridgePorts.split(s.ports || []);
+        const rows = usable.map((p, i) => {
             const sp = p.serial_params || {};
-            return `<tr>
-              <td><code>:${this._esc(p.port)}</code></td><td>${this._esc(p.label || p.dev || '')}${p.excluded ? ` <span class="sink-pill warn">${t('bridges.excluded', 'excluded')}</span>` : ''}</td>
-              <td><select class="input input-sm br-baud" data-i="${i}">${BAUD.map(b => `<option ${b === sp.baud ? 'selected' : ''}>${b}</option>`).join('')}</select></td>
-              <td><select class="input input-sm br-par" data-i="${i}">${PAR.map(x => `<option ${x === sp.parity ? 'selected' : ''}>${x}</option>`).join('')}</select></td>
-              <td><select class="input input-sm br-stop" data-i="${i}">${[1, 2].map(x => `<option ${x === sp.stopbits ? 'selected' : ''}>${x}</option>`).join('')}</select></td>
+            const board = BridgePorts.kind(p) === 'board';
+            return `<tr data-key="${this._esc(p.key)}">
+              <td style="white-space:nowrap;"><code>:${this._esc(p.port)}</code></td><td><span class="sink-pill off">${this._esc(this._portKindText(p))}</span> ${this._esc(BridgePorts.label(p))}${p.dev ? ` <code>${this._esc(p.dev)}</code>` : ''}</td>
+              <td><select class="input input-sm br-baud" data-i="${i}" aria-label="${this._esc(t('bridges.colBaud', 'Baud'))}">${BAUD.map(b => `<option ${b === sp.baud ? 'selected' : ''}>${b}</option>`).join('')}</select></td>
+              <td><select class="input input-sm br-par" data-i="${i}" aria-label="${this._esc(t('bridges.parity', 'Parity'))}">${PAR.map(x => `<option ${x === sp.parity ? 'selected' : ''}>${x}</option>`).join('')}</select></td>
+              <td><select class="input input-sm br-stop" data-i="${i}" aria-label="${this._esc(t('bridges.colStop', 'Stop'))}">${[1, 2].map(x => `<option ${x === sp.stopbits ? 'selected' : ''}>${x}</option>`).join('')}</select></td>
+              <td>${board ? `<input type="checkbox" class="br-rs485" data-i="${i}" ${p.rs485 ? 'checked' : ''} aria-label="${this._esc(t('bridges.rs485Aria', 'RS-485 direction driven by the kernel (RTS)'))}" title="${this._esc(t('bridges.rs485Hint', 'Turn on only for a board whose RS-485 chip does not switch direction by itself'))}">` : '—'}</td>
+              <td>${p.diag ? this._diagChip(id, p) : '—'}</td>
               <td style="white-space:nowrap;"><button data-admin class="btn btn-ghost btn-sm" ${this._act('bridgeSetSerial', [id, p.key, i])}>${t('common.save', 'Save')}</button>
-                <button data-admin class="btn btn-ghost btn-sm" ${this._act('addDeviceOnBus', [id, p.port])}><i aria-hidden="true" class="bi bi-plus-lg"></i> ${t('bridges.addDevice', 'Device')}</button></td></tr>`;
+                <button data-admin class="btn btn-ghost btn-sm" ${this._act('addDeviceOnBus', [id, p.port])}><i aria-hidden="true" class="bi bi-plus-lg"></i> ${t('bridges.addDevice', 'Device')}</button>${p.needs_enable ? `
+                <button data-admin class="btn btn-ghost btn-sm" ${this._act('bridgeEnablePort', [id, p.key, false])}>${t('bridges.disable', 'Disable')}</button>` : ''}</td></tr>`;
         }).join('');
-        this._scanPorts = s.ports || [];
+        this._scanPorts = usable;
         this._bridgeInfo(t('bridges.scanTitle', 'Buses'), `
           <p class="field-hint">${this._esc(t('bridges.scanLead', '{host} · bridge {version} — one bus per adapter; serial settings apply to that bus only.', { host: s.hostname || id, version: s.version || '' }))}</p>
-          ${rows ? `<table class="tplu-table"><thead><tr><th>${t('bridges.colPort', 'Port')}</th><th>${t('bridges.adapter', 'Adapter')}</th><th>${t('bridges.colBaud', 'Baud')}</th><th>${t('bridges.parity', 'Parity')}</th><th>${t('bridges.colStop', 'Stop')}</th><th></th></tr></thead><tbody>${rows}</tbody></table>`
-                 : `<p>${t('bridges.noAdapters', 'No adapter plugged in on that host.')}</p>`}`);
+          ${this._bridgeWarningsHtml(s.warnings)}
+          ${rows ? `<table class="tplu-table"><thead><tr><th>${t('bridges.colPort', 'Port')}</th><th>${t('bridges.adapter', 'Adapter')}</th><th>${t('bridges.colBaud', 'Baud')}</th><th>${t('bridges.parity', 'Parity')}</th><th>${t('bridges.colStop', 'Stop')}</th><th style="white-space:nowrap;">RS-485</th><th>${t('bridges.diag.health', 'Line health')}</th><th></th></tr></thead><tbody>${rows}</tbody></table>`
+                 : `<p>${t('bridges.noAdapters', 'No adapter plugged in on that host.')}</p>`}
+          ${this._portBlockedHtml(blocked, id)}`);
     },
 
     async bridgeSetSerial(id, key, i) {
         const t = (k, d, p) => this.t(k, d, p);
         const q = c => document.querySelector(`#bridgeInfoBody .${c}[data-i="${i}"]`)?.value;
+        const body = { baud: +q('br-baud'), parity: q('br-par'), stopbits: +q('br-stop'), databits: 8 };
+        const rs = document.querySelector(`#bridgeInfoBody .br-rs485[data-i="${i}"]`);
+        if (rs) body.rs485 = rs.checked;                 // board UARTs only
         const r = await fetch(`/api/bridges/${encodeURIComponent(id)}/ports/${encodeURIComponent(key)}/serial`, {
             method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ baud: +q('br-baud'), parity: q('br-par'), stopbits: +q('br-stop'), databits: 8 }) });
+            body: JSON.stringify(body) });
         const d = await r.json().catch(() => ({}));
         if (!r.ok) { this.showToast('error', t('bridges.serialFail', 'Not applied'), (d.detail?.errors || [r.statusText]).join(' ')); return; }
         this.showToast('success', t('bridges.serialDone', 'Bus settings applied'), d.serial_text || '');
@@ -481,7 +799,7 @@ Object.assign(JanitzaMonitor.prototype, {
             headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ port, unit_id: unit }) });
         const d = await r.json().catch(() => ({}));
         document.getElementById('bridgeInfoBody').innerHTML = `
-          <p><b>${this._esc(d.verdict || d.error || r.statusText)}</b></p>
+          <p><b>${this._esc(d.verdict || d.error || (d.detail?.errors || []).join(' ') || r.statusText)}</b></p>
           <table class="tplu-table"><tbody>
             <tr><td>RTU</td><td>${this._esc(d.rtu || '—')}</td></tr>
             <tr><td>Modbus TCP</td><td>${this._esc(d.modbus_tcp || '—')}</td></tr>

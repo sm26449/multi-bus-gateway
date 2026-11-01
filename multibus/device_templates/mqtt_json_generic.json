@@ -2,6 +2,7 @@
   "device_template": {
     "schema_version": 1,
     "id": "mqtt_json_generic",
+    "kind": "other",
     "name": "Generic MQTT (JSON)",
     "vendor": "Generic",
     "model": "MQTT JSON source",

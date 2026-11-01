@@ -1,5 +1,5 @@
 # Multi-Bus Gateway — multi-protocol Modbus/HTTP/MQTT acquisition gateway.
-# Copyright (C) 2024-2026 Stefan Maldaianu <sm26449@diysolar.ro>
+# Copyright (C) 2024-2026 Stefan Maldaianu <stefan@multibus.dev>
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU Affero General Public License as published by
@@ -94,6 +94,11 @@ class AlertManager:
         # what a DEVICE says is wrong: the alarm fields its template declares
         # (display.alarms — a fault word, an error code) going active / clear
         self.sig_alarm = bool(sig.get("alarm", True))
+        # line and transport health of the buses behind our serial bridge
+        # (bridge_diag.py, ADR-0017): off by default; thresholds in
+        # ``alerts.bridge``, overridable per bridge and per bus
+        self.sig_bridge = bool(sig.get("bridge", False))
+        self.bridge_thresholds = dict(cfg.get("bridge") or {})
         self.threshold_deadband_pct = float(cfg.get("threshold_deadband_pct", 2.0))
         self.threshold_alert_on_start = bool(cfg.get("threshold_alert_on_start", True))
 
@@ -111,7 +116,9 @@ class AlertManager:
             "thresholds": {"latency_ms": self.latency_ms, "buffer_points": self.buffer_points},
             "signals": {"device": self.sig_device, "sink": self.sig_sink,
                         "latency": self.sig_latency, "buffer": self.sig_buffer,
-                        "threshold": self.sig_threshold, "alarm": self.sig_alarm},
+                        "threshold": self.sig_threshold, "alarm": self.sig_alarm,
+                        "bridge": self.sig_bridge},
+            "bridge": self.bridge_thresholds,
             "threshold_deadband_pct": self.threshold_deadband_pct,
         }
 

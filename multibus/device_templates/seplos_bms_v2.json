@@ -1,0 +1,2746 @@
+{
+  "device_template": {
+    "schema_version": 1,
+    "id": "seplos_bms_v2",
+    "name": "Seplos BMS V2 pack (ASCII protocol, read-only)",
+    "vendor": "Seplos",
+    "model": "BMS V2",
+    "version": "0.1.0",
+    "author": "Stefan Maldaianu",
+    "description": "One Seplos V2 battery pack read over its RS485 ASCII protocol (CID1 0x46), protocol seplos_v2 (a serial port on this host) or seplos_v2-tcp (a serial bridge's raw TCP port). READ-ONLY: the driver only encodes the read commands 0x42 (telemetry), 0x44 (alarms) and 0x51 (identity); nothing on the pack can be changed. NOT YET VERIFIED ON HARDWARE — built from the published V2.0 protocol; the bench confirms or corrects it. Set unit_id to the pack address (ADR, the pack's DIP switch). connection.mode: poll (the gateway is the master and asks this pack) or listen (passive: it decodes a master pack's exchanges and never transmits). NEVER POLL A BUS WHERE A MASTER PACK ALREADY POLLS (the inter-pack bus of a multi-pack bank): listen there. Rows read the driver's fixed virtual map, so one template serves 15- and 16-cell packs; a value the pack does not report stays absent. Field names follow seplos_bms_v3_rtu_tap wherever the meaning is the same, so dashboards carry over.",
+    "kind": "battery",
+    "protocol": {
+      "transports": [
+        "seplos_v2",
+        "seplos_v2-tcp"
+      ],
+      "byte_order": "big",
+      "default_unit_id": 0,
+      "default_register_type": "input"
+    },
+    "poll_groups": {
+      "realtime": {
+        "interval": 5,
+        "description": "0x42 telemetry: cells, temperatures, current, SOC"
+      },
+      "normal": {
+        "interval": 15,
+        "description": "0x44 alarms and status bytes"
+      },
+      "slow": {
+        "interval": 3600,
+        "description": "0x51 device name, software version, manufacturer"
+      }
+    },
+    "notes": [
+      {
+        "level": "warning",
+        "text": "Not yet verified on a real pack: the decode follows the published Seplos V2.0 protocol. Check the values against the pack's own display or BatteryMonitor before relying on them."
+      },
+      {
+        "level": "warning",
+        "text": "On a multi-pack bank the master pack polls the others on the inter-pack bus: choose Listen only there. A V2 master asks its slaves only with the 0x5A summary, which this map does not read: use seplos_bms_v2_tap for them. Poll only a bus with no other master (a single pack, or the master's own RS485 port with nothing else on it)."
+      },
+      {
+        "level": "info",
+        "text": "The alarm bit names follow the V2.0 telesignalling table. Alarm Event 1–8 and Switch State are the raw bytes, kept so the bench can check every bit.",
+        "fields": [
+          "alarm_event_1",
+          "alarm_event_2",
+          "switch_state"
+        ]
+      }
+    ],
+    "categories": {
+      "battery": {
+        "label": "Battery",
+        "icon": "battery-half"
+      },
+      "cells": {
+        "label": "Cells",
+        "icon": "grid-3x3"
+      },
+      "temperature": {
+        "label": "Temperature",
+        "icon": "thermometer-half"
+      },
+      "alarms": {
+        "label": "Alarms",
+        "icon": "exclamation-triangle"
+      },
+      "diagnostics": {
+        "label": "Diagnostics",
+        "icon": "wrench"
+      }
+    },
+    "display": {
+      "unit_label": "Battery pack",
+      "unit_label_plural": "Battery packs",
+      "icon": "battery-half",
+      "glance": [
+        "power",
+        "soc",
+        "pack_voltage",
+        "max_cell_temp",
+        "status"
+      ],
+      "hero": [
+        "soc",
+        "power",
+        "status"
+      ],
+      "headline": [
+        {
+          "field": "pack_total_power",
+          "label": "Battery power",
+          "hint": "− charging · + discharging"
+        },
+        {
+          "field": "pack_average_soc",
+          "label": "State of charge"
+        },
+        {
+          "field": "pack_energy_remaining",
+          "label": "Energy stored"
+        },
+        {
+          "field": "pack_status",
+          "label": "Bank status"
+        },
+        {
+          "field": "pack_total_alarms",
+          "label": "Active alarms"
+        }
+      ],
+      "alarms": [
+        {
+          "field": "warning_count",
+          "severity": "warning"
+        },
+        {
+          "field": "protection_count",
+          "severity": "danger"
+        },
+        {
+          "field": "failure_count",
+          "severity": "danger"
+        }
+      ],
+      "sections": {
+        "cells": {
+          "widget": "grid",
+          "tiles": "^cell_\\d+$",
+          "decimals": 3
+        },
+        "alarms": {
+          "widget": "active_only"
+        }
+      },
+      "bitmasks": {
+        "balancing_bits": "Cell {n}",
+        "alarm_cell_undervolt": "Cell {n}",
+        "alarm_cell_overvolt": "Cell {n}",
+        "alarm_cell_temp": "Sensor {n}"
+      }
+    },
+    "registers": [
+      {
+        "address": 49,
+        "name": "pack_voltage",
+        "label": "Pack Voltage",
+        "unit": "V",
+        "data_type": "uint16",
+        "register_type": "input",
+        "category": "battery",
+        "poll_group": "realtime",
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": true,
+            "measurement": "seplos_battery"
+          },
+          "ui": {
+            "show_on_dashboard": true,
+            "widget": "value"
+          }
+        },
+        "scale": 100,
+        "aggregates": {
+          "pack_total_voltage": "avg"
+        }
+      },
+      {
+        "address": 48,
+        "name": "current",
+        "label": "Current (+ charging)",
+        "unit": "A",
+        "data_type": "int16",
+        "register_type": "input",
+        "category": "battery",
+        "poll_group": "realtime",
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": true,
+            "measurement": "seplos_battery"
+          },
+          "ui": {
+            "show_on_dashboard": true,
+            "widget": "value"
+          }
+        },
+        "scale": 100,
+        "aggregates": {
+          "pack_total_current": "sum"
+        }
+      },
+      {
+        "address": 50,
+        "name": "remaining_capacity",
+        "label": "Remaining Capacity",
+        "unit": "Ah",
+        "data_type": "uint16",
+        "register_type": "input",
+        "category": "battery",
+        "poll_group": "realtime",
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": true,
+            "measurement": "seplos_battery"
+          },
+          "ui": {
+            "show_on_dashboard": false,
+            "widget": "value"
+          }
+        },
+        "scale": 100,
+        "aggregates": {
+          "pack_remaining_capacity": "sum"
+        }
+      },
+      {
+        "address": 51,
+        "name": "total_capacity",
+        "label": "Total Capacity",
+        "unit": "Ah",
+        "data_type": "uint16",
+        "register_type": "input",
+        "category": "battery",
+        "poll_group": "realtime",
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": true,
+            "measurement": "seplos_battery"
+          },
+          "ui": {
+            "show_on_dashboard": false,
+            "widget": "value"
+          }
+        },
+        "scale": 100,
+        "aggregates": {
+          "pack_total_capacity": "sum"
+        }
+      },
+      {
+        "address": 52,
+        "name": "soc",
+        "label": "State of Charge",
+        "unit": "%",
+        "data_type": "uint16",
+        "register_type": "input",
+        "category": "battery",
+        "poll_group": "realtime",
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": true,
+            "measurement": "seplos_battery"
+          },
+          "ui": {
+            "show_on_dashboard": true,
+            "widget": "value"
+          }
+        },
+        "scale": 10,
+        "aggregates": {
+          "pack_average_soc": "avg",
+          "pack_min_soc": "min",
+          "pack_max_soc": "max",
+          "pack_soc_spread": "spread"
+        }
+      },
+      {
+        "address": 55,
+        "name": "soh",
+        "label": "State of Health",
+        "unit": "%",
+        "data_type": "uint16",
+        "register_type": "input",
+        "category": "battery",
+        "poll_group": "realtime",
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": true,
+            "measurement": "seplos_battery"
+          },
+          "ui": {
+            "show_on_dashboard": true,
+            "widget": "value"
+          }
+        },
+        "scale": 10,
+        "aggregates": {
+          "pack_min_soh": "min"
+        }
+      },
+      {
+        "address": 54,
+        "name": "cycles",
+        "label": "Cycles",
+        "unit": "cycles",
+        "data_type": "uint16",
+        "register_type": "input",
+        "category": "battery",
+        "poll_group": "realtime",
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": true,
+            "measurement": "seplos_battery"
+          },
+          "ui": {
+            "show_on_dashboard": false,
+            "widget": "value"
+          }
+        },
+        "aggregates": {
+          "pack_max_cycles": "max"
+        }
+      },
+      {
+        "address": 53,
+        "name": "rated_capacity",
+        "label": "Rated Capacity",
+        "unit": "Ah",
+        "data_type": "uint16",
+        "register_type": "input",
+        "category": "battery",
+        "poll_group": "realtime",
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": true,
+            "measurement": "seplos_battery"
+          },
+          "ui": {
+            "show_on_dashboard": false,
+            "widget": "value"
+          }
+        },
+        "scale": 100
+      },
+      {
+        "address": 56,
+        "name": "port_voltage",
+        "label": "Port Voltage",
+        "unit": "V",
+        "data_type": "uint16",
+        "register_type": "input",
+        "category": "battery",
+        "poll_group": "realtime",
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": true,
+            "measurement": "seplos_battery"
+          },
+          "ui": {
+            "show_on_dashboard": false,
+            "widget": "value"
+          }
+        },
+        "scale": 100
+      },
+      {
+        "address": 66,
+        "name": "average_cell_voltage",
+        "label": "Average Cell Voltage",
+        "unit": "V",
+        "data_type": "uint16",
+        "register_type": "input",
+        "category": "cells",
+        "poll_group": "realtime",
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": true,
+            "measurement": "seplos_battery"
+          },
+          "ui": {
+            "show_on_dashboard": false,
+            "widget": "value"
+          }
+        },
+        "scale": 1000,
+        "aggregates": {
+          "pack_avg_cell_voltage": "avg"
+        }
+      },
+      {
+        "address": 64,
+        "name": "max_cell_voltage",
+        "label": "Max Cell Voltage",
+        "unit": "V",
+        "data_type": "uint16",
+        "register_type": "input",
+        "category": "cells",
+        "poll_group": "realtime",
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": true,
+            "measurement": "seplos_battery"
+          },
+          "ui": {
+            "show_on_dashboard": false,
+            "widget": "value"
+          }
+        },
+        "scale": 1000,
+        "aggregates": {
+          "pack_max_cell_voltage": "max"
+        }
+      },
+      {
+        "address": 65,
+        "name": "min_cell_voltage",
+        "label": "Min Cell Voltage",
+        "unit": "V",
+        "data_type": "uint16",
+        "register_type": "input",
+        "category": "cells",
+        "poll_group": "realtime",
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": true,
+            "measurement": "seplos_battery"
+          },
+          "ui": {
+            "show_on_dashboard": false,
+            "widget": "value"
+          }
+        },
+        "scale": 1000,
+        "aggregates": {
+          "pack_min_cell_voltage": "min"
+        }
+      },
+      {
+        "address": 73,
+        "name": "max_cell_number",
+        "label": "Cell with the Max Voltage",
+        "unit": "",
+        "data_type": "uint16",
+        "register_type": "input",
+        "category": "cells",
+        "poll_group": "realtime",
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": false
+          },
+          "ui": {
+            "show_on_dashboard": false,
+            "widget": "value"
+          }
+        }
+      },
+      {
+        "address": 74,
+        "name": "min_cell_number",
+        "label": "Cell with the Min Voltage",
+        "unit": "",
+        "data_type": "uint16",
+        "register_type": "input",
+        "category": "cells",
+        "poll_group": "realtime",
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": false
+          },
+          "ui": {
+            "show_on_dashboard": false,
+            "widget": "value"
+          }
+        }
+      },
+      {
+        "address": 70,
+        "name": "average_cell_temp",
+        "label": "Average Cell Temp",
+        "unit": "°C",
+        "data_type": "int16",
+        "register_type": "input",
+        "category": "temperature",
+        "poll_group": "realtime",
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": true,
+            "measurement": "seplos_battery"
+          },
+          "ui": {
+            "show_on_dashboard": false,
+            "widget": "value"
+          }
+        },
+        "scale": 10,
+        "aggregates": {
+          "pack_avg_temp": "avg"
+        }
+      },
+      {
+        "address": 68,
+        "name": "max_cell_temp",
+        "label": "Max Cell Temp",
+        "unit": "°C",
+        "data_type": "int16",
+        "register_type": "input",
+        "category": "temperature",
+        "poll_group": "realtime",
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": true,
+            "measurement": "seplos_battery"
+          },
+          "ui": {
+            "show_on_dashboard": true,
+            "widget": "value"
+          }
+        },
+        "scale": 10,
+        "aggregates": {
+          "pack_max_temp": "max"
+        }
+      },
+      {
+        "address": 69,
+        "name": "min_cell_temp",
+        "label": "Min Cell Temp",
+        "unit": "°C",
+        "data_type": "int16",
+        "register_type": "input",
+        "category": "temperature",
+        "poll_group": "realtime",
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": true,
+            "measurement": "seplos_battery"
+          },
+          "ui": {
+            "show_on_dashboard": false,
+            "widget": "value"
+          }
+        },
+        "scale": 10,
+        "aggregates": {
+          "pack_min_temp": "min"
+        }
+      },
+      {
+        "address": 0,
+        "name": "cell_1",
+        "label": "Cell 1",
+        "unit": "V",
+        "data_type": "uint16",
+        "register_type": "input",
+        "category": "cells",
+        "poll_group": "realtime",
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": true,
+            "measurement": "seplos_battery"
+          },
+          "ui": {
+            "show_on_dashboard": false,
+            "widget": "value"
+          }
+        },
+        "scale": 1000
+      },
+      {
+        "address": 1,
+        "name": "cell_2",
+        "label": "Cell 2",
+        "unit": "V",
+        "data_type": "uint16",
+        "register_type": "input",
+        "category": "cells",
+        "poll_group": "realtime",
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": true,
+            "measurement": "seplos_battery"
+          },
+          "ui": {
+            "show_on_dashboard": false,
+            "widget": "value"
+          }
+        },
+        "scale": 1000
+      },
+      {
+        "address": 2,
+        "name": "cell_3",
+        "label": "Cell 3",
+        "unit": "V",
+        "data_type": "uint16",
+        "register_type": "input",
+        "category": "cells",
+        "poll_group": "realtime",
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": true,
+            "measurement": "seplos_battery"
+          },
+          "ui": {
+            "show_on_dashboard": false,
+            "widget": "value"
+          }
+        },
+        "scale": 1000
+      },
+      {
+        "address": 3,
+        "name": "cell_4",
+        "label": "Cell 4",
+        "unit": "V",
+        "data_type": "uint16",
+        "register_type": "input",
+        "category": "cells",
+        "poll_group": "realtime",
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": true,
+            "measurement": "seplos_battery"
+          },
+          "ui": {
+            "show_on_dashboard": false,
+            "widget": "value"
+          }
+        },
+        "scale": 1000
+      },
+      {
+        "address": 4,
+        "name": "cell_5",
+        "label": "Cell 5",
+        "unit": "V",
+        "data_type": "uint16",
+        "register_type": "input",
+        "category": "cells",
+        "poll_group": "realtime",
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": true,
+            "measurement": "seplos_battery"
+          },
+          "ui": {
+            "show_on_dashboard": false,
+            "widget": "value"
+          }
+        },
+        "scale": 1000
+      },
+      {
+        "address": 5,
+        "name": "cell_6",
+        "label": "Cell 6",
+        "unit": "V",
+        "data_type": "uint16",
+        "register_type": "input",
+        "category": "cells",
+        "poll_group": "realtime",
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": true,
+            "measurement": "seplos_battery"
+          },
+          "ui": {
+            "show_on_dashboard": false,
+            "widget": "value"
+          }
+        },
+        "scale": 1000
+      },
+      {
+        "address": 6,
+        "name": "cell_7",
+        "label": "Cell 7",
+        "unit": "V",
+        "data_type": "uint16",
+        "register_type": "input",
+        "category": "cells",
+        "poll_group": "realtime",
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": true,
+            "measurement": "seplos_battery"
+          },
+          "ui": {
+            "show_on_dashboard": false,
+            "widget": "value"
+          }
+        },
+        "scale": 1000
+      },
+      {
+        "address": 7,
+        "name": "cell_8",
+        "label": "Cell 8",
+        "unit": "V",
+        "data_type": "uint16",
+        "register_type": "input",
+        "category": "cells",
+        "poll_group": "realtime",
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": true,
+            "measurement": "seplos_battery"
+          },
+          "ui": {
+            "show_on_dashboard": false,
+            "widget": "value"
+          }
+        },
+        "scale": 1000
+      },
+      {
+        "address": 8,
+        "name": "cell_9",
+        "label": "Cell 9",
+        "unit": "V",
+        "data_type": "uint16",
+        "register_type": "input",
+        "category": "cells",
+        "poll_group": "realtime",
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": true,
+            "measurement": "seplos_battery"
+          },
+          "ui": {
+            "show_on_dashboard": false,
+            "widget": "value"
+          }
+        },
+        "scale": 1000
+      },
+      {
+        "address": 9,
+        "name": "cell_10",
+        "label": "Cell 10",
+        "unit": "V",
+        "data_type": "uint16",
+        "register_type": "input",
+        "category": "cells",
+        "poll_group": "realtime",
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": true,
+            "measurement": "seplos_battery"
+          },
+          "ui": {
+            "show_on_dashboard": false,
+            "widget": "value"
+          }
+        },
+        "scale": 1000
+      },
+      {
+        "address": 10,
+        "name": "cell_11",
+        "label": "Cell 11",
+        "unit": "V",
+        "data_type": "uint16",
+        "register_type": "input",
+        "category": "cells",
+        "poll_group": "realtime",
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": true,
+            "measurement": "seplos_battery"
+          },
+          "ui": {
+            "show_on_dashboard": false,
+            "widget": "value"
+          }
+        },
+        "scale": 1000
+      },
+      {
+        "address": 11,
+        "name": "cell_12",
+        "label": "Cell 12",
+        "unit": "V",
+        "data_type": "uint16",
+        "register_type": "input",
+        "category": "cells",
+        "poll_group": "realtime",
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": true,
+            "measurement": "seplos_battery"
+          },
+          "ui": {
+            "show_on_dashboard": false,
+            "widget": "value"
+          }
+        },
+        "scale": 1000
+      },
+      {
+        "address": 12,
+        "name": "cell_13",
+        "label": "Cell 13",
+        "unit": "V",
+        "data_type": "uint16",
+        "register_type": "input",
+        "category": "cells",
+        "poll_group": "realtime",
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": true,
+            "measurement": "seplos_battery"
+          },
+          "ui": {
+            "show_on_dashboard": false,
+            "widget": "value"
+          }
+        },
+        "scale": 1000
+      },
+      {
+        "address": 13,
+        "name": "cell_14",
+        "label": "Cell 14",
+        "unit": "V",
+        "data_type": "uint16",
+        "register_type": "input",
+        "category": "cells",
+        "poll_group": "realtime",
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": true,
+            "measurement": "seplos_battery"
+          },
+          "ui": {
+            "show_on_dashboard": false,
+            "widget": "value"
+          }
+        },
+        "scale": 1000
+      },
+      {
+        "address": 14,
+        "name": "cell_15",
+        "label": "Cell 15",
+        "unit": "V",
+        "data_type": "uint16",
+        "register_type": "input",
+        "category": "cells",
+        "poll_group": "realtime",
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": true,
+            "measurement": "seplos_battery"
+          },
+          "ui": {
+            "show_on_dashboard": false,
+            "widget": "value"
+          }
+        },
+        "scale": 1000
+      },
+      {
+        "address": 15,
+        "name": "cell_16",
+        "label": "Cell 16",
+        "unit": "V",
+        "data_type": "uint16",
+        "register_type": "input",
+        "category": "cells",
+        "poll_group": "realtime",
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": true,
+            "measurement": "seplos_battery"
+          },
+          "ui": {
+            "show_on_dashboard": false,
+            "widget": "value"
+          }
+        },
+        "scale": 1000
+      },
+      {
+        "address": 34,
+        "name": "cell_temp_1",
+        "label": "Cell Temp 1",
+        "unit": "°C",
+        "data_type": "int16",
+        "register_type": "input",
+        "category": "temperature",
+        "poll_group": "realtime",
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": true,
+            "measurement": "seplos_battery"
+          },
+          "ui": {
+            "show_on_dashboard": false,
+            "widget": "value"
+          }
+        },
+        "scale": 10
+      },
+      {
+        "address": 35,
+        "name": "cell_temp_2",
+        "label": "Cell Temp 2",
+        "unit": "°C",
+        "data_type": "int16",
+        "register_type": "input",
+        "category": "temperature",
+        "poll_group": "realtime",
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": true,
+            "measurement": "seplos_battery"
+          },
+          "ui": {
+            "show_on_dashboard": false,
+            "widget": "value"
+          }
+        },
+        "scale": 10
+      },
+      {
+        "address": 36,
+        "name": "cell_temp_3",
+        "label": "Cell Temp 3",
+        "unit": "°C",
+        "data_type": "int16",
+        "register_type": "input",
+        "category": "temperature",
+        "poll_group": "realtime",
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": true,
+            "measurement": "seplos_battery"
+          },
+          "ui": {
+            "show_on_dashboard": false,
+            "widget": "value"
+          }
+        },
+        "scale": 10
+      },
+      {
+        "address": 37,
+        "name": "cell_temp_4",
+        "label": "Cell Temp 4",
+        "unit": "°C",
+        "data_type": "int16",
+        "register_type": "input",
+        "category": "temperature",
+        "poll_group": "realtime",
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": true,
+            "measurement": "seplos_battery"
+          },
+          "ui": {
+            "show_on_dashboard": false,
+            "widget": "value"
+          }
+        },
+        "scale": 10
+      },
+      {
+        "address": 71,
+        "name": "ambient_temp",
+        "label": "Ambient Temp",
+        "unit": "°C",
+        "data_type": "int16",
+        "register_type": "input",
+        "category": "temperature",
+        "poll_group": "realtime",
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": true,
+            "measurement": "seplos_battery"
+          },
+          "ui": {
+            "show_on_dashboard": false,
+            "widget": "value"
+          }
+        },
+        "scale": 10
+      },
+      {
+        "address": 72,
+        "name": "mosfet_temp",
+        "label": "MOSFET Temp",
+        "unit": "°C",
+        "data_type": "int16",
+        "register_type": "input",
+        "category": "temperature",
+        "poll_group": "realtime",
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": true,
+            "measurement": "seplos_battery"
+          },
+          "ui": {
+            "show_on_dashboard": false,
+            "widget": "value"
+          }
+        },
+        "scale": 10
+      },
+      {
+        "address": 32,
+        "name": "cell_count",
+        "label": "Cell Count",
+        "unit": "",
+        "data_type": "uint16",
+        "register_type": "input",
+        "category": "diagnostics",
+        "poll_group": "realtime",
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": false
+          },
+          "ui": {
+            "show_on_dashboard": false,
+            "widget": "value"
+          }
+        }
+      },
+      {
+        "address": 33,
+        "name": "temp_sensor_count",
+        "label": "Temperature Sensor Count",
+        "unit": "",
+        "data_type": "uint16",
+        "register_type": "input",
+        "category": "diagnostics",
+        "poll_group": "realtime",
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": false
+          },
+          "ui": {
+            "show_on_dashboard": false,
+            "widget": "value"
+          }
+        }
+      },
+      {
+        "address": 317,
+        "name": "status",
+        "label": "Status",
+        "unit": "",
+        "data_type": "uint16",
+        "register_type": "input",
+        "category": "battery",
+        "poll_group": "normal",
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": false
+          },
+          "ui": {
+            "show_on_dashboard": true,
+            "widget": "value"
+          }
+        },
+        "enum": {
+          "0": "Unknown",
+          "1": "Discharge",
+          "2": "Charge",
+          "4": "Floating charge",
+          "16": "Standby",
+          "32": "Off"
+        },
+        "mask": 63,
+        "aggregates": {
+          "pack_status": "mode"
+        }
+      },
+      {
+        "address": 480,
+        "name": "balancing_bits",
+        "label": "Balancing Mask",
+        "unit": "",
+        "data_type": "uint16",
+        "register_type": "input",
+        "category": "cells",
+        "poll_group": "normal",
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": false
+          },
+          "ui": {
+            "show_on_dashboard": false,
+            "widget": "value"
+          }
+        }
+      },
+      {
+        "address": 481,
+        "name": "disconnection_bits",
+        "label": "Cell Disconnection Mask",
+        "unit": "",
+        "data_type": "uint16",
+        "register_type": "input",
+        "category": "alarms",
+        "poll_group": "normal",
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": false
+          },
+          "ui": {
+            "show_on_dashboard": false,
+            "widget": "value"
+          }
+        }
+      },
+      {
+        "address": 482,
+        "name": "alarm_cell_undervolt",
+        "label": "Cell Undervolt Mask",
+        "unit": "",
+        "data_type": "uint16",
+        "register_type": "input",
+        "category": "alarms",
+        "poll_group": "normal",
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": false
+          },
+          "ui": {
+            "show_on_dashboard": false,
+            "widget": "value"
+          }
+        }
+      },
+      {
+        "address": 483,
+        "name": "alarm_cell_overvolt",
+        "label": "Cell Overvolt Mask",
+        "unit": "",
+        "data_type": "uint16",
+        "register_type": "input",
+        "category": "alarms",
+        "poll_group": "normal",
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": false
+          },
+          "ui": {
+            "show_on_dashboard": false,
+            "widget": "value"
+          }
+        }
+      },
+      {
+        "address": 484,
+        "name": "alarm_cell_temp",
+        "label": "Temperature Alarm Mask",
+        "unit": "",
+        "data_type": "uint16",
+        "register_type": "input",
+        "category": "alarms",
+        "poll_group": "normal",
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": false
+          },
+          "ui": {
+            "show_on_dashboard": false,
+            "widget": "value"
+          }
+        }
+      },
+      {
+        "address": 400,
+        "name": "fet_discharge",
+        "label": "FET Discharge",
+        "unit": "",
+        "data_type": "uint16",
+        "register_type": "input",
+        "category": "diagnostics",
+        "poll_group": "normal",
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": false
+          },
+          "ui": {
+            "show_on_dashboard": false,
+            "widget": "value"
+          }
+        },
+        "enum": {
+          "0": "OFF",
+          "1": "ON"
+        }
+      },
+      {
+        "address": 401,
+        "name": "fet_charge",
+        "label": "FET Charge",
+        "unit": "",
+        "data_type": "uint16",
+        "register_type": "input",
+        "category": "diagnostics",
+        "poll_group": "normal",
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": false
+          },
+          "ui": {
+            "show_on_dashboard": false,
+            "widget": "value"
+          }
+        },
+        "enum": {
+          "0": "OFF",
+          "1": "ON"
+        }
+      },
+      {
+        "address": 402,
+        "name": "fet_current_limit",
+        "label": "FET Current Limit",
+        "unit": "",
+        "data_type": "uint16",
+        "register_type": "input",
+        "category": "diagnostics",
+        "poll_group": "normal",
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": false
+          },
+          "ui": {
+            "show_on_dashboard": false,
+            "widget": "value"
+          }
+        },
+        "enum": {
+          "0": "OFF",
+          "1": "ON"
+        }
+      },
+      {
+        "address": 403,
+        "name": "fet_heater",
+        "label": "FET Heater",
+        "unit": "",
+        "data_type": "uint16",
+        "register_type": "input",
+        "category": "diagnostics",
+        "poll_group": "normal",
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": false
+          },
+          "ui": {
+            "show_on_dashboard": false,
+            "widget": "value"
+          }
+        },
+        "enum": {
+          "0": "OFF",
+          "1": "ON"
+        }
+      },
+      {
+        "address": 352,
+        "name": "failure_voltage_sensor",
+        "label": "Failure Voltage Sensor",
+        "unit": "",
+        "data_type": "uint16",
+        "register_type": "input",
+        "category": "alarms",
+        "poll_group": "normal",
+        "defaults": {
+          "mqtt": {
+            "enabled": false
+          },
+          "influxdb": {
+            "enabled": false
+          },
+          "ui": {
+            "show_on_dashboard": false,
+            "widget": "value"
+          }
+        }
+      },
+      {
+        "address": 353,
+        "name": "failure_ntc",
+        "label": "Failure NTC",
+        "unit": "",
+        "data_type": "uint16",
+        "register_type": "input",
+        "category": "alarms",
+        "poll_group": "normal",
+        "defaults": {
+          "mqtt": {
+            "enabled": false
+          },
+          "influxdb": {
+            "enabled": false
+          },
+          "ui": {
+            "show_on_dashboard": false,
+            "widget": "value"
+          }
+        }
+      },
+      {
+        "address": 354,
+        "name": "failure_current_sensor",
+        "label": "Failure Current Sensor",
+        "unit": "",
+        "data_type": "uint16",
+        "register_type": "input",
+        "category": "alarms",
+        "poll_group": "normal",
+        "defaults": {
+          "mqtt": {
+            "enabled": false
+          },
+          "influxdb": {
+            "enabled": false
+          },
+          "ui": {
+            "show_on_dashboard": false,
+            "widget": "value"
+          }
+        }
+      },
+      {
+        "address": 355,
+        "name": "failure_key_switch",
+        "label": "Failure Key Switch",
+        "unit": "",
+        "data_type": "uint16",
+        "register_type": "input",
+        "category": "alarms",
+        "poll_group": "normal",
+        "defaults": {
+          "mqtt": {
+            "enabled": false
+          },
+          "influxdb": {
+            "enabled": false
+          },
+          "ui": {
+            "show_on_dashboard": false,
+            "widget": "value"
+          }
+        }
+      },
+      {
+        "address": 356,
+        "name": "failure_cell_diff",
+        "label": "Failure Cell Diff",
+        "unit": "",
+        "data_type": "uint16",
+        "register_type": "input",
+        "category": "alarms",
+        "poll_group": "normal",
+        "defaults": {
+          "mqtt": {
+            "enabled": false
+          },
+          "influxdb": {
+            "enabled": false
+          },
+          "ui": {
+            "show_on_dashboard": false,
+            "widget": "value"
+          }
+        }
+      },
+      {
+        "address": 357,
+        "name": "failure_charge_mosfet",
+        "label": "Failure Chg MOSFET",
+        "unit": "",
+        "data_type": "uint16",
+        "register_type": "input",
+        "category": "alarms",
+        "poll_group": "normal",
+        "defaults": {
+          "mqtt": {
+            "enabled": false
+          },
+          "influxdb": {
+            "enabled": false
+          },
+          "ui": {
+            "show_on_dashboard": false,
+            "widget": "value"
+          }
+        }
+      },
+      {
+        "address": 358,
+        "name": "failure_discharge_mosfet",
+        "label": "Failure Dis MOSFET",
+        "unit": "",
+        "data_type": "uint16",
+        "register_type": "input",
+        "category": "alarms",
+        "poll_group": "normal",
+        "defaults": {
+          "mqtt": {
+            "enabled": false
+          },
+          "influxdb": {
+            "enabled": false
+          },
+          "ui": {
+            "show_on_dashboard": false,
+            "widget": "value"
+          }
+        }
+      },
+      {
+        "address": 359,
+        "name": "failure_current_limit",
+        "label": "Failure Current Limit Switch",
+        "unit": "",
+        "data_type": "uint16",
+        "register_type": "input",
+        "category": "alarms",
+        "poll_group": "normal",
+        "defaults": {
+          "mqtt": {
+            "enabled": false
+          },
+          "influxdb": {
+            "enabled": false
+          },
+          "ui": {
+            "show_on_dashboard": false,
+            "widget": "value"
+          }
+        }
+      },
+      {
+        "address": 360,
+        "name": "alarm_cell_high_v",
+        "label": "Cell High V",
+        "unit": "",
+        "data_type": "uint16",
+        "register_type": "input",
+        "category": "alarms",
+        "poll_group": "normal",
+        "defaults": {
+          "mqtt": {
+            "enabled": false
+          },
+          "influxdb": {
+            "enabled": false
+          },
+          "ui": {
+            "show_on_dashboard": false,
+            "widget": "value"
+          }
+        }
+      },
+      {
+        "address": 361,
+        "name": "alarm_cell_overvolt_prot",
+        "label": "Cell Overvolt Prot",
+        "unit": "",
+        "data_type": "uint16",
+        "register_type": "input",
+        "category": "alarms",
+        "poll_group": "normal",
+        "defaults": {
+          "mqtt": {
+            "enabled": false
+          },
+          "influxdb": {
+            "enabled": false
+          },
+          "ui": {
+            "show_on_dashboard": false,
+            "widget": "value"
+          }
+        }
+      },
+      {
+        "address": 362,
+        "name": "alarm_cell_low_v",
+        "label": "Cell Low V",
+        "unit": "",
+        "data_type": "uint16",
+        "register_type": "input",
+        "category": "alarms",
+        "poll_group": "normal",
+        "defaults": {
+          "mqtt": {
+            "enabled": false
+          },
+          "influxdb": {
+            "enabled": false
+          },
+          "ui": {
+            "show_on_dashboard": false,
+            "widget": "value"
+          }
+        }
+      },
+      {
+        "address": 363,
+        "name": "alarm_cell_undervolt_prot",
+        "label": "Cell Undervolt Prot",
+        "unit": "",
+        "data_type": "uint16",
+        "register_type": "input",
+        "category": "alarms",
+        "poll_group": "normal",
+        "defaults": {
+          "mqtt": {
+            "enabled": false
+          },
+          "influxdb": {
+            "enabled": false
+          },
+          "ui": {
+            "show_on_dashboard": false,
+            "widget": "value"
+          }
+        }
+      },
+      {
+        "address": 364,
+        "name": "alarm_pack_high_v",
+        "label": "Pack High V",
+        "unit": "",
+        "data_type": "uint16",
+        "register_type": "input",
+        "category": "alarms",
+        "poll_group": "normal",
+        "defaults": {
+          "mqtt": {
+            "enabled": false
+          },
+          "influxdb": {
+            "enabled": false
+          },
+          "ui": {
+            "show_on_dashboard": false,
+            "widget": "value"
+          }
+        }
+      },
+      {
+        "address": 365,
+        "name": "alarm_pack_overvolt_prot",
+        "label": "Pack Overvolt Prot",
+        "unit": "",
+        "data_type": "uint16",
+        "register_type": "input",
+        "category": "alarms",
+        "poll_group": "normal",
+        "defaults": {
+          "mqtt": {
+            "enabled": false
+          },
+          "influxdb": {
+            "enabled": false
+          },
+          "ui": {
+            "show_on_dashboard": false,
+            "widget": "value"
+          }
+        }
+      },
+      {
+        "address": 366,
+        "name": "alarm_pack_low_v",
+        "label": "Pack Low V",
+        "unit": "",
+        "data_type": "uint16",
+        "register_type": "input",
+        "category": "alarms",
+        "poll_group": "normal",
+        "defaults": {
+          "mqtt": {
+            "enabled": false
+          },
+          "influxdb": {
+            "enabled": false
+          },
+          "ui": {
+            "show_on_dashboard": false,
+            "widget": "value"
+          }
+        }
+      },
+      {
+        "address": 367,
+        "name": "alarm_pack_undervolt_prot",
+        "label": "Pack Undervolt Prot",
+        "unit": "",
+        "data_type": "uint16",
+        "register_type": "input",
+        "category": "alarms",
+        "poll_group": "normal",
+        "defaults": {
+          "mqtt": {
+            "enabled": false
+          },
+          "influxdb": {
+            "enabled": false
+          },
+          "ui": {
+            "show_on_dashboard": false,
+            "widget": "value"
+          }
+        }
+      },
+      {
+        "address": 368,
+        "name": "alarm_charge_high_temp",
+        "label": "Charge High Temp",
+        "unit": "",
+        "data_type": "uint16",
+        "register_type": "input",
+        "category": "alarms",
+        "poll_group": "normal",
+        "defaults": {
+          "mqtt": {
+            "enabled": false
+          },
+          "influxdb": {
+            "enabled": false
+          },
+          "ui": {
+            "show_on_dashboard": false,
+            "widget": "value"
+          }
+        }
+      },
+      {
+        "address": 369,
+        "name": "alarm_charge_overtemp_prot",
+        "label": "Charge Overtemp Prot",
+        "unit": "",
+        "data_type": "uint16",
+        "register_type": "input",
+        "category": "alarms",
+        "poll_group": "normal",
+        "defaults": {
+          "mqtt": {
+            "enabled": false
+          },
+          "influxdb": {
+            "enabled": false
+          },
+          "ui": {
+            "show_on_dashboard": false,
+            "widget": "value"
+          }
+        }
+      },
+      {
+        "address": 370,
+        "name": "alarm_charge_low_temp",
+        "label": "Charge Low Temp",
+        "unit": "",
+        "data_type": "uint16",
+        "register_type": "input",
+        "category": "alarms",
+        "poll_group": "normal",
+        "defaults": {
+          "mqtt": {
+            "enabled": false
+          },
+          "influxdb": {
+            "enabled": false
+          },
+          "ui": {
+            "show_on_dashboard": false,
+            "widget": "value"
+          }
+        }
+      },
+      {
+        "address": 371,
+        "name": "alarm_charge_undertemp_prot",
+        "label": "Charge Undertemp Prot",
+        "unit": "",
+        "data_type": "uint16",
+        "register_type": "input",
+        "category": "alarms",
+        "poll_group": "normal",
+        "defaults": {
+          "mqtt": {
+            "enabled": false
+          },
+          "influxdb": {
+            "enabled": false
+          },
+          "ui": {
+            "show_on_dashboard": false,
+            "widget": "value"
+          }
+        }
+      },
+      {
+        "address": 372,
+        "name": "alarm_discharge_high_temp",
+        "label": "Discharge High Temp",
+        "unit": "",
+        "data_type": "uint16",
+        "register_type": "input",
+        "category": "alarms",
+        "poll_group": "normal",
+        "defaults": {
+          "mqtt": {
+            "enabled": false
+          },
+          "influxdb": {
+            "enabled": false
+          },
+          "ui": {
+            "show_on_dashboard": false,
+            "widget": "value"
+          }
+        }
+      },
+      {
+        "address": 373,
+        "name": "alarm_discharge_overtemp_prot",
+        "label": "Discharge Overtemp Prot",
+        "unit": "",
+        "data_type": "uint16",
+        "register_type": "input",
+        "category": "alarms",
+        "poll_group": "normal",
+        "defaults": {
+          "mqtt": {
+            "enabled": false
+          },
+          "influxdb": {
+            "enabled": false
+          },
+          "ui": {
+            "show_on_dashboard": false,
+            "widget": "value"
+          }
+        }
+      },
+      {
+        "address": 374,
+        "name": "alarm_discharge_low_temp",
+        "label": "Discharge Low Temp",
+        "unit": "",
+        "data_type": "uint16",
+        "register_type": "input",
+        "category": "alarms",
+        "poll_group": "normal",
+        "defaults": {
+          "mqtt": {
+            "enabled": false
+          },
+          "influxdb": {
+            "enabled": false
+          },
+          "ui": {
+            "show_on_dashboard": false,
+            "widget": "value"
+          }
+        }
+      },
+      {
+        "address": 375,
+        "name": "alarm_discharge_undertemp_prot",
+        "label": "Discharge Undertemp Prot",
+        "unit": "",
+        "data_type": "uint16",
+        "register_type": "input",
+        "category": "alarms",
+        "poll_group": "normal",
+        "defaults": {
+          "mqtt": {
+            "enabled": false
+          },
+          "influxdb": {
+            "enabled": false
+          },
+          "ui": {
+            "show_on_dashboard": false,
+            "widget": "value"
+          }
+        }
+      },
+      {
+        "address": 376,
+        "name": "alarm_ambient_high_temp",
+        "label": "Ambient High Temp",
+        "unit": "",
+        "data_type": "uint16",
+        "register_type": "input",
+        "category": "alarms",
+        "poll_group": "normal",
+        "defaults": {
+          "mqtt": {
+            "enabled": false
+          },
+          "influxdb": {
+            "enabled": false
+          },
+          "ui": {
+            "show_on_dashboard": false,
+            "widget": "value"
+          }
+        }
+      },
+      {
+        "address": 377,
+        "name": "alarm_ambient_overtemp_prot",
+        "label": "Ambient Overtemp Prot",
+        "unit": "",
+        "data_type": "uint16",
+        "register_type": "input",
+        "category": "alarms",
+        "poll_group": "normal",
+        "defaults": {
+          "mqtt": {
+            "enabled": false
+          },
+          "influxdb": {
+            "enabled": false
+          },
+          "ui": {
+            "show_on_dashboard": false,
+            "widget": "value"
+          }
+        }
+      },
+      {
+        "address": 378,
+        "name": "alarm_ambient_low_temp",
+        "label": "Ambient Low Temp",
+        "unit": "",
+        "data_type": "uint16",
+        "register_type": "input",
+        "category": "alarms",
+        "poll_group": "normal",
+        "defaults": {
+          "mqtt": {
+            "enabled": false
+          },
+          "influxdb": {
+            "enabled": false
+          },
+          "ui": {
+            "show_on_dashboard": false,
+            "widget": "value"
+          }
+        }
+      },
+      {
+        "address": 379,
+        "name": "alarm_ambient_undertemp_prot",
+        "label": "Ambient Undertemp Prot",
+        "unit": "",
+        "data_type": "uint16",
+        "register_type": "input",
+        "category": "alarms",
+        "poll_group": "normal",
+        "defaults": {
+          "mqtt": {
+            "enabled": false
+          },
+          "influxdb": {
+            "enabled": false
+          },
+          "ui": {
+            "show_on_dashboard": false,
+            "widget": "value"
+          }
+        }
+      },
+      {
+        "address": 380,
+        "name": "alarm_mosfet_overtemp_prot",
+        "label": "MOSFET Overtemp Prot",
+        "unit": "",
+        "data_type": "uint16",
+        "register_type": "input",
+        "category": "alarms",
+        "poll_group": "normal",
+        "defaults": {
+          "mqtt": {
+            "enabled": false
+          },
+          "influxdb": {
+            "enabled": false
+          },
+          "ui": {
+            "show_on_dashboard": false,
+            "widget": "value"
+          }
+        }
+      },
+      {
+        "address": 381,
+        "name": "alarm_mosfet_high_temp",
+        "label": "MOSFET High Temp",
+        "unit": "",
+        "data_type": "uint16",
+        "register_type": "input",
+        "category": "alarms",
+        "poll_group": "normal",
+        "defaults": {
+          "mqtt": {
+            "enabled": false
+          },
+          "influxdb": {
+            "enabled": false
+          },
+          "ui": {
+            "show_on_dashboard": false,
+            "widget": "value"
+          }
+        }
+      },
+      {
+        "address": 382,
+        "name": "heating_active",
+        "label": "Low-temperature Heating",
+        "unit": "",
+        "data_type": "uint16",
+        "register_type": "input",
+        "category": "diagnostics",
+        "poll_group": "normal",
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": false
+          },
+          "ui": {
+            "show_on_dashboard": false,
+            "widget": "value"
+          }
+        },
+        "enum": {
+          "0": "OFF",
+          "1": "ON"
+        }
+      },
+      {
+        "address": 384,
+        "name": "alarm_charge_current",
+        "label": "Charge Overcurrent Alarm",
+        "unit": "",
+        "data_type": "uint16",
+        "register_type": "input",
+        "category": "alarms",
+        "poll_group": "normal",
+        "defaults": {
+          "mqtt": {
+            "enabled": false
+          },
+          "influxdb": {
+            "enabled": false
+          },
+          "ui": {
+            "show_on_dashboard": false,
+            "widget": "value"
+          }
+        }
+      },
+      {
+        "address": 385,
+        "name": "alarm_charge_overcurrent_prot",
+        "label": "Charge Overcurrent Prot",
+        "unit": "",
+        "data_type": "uint16",
+        "register_type": "input",
+        "category": "alarms",
+        "poll_group": "normal",
+        "defaults": {
+          "mqtt": {
+            "enabled": false
+          },
+          "influxdb": {
+            "enabled": false
+          },
+          "ui": {
+            "show_on_dashboard": false,
+            "widget": "value"
+          }
+        }
+      },
+      {
+        "address": 386,
+        "name": "alarm_discharge_current",
+        "label": "Discharge Overcurrent Alarm",
+        "unit": "",
+        "data_type": "uint16",
+        "register_type": "input",
+        "category": "alarms",
+        "poll_group": "normal",
+        "defaults": {
+          "mqtt": {
+            "enabled": false
+          },
+          "influxdb": {
+            "enabled": false
+          },
+          "ui": {
+            "show_on_dashboard": false,
+            "widget": "value"
+          }
+        }
+      },
+      {
+        "address": 387,
+        "name": "alarm_discharge_overcurrent_prot",
+        "label": "Discharge Overcurrent Prot",
+        "unit": "",
+        "data_type": "uint16",
+        "register_type": "input",
+        "category": "alarms",
+        "poll_group": "normal",
+        "defaults": {
+          "mqtt": {
+            "enabled": false
+          },
+          "influxdb": {
+            "enabled": false
+          },
+          "ui": {
+            "show_on_dashboard": false,
+            "widget": "value"
+          }
+        }
+      },
+      {
+        "address": 388,
+        "name": "alarm_transient_overcurrent_prot",
+        "label": "Transient Overcurrent Prot",
+        "unit": "",
+        "data_type": "uint16",
+        "register_type": "input",
+        "category": "alarms",
+        "poll_group": "normal",
+        "defaults": {
+          "mqtt": {
+            "enabled": false
+          },
+          "influxdb": {
+            "enabled": false
+          },
+          "ui": {
+            "show_on_dashboard": false,
+            "widget": "value"
+          }
+        }
+      },
+      {
+        "address": 389,
+        "name": "alarm_short_circuit_prot",
+        "label": "Short Circuit Prot",
+        "unit": "",
+        "data_type": "uint16",
+        "register_type": "input",
+        "category": "alarms",
+        "poll_group": "normal",
+        "defaults": {
+          "mqtt": {
+            "enabled": false
+          },
+          "influxdb": {
+            "enabled": false
+          },
+          "ui": {
+            "show_on_dashboard": false,
+            "widget": "value"
+          }
+        }
+      },
+      {
+        "address": 394,
+        "name": "alarm_soc_low",
+        "label": "SOC Low",
+        "unit": "",
+        "data_type": "uint16",
+        "register_type": "input",
+        "category": "alarms",
+        "poll_group": "normal",
+        "defaults": {
+          "mqtt": {
+            "enabled": false
+          },
+          "influxdb": {
+            "enabled": false
+          },
+          "ui": {
+            "show_on_dashboard": false,
+            "widget": "value"
+          }
+        }
+      },
+      {
+        "address": 395,
+        "name": "alarm_soc_prot",
+        "label": "SOC Prot",
+        "unit": "",
+        "data_type": "uint16",
+        "register_type": "input",
+        "category": "alarms",
+        "poll_group": "normal",
+        "defaults": {
+          "mqtt": {
+            "enabled": false
+          },
+          "influxdb": {
+            "enabled": false
+          },
+          "ui": {
+            "show_on_dashboard": false,
+            "widget": "value"
+          }
+        }
+      },
+      {
+        "address": 308,
+        "name": "alarm_event_1",
+        "label": "Alarm Event 1",
+        "unit": "",
+        "data_type": "uint16",
+        "register_type": "input",
+        "category": "diagnostics",
+        "poll_group": "normal",
+        "defaults": {
+          "mqtt": {
+            "enabled": false
+          },
+          "influxdb": {
+            "enabled": false
+          },
+          "ui": {
+            "show_on_dashboard": false,
+            "widget": "value"
+          }
+        }
+      },
+      {
+        "address": 309,
+        "name": "alarm_event_2",
+        "label": "Alarm Event 2",
+        "unit": "",
+        "data_type": "uint16",
+        "register_type": "input",
+        "category": "diagnostics",
+        "poll_group": "normal",
+        "defaults": {
+          "mqtt": {
+            "enabled": false
+          },
+          "influxdb": {
+            "enabled": false
+          },
+          "ui": {
+            "show_on_dashboard": false,
+            "widget": "value"
+          }
+        }
+      },
+      {
+        "address": 310,
+        "name": "alarm_event_3",
+        "label": "Alarm Event 3",
+        "unit": "",
+        "data_type": "uint16",
+        "register_type": "input",
+        "category": "diagnostics",
+        "poll_group": "normal",
+        "defaults": {
+          "mqtt": {
+            "enabled": false
+          },
+          "influxdb": {
+            "enabled": false
+          },
+          "ui": {
+            "show_on_dashboard": false,
+            "widget": "value"
+          }
+        }
+      },
+      {
+        "address": 311,
+        "name": "alarm_event_4",
+        "label": "Alarm Event 4",
+        "unit": "",
+        "data_type": "uint16",
+        "register_type": "input",
+        "category": "diagnostics",
+        "poll_group": "normal",
+        "defaults": {
+          "mqtt": {
+            "enabled": false
+          },
+          "influxdb": {
+            "enabled": false
+          },
+          "ui": {
+            "show_on_dashboard": false,
+            "widget": "value"
+          }
+        }
+      },
+      {
+        "address": 312,
+        "name": "alarm_event_5",
+        "label": "Alarm Event 5",
+        "unit": "",
+        "data_type": "uint16",
+        "register_type": "input",
+        "category": "diagnostics",
+        "poll_group": "normal",
+        "defaults": {
+          "mqtt": {
+            "enabled": false
+          },
+          "influxdb": {
+            "enabled": false
+          },
+          "ui": {
+            "show_on_dashboard": false,
+            "widget": "value"
+          }
+        }
+      },
+      {
+        "address": 313,
+        "name": "alarm_event_6",
+        "label": "Alarm Event 6",
+        "unit": "",
+        "data_type": "uint16",
+        "register_type": "input",
+        "category": "diagnostics",
+        "poll_group": "normal",
+        "defaults": {
+          "mqtt": {
+            "enabled": false
+          },
+          "influxdb": {
+            "enabled": false
+          },
+          "ui": {
+            "show_on_dashboard": false,
+            "widget": "value"
+          }
+        }
+      },
+      {
+        "address": 314,
+        "name": "switch_state",
+        "label": "Switch State",
+        "unit": "",
+        "data_type": "uint16",
+        "register_type": "input",
+        "category": "diagnostics",
+        "poll_group": "normal",
+        "defaults": {
+          "mqtt": {
+            "enabled": false
+          },
+          "influxdb": {
+            "enabled": false
+          },
+          "ui": {
+            "show_on_dashboard": false,
+            "widget": "value"
+          }
+        }
+      },
+      {
+        "address": 320,
+        "name": "alarm_event_7",
+        "label": "Alarm Event 7",
+        "unit": "",
+        "data_type": "uint16",
+        "register_type": "input",
+        "category": "diagnostics",
+        "poll_group": "normal",
+        "defaults": {
+          "mqtt": {
+            "enabled": false
+          },
+          "influxdb": {
+            "enabled": false
+          },
+          "ui": {
+            "show_on_dashboard": false,
+            "widget": "value"
+          }
+        }
+      },
+      {
+        "address": 321,
+        "name": "alarm_event_8",
+        "label": "Alarm Event 8",
+        "unit": "",
+        "data_type": "uint16",
+        "register_type": "input",
+        "category": "diagnostics",
+        "poll_group": "normal",
+        "defaults": {
+          "mqtt": {
+            "enabled": false
+          },
+          "influxdb": {
+            "enabled": false
+          },
+          "ui": {
+            "show_on_dashboard": false,
+            "widget": "value"
+          }
+        }
+      },
+      {
+        "address": 485,
+        "name": "alarm_layout_uncertain",
+        "label": "Alarm Layout Uncertain",
+        "unit": "",
+        "data_type": "uint16",
+        "register_type": "input",
+        "category": "diagnostics",
+        "poll_group": "normal",
+        "defaults": {
+          "mqtt": {
+            "enabled": false
+          },
+          "influxdb": {
+            "enabled": false
+          },
+          "ui": {
+            "show_on_dashboard": false,
+            "widget": "value"
+          }
+        },
+        "enum": {
+          "0": "No",
+          "1": "Yes"
+        }
+      },
+      {
+        "address": 512,
+        "name": "device_name",
+        "label": "Device Name",
+        "unit": "",
+        "data_type": "string:5",
+        "register_type": "input",
+        "category": "diagnostics",
+        "poll_group": "slow",
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": false
+          },
+          "ui": {
+            "show_on_dashboard": false,
+            "widget": "value"
+          }
+        }
+      },
+      {
+        "address": 517,
+        "name": "software_version",
+        "label": "Software Version",
+        "unit": "",
+        "data_type": "uint16",
+        "register_type": "input",
+        "category": "diagnostics",
+        "poll_group": "slow",
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": false
+          },
+          "ui": {
+            "show_on_dashboard": false,
+            "widget": "value"
+          }
+        }
+      },
+      {
+        "address": 518,
+        "name": "manufacturer",
+        "label": "Manufacturer",
+        "unit": "",
+        "data_type": "string:10",
+        "register_type": "input",
+        "category": "diagnostics",
+        "poll_group": "slow",
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": false
+          },
+          "ui": {
+            "show_on_dashboard": false,
+            "widget": "value"
+          }
+        }
+      },
+      {
+        "address": 3840,
+        "name": "response_ms",
+        "label": "Response Time",
+        "unit": "ms",
+        "data_type": "uint16",
+        "register_type": "input",
+        "category": "diagnostics",
+        "poll_group": "realtime",
+        "defaults": {
+          "mqtt": {
+            "enabled": false
+          },
+          "influxdb": {
+            "enabled": false
+          },
+          "ui": {
+            "show_on_dashboard": false,
+            "widget": "value"
+          }
+        }
+      },
+      {
+        "address": 3841,
+        "name": "checksum_errors",
+        "label": "Checksum Errors",
+        "unit": "",
+        "data_type": "uint16",
+        "register_type": "input",
+        "category": "diagnostics",
+        "poll_group": "realtime",
+        "defaults": {
+          "mqtt": {
+            "enabled": false
+          },
+          "influxdb": {
+            "enabled": false
+          },
+          "ui": {
+            "show_on_dashboard": false,
+            "widget": "value"
+          }
+        }
+      },
+      {
+        "address": 3842,
+        "name": "timeouts",
+        "label": "Timeouts",
+        "unit": "",
+        "data_type": "uint16",
+        "register_type": "input",
+        "category": "diagnostics",
+        "poll_group": "realtime",
+        "defaults": {
+          "mqtt": {
+            "enabled": false
+          },
+          "influxdb": {
+            "enabled": false
+          },
+          "ui": {
+            "show_on_dashboard": false,
+            "widget": "value"
+          }
+        }
+      },
+      {
+        "address": 3843,
+        "name": "rtn_errors",
+        "label": "Error Answers (RTN)",
+        "unit": "",
+        "data_type": "uint16",
+        "register_type": "input",
+        "category": "diagnostics",
+        "poll_group": "realtime",
+        "defaults": {
+          "mqtt": {
+            "enabled": false
+          },
+          "influxdb": {
+            "enabled": false
+          },
+          "ui": {
+            "show_on_dashboard": false,
+            "widget": "value"
+          }
+        }
+      }
+    ],
+    "calculated": [
+      {
+        "name": "power",
+        "label": "Power (− charging)",
+        "unit": "W",
+        "decimals": 0,
+        "expr": "0 - current * pack_voltage",
+        "aggregates": {
+          "pack_total_power": "sum"
+        },
+        "measurement": "seplos_battery",
+        "ui": {
+          "show_on_dashboard": true,
+          "widget": "chart"
+        }
+      },
+      {
+        "name": "cell_delta",
+        "label": "Cell Delta",
+        "unit": "mV",
+        "decimals": 0,
+        "expr": "(max_cell_voltage - min_cell_voltage) * 1000",
+        "aggregates": {
+          "pack_cell_delta": "max"
+        },
+        "measurement": "seplos_battery",
+        "ui": {
+          "show_on_dashboard": true,
+          "widget": "value"
+        }
+      },
+      {
+        "name": "balancing_count",
+        "label": "Balancing Count",
+        "decimals": 0,
+        "expr": "popcount(balancing_bits)",
+        "measurement": "seplos_battery"
+      },
+      {
+        "name": "alarm_count",
+        "label": "Alarm Count",
+        "decimals": 0,
+        "expr": "alarm_cell_high_v + alarm_cell_overvolt_prot + alarm_cell_low_v + alarm_cell_undervolt_prot + alarm_pack_high_v + alarm_pack_overvolt_prot + alarm_pack_low_v + alarm_pack_undervolt_prot + alarm_charge_high_temp + alarm_charge_overtemp_prot + alarm_charge_low_temp + alarm_charge_undertemp_prot + alarm_discharge_high_temp + alarm_discharge_overtemp_prot + alarm_discharge_low_temp + alarm_discharge_undertemp_prot + alarm_ambient_high_temp + alarm_ambient_overtemp_prot + alarm_mosfet_high_temp + alarm_mosfet_overtemp_prot + alarm_charge_current + alarm_charge_overcurrent_prot + alarm_discharge_current + alarm_discharge_overcurrent_prot + alarm_short_circuit_prot + alarm_soc_low",
+        "aggregates": {
+          "pack_total_alarms": "sum"
+        },
+        "measurement": "seplos_battery"
+      },
+      {
+        "name": "warning_count",
+        "label": "Warning Count",
+        "decimals": 0,
+        "expr": "alarm_cell_high_v + alarm_cell_low_v + alarm_pack_high_v + alarm_pack_low_v + alarm_charge_high_temp + alarm_charge_low_temp + alarm_discharge_high_temp + alarm_discharge_low_temp + alarm_ambient_high_temp + alarm_mosfet_high_temp + alarm_charge_current + alarm_discharge_current + alarm_soc_low",
+        "measurement": "seplos_battery"
+      },
+      {
+        "name": "protection_count",
+        "label": "Protection Count",
+        "decimals": 0,
+        "expr": "alarm_cell_overvolt_prot + alarm_cell_undervolt_prot + alarm_pack_overvolt_prot + alarm_pack_undervolt_prot + alarm_charge_overtemp_prot + alarm_charge_undertemp_prot + alarm_discharge_overtemp_prot + alarm_discharge_undertemp_prot + alarm_ambient_overtemp_prot + alarm_mosfet_overtemp_prot + alarm_charge_overcurrent_prot + alarm_discharge_overcurrent_prot + alarm_short_circuit_prot + alarm_soc_prot + alarm_transient_overcurrent_prot",
+        "aggregates": {
+          "pack_total_protections": "sum"
+        },
+        "measurement": "seplos_battery"
+      },
+      {
+        "name": "failure_count",
+        "label": "Failure Count",
+        "decimals": 0,
+        "expr": "failure_voltage_sensor + failure_ntc + failure_current_sensor + failure_key_switch + failure_cell_diff + failure_charge_mosfet + failure_discharge_mosfet + failure_current_limit"
+      },
+      {
+        "name": "energy_remaining",
+        "label": "Energy remaining",
+        "unit": "Wh",
+        "decimals": 0,
+        "expr": "remaining_capacity * pack_voltage",
+        "aggregates": {
+          "pack_energy_remaining": "sum"
+        }
+      },
+      {
+        "name": "energy_to_full",
+        "label": "Energy to full",
+        "unit": "Wh",
+        "decimals": 0,
+        "expr": "(total_capacity - remaining_capacity) * pack_voltage",
+        "aggregates": {
+          "pack_energy_to_full": "sum"
+        }
+      }
+    ]
+  }
+}

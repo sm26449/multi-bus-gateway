@@ -1,5 +1,5 @@
 // Multi-Bus Gateway — multi-protocol Modbus/HTTP/MQTT acquisition gateway.
-// Copyright (C) 2024-2026 Stefan Maldaianu <sm26449@diysolar.ro>  — AGPL-3.0-or-later
+// Copyright (C) 2024-2026 Stefan Maldaianu <stefan@multibus.dev>  — AGPL-3.0-or-later
 //
 // Nothing is deleted while something uses it — as a user meets it: the
 // "Used by" section on a device, an installation and a template, one row and
@@ -114,9 +114,13 @@ try {
   check('list: sunfield-u1 used by 1 (one rule)', /used by 1\b/i.test(u1), u1);
   const a = await page.locator('[data-ub-slot="ub-a"]').innerText();
   check('list: ub-a used by 2 (a calculated value, a rule)', /used by 2\b/i.test(a), a);
-  const rowDel = page.locator('[data-ub-del="ub-a"]');
+  // its Delete is the row's ⋯ item (ADR-0032 §1): held back, the reason under its name
+  await page.click('#devicesList .device-row[data-f="ub-a"] [data-dev-menu]');
+  const rowDel = page.locator('#devMenu-list-ub-a [data-ddv-act="delete"]');
+  await rowDel.waitFor();
   check('list: its Delete is held back, with the reason', (await rowDel.getAttribute('aria-disabled')) === 'true'
-        && /cannot be deleted/i.test(await rowDel.getAttribute('aria-label') || ''), await rowDel.getAttribute('aria-label'));
+        && /Used by 2/.test(await rowDel.innerText()), await rowDel.innerText());
+  await page.keyboard.press('Escape');
   check('list: a parent whose component is read shows nothing yet', !(await page.locator('[data-ub-slot="ub-gx"]').innerText()));
 
   await page.evaluate(() => window.app.openDeviceDetail('sunfield-u1'));
@@ -138,14 +142,18 @@ try {
   check('device page: the header counts things (2)', /used by 2\b/i.test(await page.locator('#ddvUsedByBadge').innerText()));
   const del = page.locator('#ddvDeleteBtn');
   check('device page: Delete held back, the reason said to a screen reader',
-        (await del.getAttribute('aria-disabled')) === 'true' && /cannot be deleted/i.test(await page.locator('#ddvDeleteWhy').textContent()));
+        (await del.getAttribute('aria-disabled')) === 'true'
+        && /Used by 2/.test(await page.evaluate(() => {          // its description, said once (L3.10 review NIT)
+          const id = document.getElementById('ddvDeleteBtn')?.getAttribute('aria-describedby');
+          return id ? document.getElementById(id)?.textContent || '' : '';
+        })));
   await deviceAction(page, '#ddvDeleteBtn');   // aria-disabled: still clickable, it shows why
   await page.waitForTimeout(600);
   check('Delete while used opens no dialog, focus goes to "Used by"', !(await dialogOpen(page)) && await focusIn(page, '#devUsedBy'));
   if (OUT) await page.screenshot({ path: `${OUT}/usedby-device.png` });
 
   // ── Disable instead says what it does to the rules ──
-  await deviceAction(page, '#ddvDisableInstead');
+  await deviceAction(page, '#ddvEnableToggle');      // Disable…: what uses it reacts, said (no "Disable instead" item)
   await page.waitForSelector('#appDialog.active');
   const dd = await openDialog(page);
   const effects = await page.locator('#appDialogDetails').innerText();
@@ -193,8 +201,8 @@ try {
   // ── Disable instead: focus lands on the page, references kept ──
   await calc('ub-b', [A2]);
   await page.evaluate(() => window.app.openDeviceDetail('ub-a'));
-  await page.waitForFunction(() => document.getElementById('ddvDisableInstead') && !document.getElementById('ddvDisableInstead').hidden);
-  await deviceAction(page, '#ddvDisableInstead');
+  await page.waitForSelector('#ddvUsedByBadge:not([hidden])');
+  await deviceAction(page, '#ddvEnableToggle');
   await page.waitForSelector('#appDialog.active');
   await page.click('#appDialogOk');
   await page.waitForFunction(() => !document.getElementById('appDialog').classList.contains('active'));
@@ -220,7 +228,15 @@ try {
   await page.waitForFunction(() => /used by/i.test(document.querySelector('[data-ub-slot="ub-gx"]')?.textContent || ''), null, { timeout: 8000 }).catch(() => {});
   check('list: a parent counts what uses its component, and holds Delete',
         bat.status === 200 && /used by 1\b/i.test(await page.locator('[data-ub-slot="ub-gx"]').innerText())
-        && (await page.locator('[data-ub-del="ub-gx"]').getAttribute('aria-disabled')) === 'true');
+        && await (async () => {
+          await page.click('#devicesList .device-row[data-f="ub-gx"] [data-dev-menu]');
+          const d = page.locator('#devMenu-list-ub-gx [data-ddv-act="delete"]');
+          await d.waitFor();
+          await page.waitForFunction(() => !document.querySelector('#devMenu-list-ub-gx .is-checking'));
+          const held = (await d.getAttribute('aria-disabled')) === 'true';
+          await page.keyboard.press('Escape');
+          return held;
+        })());
   await api('/api/rules/ub-bat', { method: 'DELETE' });
 
   // ── a race inside the dialog: something starts using it before OK ──
@@ -271,17 +287,21 @@ try {
   await v.evaluate(() => window.app.openDeviceDetail('ub-c'));
   await v.locator('#devUsedBy .ub-list').first().waitFor();
   check('viewer: sees what uses it', /UB B/.test(await v.locator('#devUsedBy').innerText()));
-  // the ⋯ menu holds only administration on a device: a viewer is offered no menu at all
-  check('viewer: no Delete, no Disable instead (no ⋯ menu offered)', !(await v.locator('#ddvActions').isVisible())
-        && !(await v.locator('#ddvDeleteBtn').isVisible()) && !(await v.locator('#ddvDisableInstead').isVisible()));
+  // the ⋯ menu is there for every role (L3-F13); a viewer's holds no administration
+  await v.click('#ddvActions');
+  check('viewer: the ⋯ is offered, with no Delete and no Disable instead', await v.locator('#ddvActionsMenu').isVisible()
+        && !(await v.locator('#ddvDeleteBtn').count()) && !(await v.locator('#ddvDisableInstead').count()));
+  await v.keyboard.press('Escape');
   await v.evaluate(() => window.app.openDeviceDetail('ub-d'));
   await v.locator('#devUsedBy a.ub-item').first().waitFor();
   await v.locator('#devUsedBy a.ub-item').first().click();
   await v.waitForFunction(() => window.app._devDetail?.id === 'ub-c');
   await v.waitForTimeout(300);
   const tabShown = await v.evaluate(() => {
+    // a group of one tab (Setup) shows no strip: its group button is the tab
     const a = document.querySelector('#deviceWsTabs .config-main-tab.active');
-    return a && a.offsetParent !== null;
+    const g = document.querySelector('#deviceWsGroups .active');
+    return a && (a.offsetParent !== null || (g && g.offsetParent !== null && g.dataset.dgroup === a.dataset.dgroup));
   });
   check('viewer: a meter link lands on a tab they can see', tabShown, await activeTab(v));
   check('no page errors (viewer)', v.errs.length === 0, v.errs.join(' | '));

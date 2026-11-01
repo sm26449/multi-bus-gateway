@@ -1,5 +1,5 @@
 # Multi-Bus Gateway — multi-protocol Modbus/HTTP/MQTT acquisition gateway.
-# Copyright (C) 2024-2026 Stefan Maldaianu <sm26449@diysolar.ro>
+# Copyright (C) 2024-2026 Stefan Maldaianu <stefan@multibus.dev>
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU Affero General Public License as published by
@@ -377,6 +377,14 @@ class CalcEngine:
         if protos and all(p == 'mqtt' for p in protos):
             return 'mqtt'
         if protos and all(p == 'rtu_tap' for p in protos):
+            return 'tap'
+        # a CAN bus is only ever listened to (can_client.py publishes on 'tap')
+        if protos and all(p == 'can' for p in protos):
+            return 'tap'
+        # a virtual-map bus listened to (seplos_v2, mode listen) reports as a tap
+        from .config import VIRTUAL_MAP_PROTOCOLS
+        if (protos and all(p in VIRTUAL_MAP_PROTOCOLS for p in protos)
+                and str(getattr(getattr(dev, 'connection', None), 'mode', '') or '').lower() == 'listen'):
             return 'tap'
         return None
 

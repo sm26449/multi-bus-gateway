@@ -80,10 +80,10 @@ await p.locator('#plantWizardModal button:has-text("Next")').click(); await snap
 await p.locator('#plantWizardModal button:has-text("Next")').click(); await snap(p, '48-wizard-step3', { full: true });
 await p.locator('#plantWizardModal button:has-text("Next")').click(); await snap(p, '49-wizard-step4', { full: true });
 await p.evaluate(() => app.closeModal("plantWizardModal")); await p.waitForTimeout(300);
-// ── device wizard (the 3-step one) for comparison ──
+// ── Add Device (What · Connection · Check · Name & save) for comparison ──
 await toList(p);
-await p.locator('button:has-text("Add Device")').click(); await snap(p, '50-device-wizard-step1');
-await p.evaluate(() => app.closeModal("deviceWizardModal")); await p.waitForTimeout(300);
+await p.locator('button:has-text("Add Device")').click(); await snap(p, '50-add-device-what');
+await p.evaluate(() => { app._ad && (app._ad.done = true); app.closeModal("addDeviceModal"); }); await p.waitForTimeout(300);
 // ── dark theme + narrow viewport ──
 await p.close();
 p = await fresh({ width: 1440, height: 1000 }, true);

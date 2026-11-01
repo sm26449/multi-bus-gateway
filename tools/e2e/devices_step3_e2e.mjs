@@ -1,9 +1,9 @@
 // Multi-Bus Gateway — multi-protocol Modbus/HTTP/MQTT acquisition gateway.
-// Copyright (C) 2024-2026 Stefan Maldaianu <sm26449@diysolar.ro>  — AGPL-3.0-or-later
+// Copyright (C) 2024-2026 Stefan Maldaianu <stefan@multibus.dev>  — AGPL-3.0-or-later
 //
 // The device pages as a user meets them (UI audit 2026-10-21, section C,
 // lot a): each protocol said in its own words, a device page that stops what
-// it started when another one opens, one Save for a device and its
+// it started when another one opens, one Save (the Edit modal's) for a device and its
 // intervals, Unit ID and the gateway's refusals said at their field in the
 // wizard, a bridge's move button opening the device's Edit tab, a
 // component's page, deleting a parent with its components, and who drives a
@@ -13,8 +13,9 @@
 //
 //   CHROMIUM_PATH=… MBG_URL=http://127.0.0.1:8097 OUT=<dir> node tools/e2e/devices_step3_e2e.mjs
 import { chromium } from 'playwright';
+import { openAdd, answer, fill, step } from './lib/add-device.mjs';
 import { watchDialogs } from './lib/dialogs.mjs';
-import { deviceAction } from './lib/device-page.mjs';
+import { deviceAction, editorSection, editorSettled, editorModalOpen, saveDeviceEditor, closeDeviceEditor } from './lib/device-page.mjs';
 
 const BASE = process.env.MBG_URL || 'http://127.0.0.1:8097';
 const OUT = process.env.OUT || '';
@@ -43,8 +44,13 @@ async function open(viewport, role) {
   if (await later.count()) await later.first().click().catch(() => {});
   return page;
 }
+// `edit`: the connection editor, from ⋯ (L3.3: no longer a tab)
 const openDev = async (page, id, tab) => {
-  await page.evaluate(([i, t]) => window.app.openDeviceDetail(i).then(() => t && window.app._switchDeviceTab(t)), [id, tab]);
+  await page.evaluate(([i, t]) => window.app.openDeviceDetail(i).then(() => {
+    if (!t) return;
+    if (t === 'edit' || t === 'connection') return window.app.ddvEdit('connection');
+    return window.app._switchDeviceTab(t);
+  }), [id, tab]);
   await page.waitForTimeout(700);
 };
 const rowText = (page, id) => page.locator(`#devicesListView .device-row:has(.dev-chip:text-is("${id}"))`).first().innerText();
@@ -65,6 +71,10 @@ try {
   await openDev(page, 'gx');
   const ov = await page.locator('#deviceDetailView [data-dpanel="overview"]').innerText();
   check('overview: MQTT source is its broker, never ":8883 · unit"', /none\.invalid:8883 · TLS/.test(ov) && !/· unit/.test(ov), ov.slice(0, 300));
+  await openDev(page, 'gx', 'setup');
+  await page.waitForSelector('[data-dpanel="setup"] [data-setup="connection"]');
+  const gxSetup = await page.locator('[data-dpanel="setup"] [data-setup="connection"]').innerText();
+  check('setup: the MQTT broker with its port and TLS', /none\.invalid:8883 · TLS/.test(gxSetup), gxSetup.slice(0, 300));
 
   // ── the headline is the data's verdict (D15) ──
   await openDev(page, 'udp');
@@ -113,85 +123,111 @@ try {
   await page.waitForTimeout(500);
 
   // ── one Save for the device and its intervals (D8) ──
+  // what the page shows before the edit: the descriptions it must keep (the
+  // fixture's rs has no registers file, so they are the gateway's groups)
+  // (L3.4: the Edit modal's Polling section; the one Save is the modal's,
+  // its dry run judges an interval before anything is saved)
+  const pgBefore = (await api('/api/devices/rs/poll-groups')).poll_groups;
+  // a save of rs, never its dry run
+  const savesOf = (from, id) => page.reqs.slice(from).filter(r => ['PUT', 'PATCH', 'POST'].includes(r.method)
+    && new RegExp(`/api/devices/${id}(/poll-groups)?$`).test(new URL(r.url).pathname) && !/dry_run/.test(r.url));
   await openDev(page, 'rs', 'edit');
+  await editorSection(page, 'polling');
   await page.waitForSelector('#ddvPg-normal');
   check('edit: no separate "Save intervals"', !(await page.locator('[data-action="saveDevicePollGroups"]').count()));
   await page.fill('#ddvPg-normal', 'abc');
   const p0 = page.reqs.length;
-  await page.click('#deviceDetailView [data-action="saveDeviceDetail"]');
+  await editorSettled(page);
+  await page.click('#devEditSave', { force: true });
   await page.waitForTimeout(500);
-  check('edit: a bad interval is said at its field, nothing is sent',
-        (await page.getAttribute('#ddvPg-normal', 'aria-invalid')) === 'true'
-        && !page.reqs.slice(p0).some(r => r.method !== 'GET' && /\/api\/devices\/rs/.test(r.url)));
+  check('edit: a bad interval is said at its field, nothing is saved',
+        (await page.getAttribute('#ddvPg-normal', 'aria-invalid')) === 'true' && !savesOf(p0, 'rs').length);
   await page.fill('#ddvPg-normal', '7');
-  await page.click('#deviceDetailView [data-action="saveDeviceDetail"]');
-  await page.waitForTimeout(1500);
+  await editorSettled(page);
+  check('edit: an interval-only change says it applies live',
+        /1 change · applies live/.test(await page.locator('#devEditSummary').innerText()), await page.locator('#devEditSummary').innerText());
+  const r7 = await saveDeviceEditor(page);
   const pg = (await api('/api/devices/rs/poll-groups')).poll_groups;
-  check('edit: Save & Apply applies the changed interval', pg.normal.interval === 7, JSON.stringify(pg.normal));
+  check('edit: Save applies the changed interval, in one PATCH, no restart', r7?.ok() && (await r7.json()).restarted === false
+        && pg.normal.interval === 7, JSON.stringify(pg.normal));
   check('edit: the other intervals and the descriptions are kept',
-        pg.normal.description === 'system, freq, PF' && pg.realtime.interval === 1 && pg.slow.interval === 60, JSON.stringify(pg));
-  const fb = await page.locator('#ddvFeedback').innerText();
-  check('edit: an interval-only change says "Intervals applied", not "Nothing changed"',
-        /Intervals applied/.test(fb) && !/Nothing changed/.test(fb), fb);
+        pg.normal.description === pgBefore.normal.description && !!pg.normal.description
+        && pg.realtime.interval === 1 && pg.slow.interval === 60, JSON.stringify(pg));
+  await openDev(page, 'rs', 'edit');
+  await editorSection(page, 'polling');
   await page.fill('#ddvPg-normal', '5');
-  await page.click('#deviceDetailView [data-action="saveDeviceDetail"]');
-  await page.waitForTimeout(1200);
+  await saveDeviceEditor(page);
   // an untouched form sends nothing at all (FINDINGS PROD-1)
+  await openDev(page, 'rs', 'edit');
   const p1 = page.reqs.length;
-  await page.click('#deviceDetailView [data-action="saveDeviceDetail"]');
+  await editorSettled(page);
+  await page.click('#devEditSave', { force: true });
   await page.waitForTimeout(800);
   check('edit: a save with no change says so and sends nothing',
-        /Nothing to save/.test(await page.locator('#ddvFeedback').innerText())
+        /No changes/.test(await page.locator('#devEditSummary').innerText())
         && !page.reqs.slice(p1).some(r => r.method !== 'GET' && /\/api\/devices\/rs/.test(r.url)),
-        await page.locator('#ddvFeedback').innerText());
+        await page.locator('#devEditSummary').innerText());
+  await closeDeviceEditor(page);
 
-  // ── Unit ID: one rule, said at the field (D11) ──
-  await page.evaluate(() => window.app.openDeviceWizard());
-  await page.waitForSelector('#devWizHost');
-  await page.fill('#devWizHost', '127.0.0.1');
-  await page.fill('#devWizUnit', '');
+  // ── Unit ID: one rule, said at the field (D11) — Add's Connection step (L3.9) ──
+  await openAdd(page);
+  await page.click('[data-ad-way="connection"]');
+  await answer(page, 'PortKind', 'ethernet');
+  await answer(page, 'Reach', 'address').catch(() => {});
+  await fill(page, 'Host', '127.0.0.1');
+  await page.fill('#csAddUnit', '');
   const w0 = page.reqs.length;
-  await page.evaluate(() => window.app.devWizardNext());
+  await page.click('#addDevNext');
   await page.waitForTimeout(500);
-  check('wizard: a blank Unit ID is said at the field, nothing sent',
-        (await page.getAttribute('#devWizUnit', 'aria-invalid')) === 'true'
-        && /0–255/.test(await page.locator('#devWizBody').innerText())
+  check('Add: a blank Unit ID is said at the field, nothing sent',
+        (await page.getAttribute('#csAddUnit', 'aria-invalid')) === 'true'
+        && /0–255/.test(await page.locator('#addDeviceContent').innerText())
         && !page.reqs.slice(w0).some(r => r.method === 'POST' && /\/api\/devices/.test(r.url)));
   // unit 0 through a gateway is 0, not 1
-  await page.selectOption('#devWizGw', 'gw::15998');
+  await answer(page, 'Reach', 'bridge');
+  await page.selectOption('#csAddBus', 'gw::15998');
   await page.waitForTimeout(400);
-  await page.fill('#devWizUnit', '0');
+  await page.fill('#csAddUnit', '0');
+  await page.locator('#csAddUnit').blur();
+  await answer(page, 'Role', 'poll').catch(() => {});
   const w1 = page.reqs.length;
-  await page.evaluate(() => window.app.devWizardNext());
+  await page.click('#addDevNext');
   await page.waitForTimeout(800);
   const sent = page.reqs.slice(w1).find(r => r.method === 'POST' && /\/api\/devices\?dry_run=true/.test(r.url));
-  check('wizard: unit 0 through a gateway is sent as 0', sent && JSON.parse(sent.body).connection.unit_id === 0, sent?.body);
-  check('wizard: a valid connection goes on to step 2', await page.evaluate(() => window.app._devWiz.step) === 2);
+  check('Add: unit 0 through a gateway is sent as 0', sent && JSON.parse(sent.body).connection.unit_id === 0, sent?.body);
+  check('Add: a valid connection goes on (By connection: the model next)', await step(page) === 'what');
 
-  // ── the gateway's refusal on step 1, at its field (D12) ──
-  await page.evaluate(() => { window.app._devWiz.step = 1; Object.assign(window.app._devWiz.cf, { mode: 'rtu-tcp', bridge: '', bridge_port: null }); window.app._devWizRender(); });
-  await page.waitForSelector('#devWizBridge');
-  await page.fill('#devWizUnitBr', '2');                    // unit 2 on ws:15996 is hp's
-  await page.evaluate(() => window.app.devWizardNext());
+  // ── the gateway's refusal on the Connection step, at its field (D12) ──
+  await page.click('#addDevBack');
+  await answer(page, 'PortKind', 'serial');
+  await answer(page, 'Reach', 'bridge');
+  await page.selectOption('#csAddBus', 'ws::15996');
+  await page.waitForTimeout(400);
+  await answer(page, 'Role', 'poll').catch(() => {});
+  await page.fill('#csAddUnit', '2');                       // unit 2 on ws:15996 is hp's
+  await page.locator('#csAddUnit').blur();
+  await page.click('#addDevNext');
   await page.waitForTimeout(800);
-  check('wizard: a unit already on that bus is refused on step 1, at the unit',
-        await page.evaluate(() => window.app._devWiz.step) === 1
-        && (await page.getAttribute('#devWizUnitBr', 'aria-invalid')) === 'true'
-        && /already read by device 'hp'/.test(await page.locator('#devWizBody').innerText()));
+  check('Add: a unit already on that bus is refused on the Connection step, at the unit',
+        await step(page) === 'connection'
+        && (await page.getAttribute('#csAddUnit', 'aria-invalid')) === 'true'
+        && /already read by device 'hp'/.test(await page.locator('#addDeviceContent').innerText()));
 
   // ── no scan hint beside a bridge picker (D20) ──
-  check('wizard: with bridges, "press Scan" is not shown', !(await page.locator('text=press Scan').isVisible()));
-  await page.evaluate(() => window.app.closeModal('deviceWizardModal'));
+  check('Add: with bridges, "press Scan" is not shown', !(await page.locator('text=press Scan').isVisible()));
+  await page.evaluate(() => { window.app._ad.done = true; window.app.closeModal('addDeviceModal'); });
 
-  // ── the bridge card's move opens the device's Edit tab (D19) ──
+  // ── a bridge card's device: its ⋯ → Edit connection… (D19; L3.3: the
+  // device page's own menu, one builder) opens its connection editor ──
   await page.evaluate(() => window.app.navigateTo('devices', { fromNav: true }));
-  await page.waitForSelector('.bridge-card .bridge-move');
-  await page.locator('.bridge-card[data-bridge="ws"] .bridge-move').first().click();
+  await page.waitForSelector('.bridge-card [data-dev-menu]');
+  await page.locator('.bridge-card[data-bridge="ws"] [data-dev-menu]').first().click();
+  await page.locator('.bridge-card[data-bridge="ws"] .mbg-menu:not([hidden]) [data-ddv-act="connection"]').click();
   await page.waitForTimeout(1000);
-  check('bridge: move opens the device page on Edit, no wizard',
-        await page.locator('#deviceWsTabs .config-main-tab.active[data-dtab="connection"]').count() === 1
-        && !(await page.locator('#deviceWizardModal.active').count()));
-  const busOpts = await page.locator('#ddvBridge option').allInnerTexts();
+  check('bridge: Edit connection… opens the device page and its Edit modal at Connection, no wizard',
+        await page.locator('#devEditModal.active').count() === 1 && await page.locator('#ddvConn').isVisible()
+        && !(await page.locator('#addDeviceModal.active').count()));
+  const busOpts = await page.locator('#ddvBus option').allInnerTexts();
   check('edit: a bridged device can pick another bus of the same kind',
         busOpts.length >= 1 && busOpts.every(o => !/Meter gateway/.test(o)), busOpts.join(' | '));
 
@@ -202,10 +238,12 @@ try {
   for (const id of ['umg512', 'hp', 'rs', 'asc', 'udp', 'gx', 'gwm']) {
     await openDev(page, id, 'edit');
     const p2 = page.reqs.length;
-    await page.click('#deviceDetailView [data-action="saveDeviceDetail"]');
+    // the Edit modal (the primary too, L3.11b)
+    const modal = await editorModalOpen(page);
+    if (modal) { await editorSettled(page); await page.click('#devEditSave', { force: true }); }
     await page.waitForTimeout(600);
-    const fbText = await page.locator('#ddvFeedback').innerText();
-    const sent = page.reqs.slice(p2).some(r => r.method === 'PUT' && r.url.endsWith(`/api/devices/${id}`));
+    const fbText = modal ? await page.locator('#devEditSummary').innerText() : 'no Edit device modal';
+    const sent = savesOf(p2, id).length > 0;
     const first = await page.evaluate(async did => {
       const s = window.app._devDetail;
       const r = await fetch(`/api/devices/${encodeURIComponent(did)}`, {
@@ -214,53 +252,54 @@ try {
       return r.json();
     }, id);
     check(`unchanged save, ${id}: nothing sent; the form's payload is a no-op on the first save`,
-          !sent && /Nothing to save/.test(fbText) && first.status === 'unchanged',
+          !sent && /Nothing to save|No changes/.test(fbText) && first.status === 'unchanged',
           `${fbText} / ${JSON.stringify(first).slice(0, 90)}`);
   }
 
-  // ── an enabled device that is not running: Save offers Reconnect, and
-  // only Reconnect sends (the PUT is answered here: nothing changes) ──
+  // ── an enabled device that is not running: a Save with nothing changed
+  // sends nothing; only Reconnect (the header's, ⋯'s) sends the device
+  // (the PUT is answered here: nothing changes) ──
   await openDev(page, 'rs', 'edit');
-  await page.evaluate(() => {
-    const s = window.app._devDetail;
-    document.getElementById('ddvEnabled').checked = true;
-    s.orig.enabled = true;
-    s.running = false;
-  });
   let reconnectPut = 0;
   await page.route(/\/api\/devices\/rs$/, r => {
-    if (r.request().method() !== 'PUT') return r.continue();
+    if (!['PUT', 'PATCH'].includes(r.request().method())) return r.continue();
     reconnectPut++;
     return r.fulfill({ json: { status: 'updated', device: {} } });
   });
-  await page.click('#deviceDetailView [data-action="saveDeviceDetail"]');
+  await editorSettled(page);
+  await page.click('#devEditSave', { force: true });
   await page.waitForTimeout(500);
-  const offered = await page.locator('#ddvReconnect').isVisible();
-  check('not running: Save sends nothing and offers Reconnect', offered && reconnectPut === 0,
-        await page.locator('#ddvFeedback').innerText());
-  await page.click('#ddvReconnect');
+  check('not running: the modal\'s Save with nothing changed sends nothing', reconnectPut === 0,
+        await page.locator('#devEditSummary').innerText());
+  await closeDeviceEditor(page);
+  await page.evaluate(() => { window.app._devDetail.running = false; return window.app.ddvReconnect('rs'); });
   await page.waitForTimeout(800);
   check('Reconnect sends the device again', reconnectPut === 1, String(reconnectPut));
   await page.unroute(/\/api\/devices\/rs$/);
 
-  // ── an interval-only change on the primary meter: no device save, so no
-  // reconnect (only the poll groups are sent) ──
+  // ── an interval-only change on the primary meter (L3.11b: in the Edit
+  // modal): one PATCH with the intervals alone — no connection, so no
+  // reconnect; no POST of its own to /poll-groups ──
   await openDev(page, 'umg512', 'edit');
-  await page.waitForSelector('#deviceDetailView .ddv-pg');
-  const pgId = await page.locator('#deviceDetailView .ddv-pg').first().getAttribute('id');
-  const was = await page.inputValue(`#${pgId}`);
-  await page.fill(`#${pgId}`, String(Number(was) + 1));
-  const q0 = page.reqs.length;
-  await page.click('#deviceDetailView [data-action="saveDeviceDetail"]');
-  await page.waitForTimeout(1500);
-  const sentP = page.reqs.slice(q0).filter(r => r.method !== 'GET');
-  check('primary: an interval-only change sends no device PUT, only the intervals',
-        !sentP.some(r => r.method === 'PUT') && sentP.some(r => r.method === 'POST' && /\/poll-groups$/.test(r.url))
-        && /Intervals applied/.test(await page.locator('#ddvFeedback').innerText()),
-        sentP.map(r => `${r.method} ${r.url.replace(BASE, '')}`).join(', '));
-  await page.fill(`#${pgId}`, was);
-  await page.click('#deviceDetailView [data-action="saveDeviceDetail"]');
-  await page.waitForTimeout(1200);
+  if (await editorModalOpen(page)) {
+    await editorSection(page, 'polling');
+    await page.waitForSelector('#devEditModal .ddv-pg');
+    const pgId = await page.locator('#devEditModal .ddv-pg').first().getAttribute('id');
+    const was = await page.inputValue(`#${pgId}`);
+    await page.fill(`#${pgId}`, String(Number(was) + 1));
+    const q0 = page.reqs.length;
+    const r = await saveDeviceEditor(page);
+    const sentP = page.reqs.slice(q0).filter(x => x.method !== 'GET' && !/dry_run/.test(x.url));
+    const body = JSON.parse((sentP.find(x => x.method === 'PATCH') || {}).body || '{}');
+    check('primary: an interval-only change is one PATCH of the intervals alone (no connection: no reconnect), no POST to /poll-groups',
+          r && r.ok() && sentP.length === 1 && body.sections && body.sections.polling && !body.sections.connection
+          && !sentP.some(x => /\/poll-groups$/.test(x.url)),
+          sentP.map(x => `${x.method} ${x.url.replace(BASE, '')} ${x.body || ''}`).join(', '));
+    await openDev(page, 'umg512', 'edit');
+    await editorSection(page, 'polling');
+    await page.fill(`#${pgId}`, was);
+    await saveDeviceEditor(page);
+  } else check('primary: the Edit device modal opens', false);
 
   // ── a component's page (D17) ──
   await openDev(page, 'gx-battery-288');
@@ -269,18 +308,67 @@ try {
   const inMenu = await page.locator('#ddvActionsMenu [role=menuitem]:has-text("Open device")').count();
   check('component: one "Open device"', inBody === 0 && inMenu === 1, `${inBody}+${inMenu}`);
   check('component: its type by name', /Battery 288/.test(await page.locator('#deviceDetailView [data-component-of]').innerText()));
-  await page.evaluate(() => window.app._switchDeviceTab('edit'));
-  await page.waitForTimeout(300);
-  page.dlg.answers.push('Shunt bank');
-  await page.locator('#deviceDetailView [data-dpanel="connection"] [data-action="renameComponentUi"]').click();
-  await page.waitForTimeout(1500);
-  check('component: Rename in the page\'s dialog, the page shows the new name',
-        page.dlg.native === 0 && /Shunt bank/.test(await page.locator('#deviceDetailView h2').innerText()));
+  // ⋯ → Rename… (L3.10: the component's actions are menu items, from any
+  // surface) — the Edit device modal at its Identity (L3.11b)
+  const renameInModal = async name => {
+    await page.waitForSelector('#devEditModal.active #ddvName');
+    await page.fill('#ddvName', name);
+    return saveDeviceEditor(page);
+  };
+  await deviceAction(page, '[data-ddv-act="rename"]');
+  const rn = await renameInModal('Shunt bank');
+  await page.waitForTimeout(800);
+  check('component: Rename in the Edit device modal (its device\'s route), the page shows the new name',
+        page.dlg.native === 0 && rn && rn.ok() && /\/api\/devices\/gx\/components\/gx-battery-288$/.test(rn.url())
+        && /Shunt bank/.test(await page.locator('#deviceDetailView h2').innerText()));
+
+  // ── a component from the list's ⋯, no page open (L3.10 review B1) ──
+  const compRow = async () => (await api('/api/devices')).devices.find(d => d.id === 'gx-battery-288') || {};
+  const rowItem = async item => {
+    await page.evaluate(() => window.app.closeDeviceDetail(true));
+    await page.waitForSelector('#devicesList [data-dev-menu="gx-battery-288"]');
+    await page.click('#devicesList [data-dev-menu="gx-battery-288"]');
+    await page.waitForSelector('#devMenu-list-gx-battery-288:not([hidden])');
+    await page.click(`#devMenu-list-gx-battery-288 [data-ddv-act="${item}"]`);
+    await page.waitForTimeout(1500);
+  };
+  await rowItem('rename');
+  await renameInModal('Shunt bank B');
+  check('list ⋯: Rename… of a component (no page open): its page, the modal; renamed', (await compRow()).name === 'Shunt bank B', (await compRow()).name);
+  // the fixture's component is under a parent that is off: its Enable is
+  // held, saying so (L3.10-F9); with its parent on, Disable… then Enable
+  // from the row, then its parent off again, as it was
+  check('list ⋯: a component under a device that is off — Enable held, its device named', await (async () => {
+    await page.evaluate(() => window.app.closeDeviceDetail(true));
+    await page.click('#devicesList [data-dev-menu="gx-battery-288"]');
+    await page.waitForSelector('#devMenu-list-gx-battery-288:not([hidden])');
+    const it = page.locator('#devMenu-list-gx-battery-288 [data-ddv-act="enable"]');
+    const ok = (await it.getAttribute('aria-disabled')) === 'true' && /is off/.test(await it.innerText());
+    await page.keyboard.press('Escape');
+    return ok;
+  })());
+  const putGx = on => fetch(BASE + '/api/devices/gx', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ enabled: on }) });
+  await putGx(true);
+  await page.evaluate(() => window.app.renderDevicesList());
+  await rowItem('disable');
+  check('list ⋯: Disable… of a component disables it (no page open)', (await compRow()).enabled === false);
+  check('list ⋯: …and the list is drawn again (its ⋯ now offers Enable)', await (async () => {
+    await page.click('#devicesList [data-dev-menu="gx-battery-288"]');
+    await page.waitForSelector('#devMenu-list-gx-battery-288:not([hidden])');
+    const has = await page.locator('#devMenu-list-gx-battery-288 [data-ddv-act="enable"]:not([aria-disabled="true"])').count() === 1;
+    await page.keyboard.press('Escape');
+    return has;
+  })());
+  await rowItem('enable');
+  check('list ⋯: Enable of a component enables it', (await compRow()).enabled === true);
+  await putGx(false);
+  await rowItem('rename');
+  await renameInModal('Shunt bank');
 
   // ── deleting a parent names its components (D18) ──
   await openDev(page, 'gx');
   page.dlg.answers.push(false);
-  await deviceAction(page, '[data-action="deleteDevice"]');
+  await deviceAction(page, '[data-ddv-act="delete"]');
   await page.waitForTimeout(500);
   const seen = page.dlg.seen[page.dlg.seen.length - 1] || {};
   check('delete: a parent\'s dialog names its components', /component goes with it/.test((seen.details || []).join(' ')) && /Shunt bank/.test((seen.details || []).join(' ')),
@@ -315,7 +403,7 @@ try {
   // ── delete from the device page leaves it (D6) ──
   await openDev(page, 'udp');
   page.dlg.answers.push(true);
-  await deviceAction(page, '[data-action="deleteDevice"]');
+  await deviceAction(page, '[data-ddv-act="delete"]');
   await page.waitForTimeout(1500);
   check('delete: back on the list, the row gone',
         await page.locator('#devicesListView').isVisible() && !(await page.locator('#deviceDetailView').isVisible())
@@ -333,7 +421,7 @@ try {
     check(`${role}: Run ${role === 'operator' ? 'shown' : 'hidden'}`, role === 'operator' ? run > 0 : run === 0, String(run));
     await rp.evaluate(() => window.app.openDeviceDetail('gx-battery-288').then(() => window.app._switchDeviceTab('edit')));
     await rp.waitForTimeout(600);
-    check(`${role}: no component Rename / Remove`, !(await rp.locator('#deviceDetailView [data-action="renameComponentUi"]:visible, #deviceDetailView [data-action="removeComponentUi"]:visible').count()));
+    check(`${role}: no component Rename / Remove (in its ⋯ or anywhere)`, !(await rp.locator('#ddvActionsMenu [data-ddv-act="rename"], #ddvActionsMenu [data-ddv-act="delete"], #deviceDetailView [data-action="renameComponentUi"]:visible, #deviceDetailView [data-action="removeComponentUi"]:visible').count()));
     await rp.evaluate(() => window.app.openDeviceDetail('rs'));
     await rp.waitForTimeout(600);
     check(`${role}: no Save & Apply, no Delete`, !(await rp.locator('#deviceDetailView [data-action="saveDeviceDetail"]:visible, #deviceDetailView [data-action="deleteDevice"]:visible').count()));
@@ -344,11 +432,28 @@ try {
   // ── on a phone: bridge fields full width (D20) ──
   const phone = await open({ width: 390, height: 844 });
   await phone.evaluate(() => window.app.openDeviceWizard(null, { protocol: 'rtu-tcp', bridge: 'ws', bridge_port: 15996, unit_id: 4 }));
-  await phone.waitForSelector('#devWizBridge');
-  const w = await phone.evaluate(() => document.getElementById('devWizBridge').getBoundingClientRect().width);
+  await phone.waitForSelector('#csAddBus');
+  const w = await phone.evaluate(() => document.getElementById('csAddBus').getBoundingClientRect().width);
   check('phone: the bridge picker is full width', w >= 300, String(w));
   if (OUT) await phone.screenshot({ path: `${OUT}/devices-phone-bridge.png` });
   await phone.close();
+
+  // ── Remove… of a component from the table view's ⋯, no page open (L3.10 review B1) ──
+  const tp = await open();
+  await tp.evaluate(() => { location.hash = '#/devices?view=list'; });
+  await tp.waitForSelector('.find-table [data-dev-menu="gx-battery-288"]');
+  await tp.click('.find-table [data-dev-menu="gx-battery-288"]');
+  await tp.waitForSelector('#devMenu-table-gx-battery-288:not([hidden])');
+  await tp.waitForFunction(() => !document.querySelector('#devMenu-table-gx-battery-288 .is-checking'));
+  tp.dlg.answers.push(true);
+  await tp.click('#devMenu-table-gx-battery-288 [data-ddv-act="delete"]');
+  await tp.waitForTimeout(2000);
+  const asked = tp.dlg.seen[tp.dlg.seen.length - 1] || {};
+  check('table ⋯: Remove… of a component asks first, then removes it (no page open)',
+        /Remove component/.test(asked.title || '') && !(await api('/api/devices')).devices.some(d => d.id === 'gx-battery-288'),
+        JSON.stringify(asked).slice(0, 200));
+  check('no page errors (table)', tp.errs.length === 0, tp.errs.join(' | '));
+  await tp.close();
 } catch (e) {
   check('ran to the end', false, String(e));
 } finally {

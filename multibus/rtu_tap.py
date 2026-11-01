@@ -1,5 +1,5 @@
 # Multi-Bus Gateway — multi-protocol Modbus/HTTP/MQTT acquisition gateway.
-# Copyright (C) 2024-2026 Stefan Maldaianu <sm26449@diysolar.ro>  — AGPL-3.0-or-later
+# Copyright (C) 2024-2026 Stefan Maldaianu <stefan@multibus.dev>  — AGPL-3.0-or-later
 """Listen-only Modbus RTU tap: read a bus someone ELSE is mastering.
 
 A classic Modbus RTU bus has exactly one master. Plenty of valuable buses
@@ -154,6 +154,9 @@ class RtuFramer:
         return self._extract(final=True)
 
 
+ALL_UNITS = -1          # observe(ALL_UNITS, w): w._heard(unit, fc, kind, detail, now) for every frame
+
+
 class TapReader:
     """One serial port, one reader thread, many per-unit clients."""
 
@@ -171,10 +174,14 @@ class TapReader:
         # carries — the framing is CRC-driven, so TCP's lost gaps do not matter
         self.host = str(getattr(conn_cfg, 'host', '') or '') if not getattr(conn_cfg, 'serial_port', '') else ''
         self.tcp_port = int(getattr(conn_cfg, 'port', 0) or 0)
+        self.adapter = str(getattr(conn_cfg, 'adapter', '') or '')   # bridge_guard.py
         self.port = conn_cfg.serial_port or f"{self.host}:{self.tcp_port}"
         self.line = self.line_of(conn_cfg)
         self.baudrate, self.parity, self.stopbits, self.bytesize = self.line
         self._clients: Dict[int, 'RtuTapClient'] = {}
+        # receive-only listeners beside the devices (the read preview): never
+        # displace a unit's device, and keep the port open while they listen
+        self._observers: Dict[int, List[Any]] = {}
         self._pending: Dict[int, Tuple[int, int, int, float]] = {}  # unit -> (fc, addr, count, t)
         # learned window shapes: (fc, byte_count) -> start address. On a
         # multi-drop bus the MASTER device answers no requests — it emits its
@@ -212,7 +219,28 @@ class TapReader:
     def unregister(self, unit_id: int) -> None:
         with self._lock:
             self._clients.pop(unit_id, None)
-            if not self._clients:
+            if not self._clients and not self._observers:
+                self._stop_locked()
+
+    def observe(self, unit_id: int, observer: Any) -> bool:
+        """Hear ``unit_id``'s windows too (``observer._ingest_window``), beside
+        whatever device reads that unit — the read preview (ADR-0031 §5). The
+        port is opened when nobody had it open, and stays open until the last
+        device or observer leaves: a reference count. Nothing is written."""
+        with self._lock:
+            self._observers.setdefault(int(unit_id), []).append(observer)
+            if self._thread is None:
+                return self._start_locked()
+            return bool(self.host) or self._serial is not None
+
+    def unobserve(self, unit_id: int, observer: Any) -> None:
+        with self._lock:
+            lst = self._observers.get(int(unit_id)) or []
+            if observer in lst:
+                lst.remove(observer)
+            if not lst:
+                self._observers.pop(int(unit_id), None)
+            if not self._clients and not self._observers and self._thread is not None:
                 self._stop_locked()
 
     def _start_locked(self) -> bool:
@@ -220,7 +248,7 @@ class TapReader:
             # over the network: the wire loop connects (and reconnects) itself
             self.open_error = ""
             self._stop = threading.Event()         # this loop's own: an old one never resumes
-            self._serial = _TcpSource(self.host, self.tcp_port)
+            self._serial = _TcpSource(self.host, self.tcp_port, self.adapter)
             self._thread = threading.Thread(target=self._run, daemon=True,
                                             name=f"rtu-tap:{self.port}")
             self._thread.start()
@@ -434,12 +462,19 @@ class TapReader:
     def _note(self, now: float, unit: int, fc: int, kind: str, detail: str = "") -> None:
         self.recent.append({'t': time.time(), 'unit': unit, 'fc': fc,
                             'kind': kind, 'detail': detail})
+        # every frame to whoever hears the whole bus (Listen for addresses,
+        # bus_scan.py): observe(ALL_UNITS, watcher) — receive-only like any observer
+        for w in list(self._observers.get(ALL_UNITS) or ()):
+            try:
+                w._heard(unit, fc, kind, detail, now)
+            except Exception as e:  # noqa: BLE001 — a watcher's bug must not kill the reader
+                logger.error("rtu_tap %s: a bus watcher failed — %s", self.port, e)
 
     def _dispatch(self, unit: int, addr: int, words: List[int], now: float, fc: int = 3) -> None:
         client = self._clients.get(unit)
-        if client:
+        for c in ([client] if client else []) + list(self._observers.get(unit) or ()):
             try:
-                client._ingest_window(addr, words, now, _FC_TABLE.get(fc, 'holding'))
+                c._ingest_window(addr, words, now, _FC_TABLE.get(fc, 'holding'))
             except Exception as e:  # noqa: BLE001 — a decode bug must not kill the reader
                 logger.error("rtu_tap %s unit %d: ingest failed — %s", self.port, unit, e)
 
@@ -474,13 +509,18 @@ class _TcpSource:
     returns what arrived within 50 ms (b"" on a quiet bus), connecting first
     when needed. The tap only ever reads — it never writes to the bus."""
 
-    def __init__(self, host: str, port: int):
-        self.host, self.port = host, port
+    def __init__(self, host: str, port: int, adapter: str = ""):
+        self.host, self.port, self.adapter = host, port, adapter
         self._sock = None
 
     def read(self, n: int) -> bytes:
         import socket
+        from . import bridge_guard
         if self._sock is None:
+            # through our serial bridge: only the bus this tap was bound to
+            if not bridge_guard.allow(self):
+                st = bridge_guard.state(self.host, self.port) or {}
+                raise ConnectionError(st.get("detail") or "the bridge serves another adapter here")
             self._sock = socket.create_connection((self.host, self.port), timeout=5)
             self._sock.settimeout(0.05)
         try:
@@ -505,8 +545,15 @@ _READERS_LOCK = threading.Lock()
 
 
 def _reader_key(conn_cfg) -> str:
+    # one line under several names (a by-id link, a udev alias) is one
+    # reader: the tty opens once (ADR-0025, ADD-15)
+    from .bus_claims import canonical_serial
     sp = getattr(conn_cfg, 'serial_port', '') or ''
-    return sp or f"tcp:{getattr(conn_cfg, 'host', '')}:{getattr(conn_cfg, 'port', 0)}"
+    if sp:
+        return canonical_serial(sp)
+    # a host in another case is the same bridge (the bus claims' key)
+    host = str(getattr(conn_cfg, 'host', '') or '').strip().lower()
+    return f"tcp:{host}:{int(getattr(conn_cfg, 'port', 0) or 0)}"
 
 
 def reader_for(conn_cfg) -> TapReader:
@@ -518,7 +565,7 @@ def reader_for(conn_cfg) -> TapReader:
     key = _reader_key(conn_cfg)
     with _READERS_LOCK:
         r = _READERS.get(key)
-        if r is None or (not r._clients and r.line != TapReader.line_of(conn_cfg)):
+        if r is None or (not r._clients and not r._observers and r.line != TapReader.line_of(conn_cfg)):
             r = _READERS[key] = TapReader(conn_cfg)
         return r
 

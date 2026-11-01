@@ -172,24 +172,159 @@ Deschide `http://<host>:8080`. Navigarea de sus:
   dispozitiv sare peste prezentare și se deschide direct pe dispozitiv.
 - **Dispozitive** — fiecare sursă, cu starea ei live, grupate pe
   instalație. Găsești una cu căsuța de căutare (`/` sare la ea) și cu
-  filtrele: *tip* (contor, invertor, baterie, pompă de căldură…, dedus din
-  șablon și din rolul dispozitivului), *stare*, *protocol*. Tot aici sunt
-  asistentul **Adaugă dispozitiv**, **Adaugă instalație** (§5b),
+  filtrele: *tip* (contor, invertor, baterie, pompă de căldură… și tipurile
+  tale, §5c), *etichetă*, *stare*, *protocol*. Tot aici sunt **Adaugă
+  dispozitiv** (§5.2), **Adaugă instalație** (§5b),
   **Descoperă dispozitive** și **bridge-urile** (cutiile prin care se ajunge
-  la o magistrală serială). Un dispozitiv deschis are pagina lui, cu filele
-  în trei grupuri:
+  la o magistrală serială). Un dispozitiv deschis are pagina lui — ea
+  **observă și operează, nu editează**. Antetul spune dispozitivul într-o
+  linie tehnică, aceeași pe care o spun rândul lui din listă și cardul
+  bridge-ului, de ex. `Modbus RTU · /dev/ttySC1 · 9600 8E1 · unit 1 · Master
+  · 2 s/10 s` (un dispozitiv MQTT: brokerul, portul și TLS — topicul rămâne
+  ••••). Lângă ea: lacătul de scriere (*scrieri blocate* / *scrieri
+  permise*), fiecare ieșire pornită sau oprită, în cuvinte, și legături
+  *prin* spre bridge-ul, dispozitivul părinte sau instalația prin care e
+  atins. Butoanele din antet doar operează: **Test**, **Previzualizare**
+  (de la operator în sus) și, unde dispozitivul le are, **Rulează
+  comanda…** și **Scrie…**. Unul care nu poate rula acum rămâne, inactiv, și
+  spune de ce (de exemplu *Scrieri blocate — întâi Deblochează
+  scrierile…*). Filele, în patru grupuri:
   - *Live* — *Prezentare* (ce citește acum, sănătatea datelor, ultima
     citire), *Istoric*, *Energie* și *Calitatea energiei* la un contor care o
     înregistrează;
-  - *Configurare* — *Conexiune* (adresa, șablonul, cât de des citește; o
-    unitate dintr-o instalație arată în loc *Citită prin*, setată pe
-    instalație), *Măsurători* (ce se citește), *Calculate*, *Comenzi*
-    (§14b), *Contoare* (§5.4), *Ieșiri*, *Atribute* (§5c);
+  - *Date* — *Măsurători* (ce se citește, cu valorile live), *Calculate*,
+    *Comenzi* (§14b: le rulezi și le testezi);
+  - *Configurare* — ce i se spune dispozitivului, **doar în citire și pentru
+    orice rol**, inclusiv vizitatorul: conexiunea (cu ce nu se poate schimba
+    și de ce), interogarea, identitatea și atributele, ieșirile, scrierile,
+    contoarele; o valoare egală cu cea implicită spune *(implicit)*;
   - *Diagnostic* — *Monitor* (cadrele lui pe fir) și *Jurnal* (evenimentele
     lui de achiziție).
 
-  Meniul ⋯ ține ce se face *asupra* dispozitivului: tipul, Dezactivează,
-  Șterge. Un dispozitiv pe care ceva îl folosește — o regulă, un contor
+  Tot ce schimbă dispozitivul e în **meniul ⋯**. E un singur meniu, același
+  în pagina dispozitivului, pe rândul lui din listă, pe cardul unui bridge și
+  pe rândul unei unități dintr-o instalație, și îl vede orice rol. Grupurile
+  lui sunt fixe și mereu în această ordine, despărțite de o linie:
+
+  | Grup | Elemente |
+  |---|---|
+  | Operare | **Test**, **Previzualizare**, **Reconectează**, **Rulează o comandă…**, **Scrie o valoare…** |
+  | Editare | **Editează dispozitivul…**, **Editează conexiunea…**, **Interogare…**, **Ieșiri…**, **Linia magistralei…** (un dispozitiv pe o magistrală serială), **Redenumește…** (o unitate sau o componentă) |
+  | Date | **Măsurători…**, **Descarcă harta**, **Calculate…**, **Comenzi și legări…**, **Contoare…** (§5.4), **Componente…**, **Actualizează din șablon…** |
+  | Dispozitiv | **Tip: <tip>…**, **Despre (atribute)…** (§5c), **Duplică…**, **Deschide instalația** (o unitate) / **Deschide dispozitivul** (o componentă), **Arată setările** |
+  | Siguranță | **Deblochează scrierile…** (întreabă întâi) / **Blochează scrierile** (imediat), **Dezactivează…** / **Activează** |
+  | Pericol | **Șterge…** (o componentă: **Elimină…**) |
+  | — | **Dispozitive șterse: restaurează…** (rândul de încheiere, §5.2) |
+
+  Vizitatorul vede **Descarcă harta**, **Arată setările** și elementele
+  *Deschide*; operatorul și **Test**, **Previzualizare**, **Rulează o
+  comandă…** și **Scrie o valoare…**; administratorul vede tot. Un element
+  pe care rolul tău îl poate folosi e mereu acolo pentru acel fel de
+  dispozitiv. Când nu poate rula acum e inactiv, cu un rând despre de ce —
+  aceleași fapte pe care le verifică gateway-ul — iar alegerea lui te duce
+  acolo unde se schimbă asta: *Scrieri blocate — întâi Deblochează
+  scrierile…*, *E dezactivat: întâi Activează*, *Setat pe instalația X*,
+  *Folosit de 2 — vezi Folosit de*, *Contorul principal este interogat
+  mereu*. Cât timp gateway-ul încă e întrebat (ce folosește dispozitivul,
+  dacă i s-a schimbat șablonul) elementul spune *se verifică…*; meniul nu
+  se rearanjează niciodată. E un meniu de tastatură: săgeți, Home/End, Esc
+  înapoi la ⋯.
+
+  Tasta **E** (un administrator, fără focus într-un câmp) deschide editorul
+  a ce e pe ecran, iar meniul marchează acel element cu *E*: editorul
+  propriu al unei file de date (Măsurători, Calculate, Comenzi), al unei
+  secțiuni din *Configurare*, altfel **Editează conexiunea…** (un dispozitiv
+  măsurat de contoare: identitatea lui).
+
+  **Dialogul de editare a dispozitivului.** **Editează dispozitivul…**,
+  **Editează conexiunea…**, **Interogare…**, **Tip: <tip>…**, **Ieșiri…** și
+  **Redenumește…** deschid un singur dialog, la secțiunea pe care o numesc
+  (**E**: secțiunea de pe ecran). Secțiunile, într-o bară în stânga (pe
+  telefon, o listă din care alegi): *Model* (șablonul; o schimbare
+  repornește achiziția), *Conexiune* (același formular ca la Adaugă
+  dispozitiv; un câmp pe care îl decide magistrala, bridge-ul sau șablonul
+  apare marcat, cu motivul, și își păstrează valoarea), *Interogare*
+  (achiziția pornită/oprită și intervalul fiecărui grup de interogare — un
+  interval se aplică imediat), *Identitate* (numele, tipul cu **+ Adaugă
+  tip…**, id-ul fix, apoi descrierea, unde e, etichetele și plăcuța) și
+  *Ieșiri* (mai jos). Cât editezi nu se trimite nimic: fiecare modificare,
+  inclusiv comutatoarele ieșirilor, așteaptă, iar bara marchează secțiunile
+  schimbate. Subsolul spune ce ar face un singur **Salvează**, verificat cu
+  gateway-ul (o probă fără salvare) pe măsură ce scrii: *2 modificări · se
+  aplică din mers* sau *1 modificare · repornește achiziția* — iar atunci
+  butonul devine **Salvează și repornește achiziția**. **Arată modificările**
+  listează fiecare setare, salvat → după salvare (secretele mascate). Un
+  refuz e spus la câmpul lui și listat sus, fiecare rând un link spre câmp.
+  Înaintea unei schimbări care contează pe o magistrală sau pentru un
+  consumator — Master ↔ Listen-only, mutarea pe altă magistrală (port serial,
+  bridge, adaptor, legătură CAN, adresa unui dispozitiv Modbus TCP/UDP, a unui
+  tap sau a unui convertor), schimbarea șablonului, o ieșire oprită, achiziția
+  oprită — pagina întreabă întâi și le enumeră. Dacă dispozitivul a fost
+  schimbat în altă parte de când ai deschis dialogul (alt tab, API-ul), nu
+  se salvează nimic: dialogul o spune, citește versiunea salvată, pune
+  modificările tale peste ea, marchează fiecare câmp schimbat de amândoi
+  (*Modificarea dvs., păstrată. Salvat acum: …*) și așteaptă din nou
+  **Salvează**; de obicei proba fără salvare găsește asta înainte să apeși
+  **Salvează**. **Esc**, **✕**, **Anulează**, **Înapoi**, un link și o
+  reîncărcare întreabă înainte să renunțe la modificări nesalvate; cât
+  salvează, dialogul nu poate fi schimbat sau închis, iar o valoare schimbată
+  între timp îl ține deschis (*Salvat.* — salvați din nou). Lacătul de
+  scriere nu face parte din el (are dialogul lui). Orice fel de dispozitiv
+  se editează în acest dialog. Contorul propriu al gateway-ului (primarul)
+  arată secțiunile pe care le primește editarea lui — Conexiune (doar adresa
+  lui Modbus TCP), Interogare (intervalele; e interogat mereu), Identitate
+  și Ieșiri — fiecare câmp fix ținut cu motivul lui și, unde există, calea
+  spre el (comutatorul Home Assistant al gateway-ului: Setări → MQTT).
+  **Identitate** ține, lângă nume și tip, descrierea dispozitivului, unde
+  e, etichetele și plăcuța (atributele lui): un singur **Salvează** le scrie
+  pe toate. Când un Salvează scrie în mai multe locuri (dispozitivul,
+  atributele lui, ieșirile instalației unei unități, înregistratorul PQ) și
+  unul refuză, dialogul spune ce s-a salvat și ce nu, păstrează ce nu s-a
+  salvat și marchează câmpul refuzat.
+
+  O unitate dintr-o instalație se editează în același dialog: numele și
+  atributele sunt ale ei; conexiunea și interogarea spun *setat pe
+  instalația X*, cu calea până acolo. **Ieșirile** ei sunt comune: HTTP/JSON
+  și REST push se setează pe instalație (pentru fiecare unitate), OPC UA și
+  ritmul de publicare pe grupul ei — editate aici, în așteptare, iar
+  rezumatul numește unitățile la care ajunge o schimbare. O componentă se
+  editează tot acolo: numele și pornit/oprit (ținut, cu motivul, cât timp
+  dispozitivul ei e oprit); restul e al dispozitivului ei.
+
+  **Linia magistralei…** (⋯, lacătul liniei din secțiunea *Conexiune* sau
+  conexiunea din fila *Configurare*) setează o singură linie — viteză,
+  paritate, biți de date, biți de stop — pentru **toate** dispozitivele de pe
+  o magistrală serială deodată; o magistrală are o singură linie.
+  **Verifică…** listează dispozitivele care se schimbă și repornesc (o
+  scurtă pauză în citiri), apoi **Aplică și repornește N dispozitive** scrie
+  configurația o singură dată, cu o singură înregistrare de audit. Pe un port
+  al bridge-ului serial MBG, linia portului bridge-ului se setează prin API-ul
+  lui în același pas. Un convertor, un bridge transparent sau un gateway
+  Modbus TCP își păstrează propria linie (*Se setează pe cutie*); o
+  magistrală a cărei linie e setată de o instalație sau de componenta unui
+  dispozitiv o spune și trimite acolo. E refuzată cât timp rulează o
+  scriere spre unul dintre dispozitivele ei. Doar administratorul.
+
+  **Măsurători…** (cu partea *Calculate* și uneltele hărții: Import CSV,
+  Încarcă harta, Descarcă harta, JSON brut) și **Comenzi și legări…** se
+  deschid pe tot ecranul: o bară de editare sus (*Editezi: …*) cu
+  **Salvează** și **Gata**, nimic scris până la Salvează, pagina din spate
+  inaccesibilă. **Esc** înseamnă **Gata**. **Gata** cu modificări nesalvate
+  întreabă întâi (*Renunți la modificări?* — **Continuă editarea** /
+  **Renunță la ele**), la fel orice cale de plecare — Înapoi, un link, o filă
+  de navigare, alt dispozitiv, o reîncărcare; o mutare pune o singură
+  întrebare. Un Salvează care scrie mai multe părți (selecția, valorile
+  calculate, legările comenzilor) și eșuează la una spune ce s-a salvat și
+  ce nu, și păstrează ce nu s-a salvat. Dacă selecția a fost schimbată în
+  altă parte între timp, Salvează o citește din nou, pune schimbările tale
+  peste ea, spune ce rânduri au schimbat amândoi și așteaptă din nou
+  Salvează. Scurtătura tabloului de bord spre măsurătorile unui dispozitiv
+  deschide același editor. **Contoare…** și **Despre…** rămân editoare ale
+  paginii, fiecare cu Salvează al lui. Un link spre o filă care nu mai
+  există (`#/devices/<id>/connection`, `…/outputs`, `…/attributes`,
+  `…/meters`, `…/edit`) deschide *Configurare* la acea secțiune. Un dialog
+  cu modificări nesalvate întreabă înainte ca **Esc** sau **✕** să-l
+  închidă. Un dispozitiv pe care ceva îl folosește — o regulă, un contor
   virtual, un dispozitiv pe care îl măsoară, o formulă care îl numește — nu
   poate fi șters: pagina arată ce îl folosește (*Folosit de*) și oferă în
   loc **Dezactivează**. Scoate întâi acele folosiri; e decizia
@@ -199,27 +334,37 @@ Deschide `http://<host>:8080`. Navigarea de sus:
   și destinația (topic, bucket, câte valori); în dreapta, setările celei
   alese. MQTT și InfluxDB spun și **când** pleacă o valoare — la schimbare
   sau la fiecare citire, cât de des se retrimite una neschimbată (MQTT), cel
-  mult cât de des se scrie un punct (InfluxDB) — ca în Setări sau proprii
+  mult cât de des se scrie un punct și cât de des se rescrie unul neschimbat
+  (InfluxDB, heartbeat-ul lui: *gateway: N s* lângă un câmp gol) — ca în
+  Setări sau proprii
   dispozitivului (unitățile unei instalații le împart pe ale grupului lor).
-  Fiecare comutator se aplică imediat, fără restartul citirii; ce are câmpuri
-  de completat (REST push, valorile OPC UA) se salvează din panoul propriu.
-  Săgețile te mută prin listă; ieșirea deschisă e ținută minte. **Lacătul de
-  scriere** e la *Comenzile* dispozitivului (sau în *Conexiune* când nu are
-  comenzi); **înregistratorul de evenimente PQ** e în fila *Calitatea
-  energiei*.
+  Sunt secțiunea *Ieșiri* a dialogului de editare (⋯ → **Ieșiri…**): fiecare
+  comutator și setare așteaptă și pleacă cu singurul **Salvează**, aplicate
+  fără restartul citirii; **Testează push** încearcă REST push-ul
+  salvat, din *Configurare*. Săgețile te mută prin listă; ieșirea deschisă e
+  ținută minte. *Configurare* le arată doar în citire. Contorul propriu al
+  gateway-ului și o unitate dintr-o instalație se editează tot acolo
+  (ieșirile unei unități sunt ale instalației sau ale grupului ei, și o
+  spune). **Lacătul de scriere** e o etichetă în antetul dispozitivului,
+  comutată din ⋯ (**Deblochează scrierile…** / **Blochează scrierile**);
+  **înregistratorul de evenimente PQ** e cu ieșirile, în așteptare și salvat
+  cu același **Salvează** (intervalul lui: secunde, cel puțin 30),
+  evenimentele lui în fila *Calitatea energiei*.
 - **Reguli** — controlerul declarativ: câte un card pe regulă, cu starea,
   cerut → real, deciziile, Armează / În shadow (vezi §14c).
 - **Șabloane** — catalogul din spatele dispozitivelor: **hărți de
   dispozitiv** (cum se citește un echipament real) și **emulări de contor**
   (șabloanele contoarelor virtuale din §11) — incluse, încărcate, importate
-  din CSV/YAML, editate.
+  din CSV/YAML, editate — și **Tipuri de dispozitive** (§5c).
 - **Status** — sănătatea fluxului, tipurile de erori, evenimente, alerte,
   resursele folosite (vezi §17).
-- **Setări** — setările gateway-ului, câte o filă: *MQTT*, *InfluxDB*,
-  *OPC UA* (§11d), *Backup și restaurare* (snapshot-uri, revenire, export —
-  §15), *Securitate* (autentificare, roluri, passkeys, HTTPS, scrieri Modbus
-  — §16), *Alerte* (§12), *General* (fus orar, culori), *Amplasament* (locația și
-  atributele lui — §5c) și, când e configurat un serviciu
+- **Setări** — setările gateway-ului, câte o filă: *MQTT*, *InfluxDB* (cu
+  heartbeat-ul, §9), *OPC UA* (§11d), *Modbus* (**Bugetul
+  previzualizării**, §5.2), *Backup și restaurare* (snapshot-uri, revenire,
+  export — §15), *Securitate* (autentificare, roluri, passkeys, HTTPS,
+  scrieri Modbus — §16), *Alerte* (§12), *General* (fus orar, culori și
+  **Identitatea gateway-ului**, §8), *Amplasament* (locația, atributele lui
+  și alegerile de confidențialitate — §5c) și, când e configurat un serviciu
   însoțitor, *Module*.
 - **Contoare virtuale** — servesc valorile live ca un contor Modbus
   standard (vezi §11).
@@ -262,118 +407,275 @@ Dispozitive → *Descoperă dispozitive*:
 - **Descoperire Fronius Solar API** — enumeră invertoarele și contoarele din
   spatele unui DataManager, cu indicația că contorul e la unitatea Modbus 240.
 
-*Folosește* pe orice rezultat pre-completează asistentul Adaugă dispozitiv.
+*Folosește* pe orice rezultat deschide Adaugă dispozitiv la pasul Verificare, precompletat.
 
-### 5.2 Adaugă un dispozitiv (asistent)
+### 5.2 Adaugă un dispozitiv
 
-1. **Conexiune** — alege protocolul:
-   - **Modbus TCP**: host, port, unit ID, timeout. Un slave din spatele unui
-     convertor în modul *Modbus TCP to RTU* (gateway) se adaugă tot aici:
-     **Accesat → Prin gateway-ul …** alege magistrala gateway-ului și rămâne de
-     scris doar unit ID-ul. **Prin UDP** e pentru puținele dispozitive al
-     căror manual spune Modbus peste UDP.
-   - **Modbus RTU**, trei moduri ([rtu-serial.md](rtu-serial.md)):
-     - **Prin rețea (recomandat)**: o magistrală din spatele unui
-       **bridge** (bridge-ul nostru serial pe un Raspberry Pi sau server,
-       ori un convertor transparent RS-485–Ethernet), aleasă după bridge și
-       magistrală. Bridge-urile se adaugă cu **Adaugă bridge** în pagina
-       Dispozitive ([rtu-over-network.md](rtu-over-network.md)).
-     - **Serial direct**: portul serial (de ex. `/dev/ttyUSB0`), baud,
-       paritate, biți de stop, cu adaptorul mapat în container.
-       **Framing**: RTU, sau ASCII pentru dispozitivele mai vechi care
-       vorbesc Modbus ASCII ([rtu-serial.md §5.1](rtu-serial.md#51-modbus-ascii)).
-     - **Doar ascultare (tap)**: pentru o magistrală care are deja un master
-       (pachetul master al unui BMS, datalogger-ul unui producător).
-       Gateway-ul nu transmite niciodată; decodează răspunsurile unității
-       observate, în ritmul masterului. Magistrala poate fi un port serial
-       local sau magistrala unui bridge transparent. Nu există *Testează
-       conexiunea*; după salvare, *Test* pe dispozitiv spune ce a auzit
-       tap-ul ([rtu-serial.md §7](rtu-serial.md)).
+**Adaugă dispozitiv** este un singur dialog în patru pași: **Ce este? ·
+Conexiune · Verificare · Nume și salvare**. Orice cale îl deschide, la pasul
+potrivit:
 
-     Mai mulți slave pe o magistrală sunt mai multe dispozitive, cu unit
-     ID-uri diferite: împart o conexiune și își așteaptă rândul. O
-     magistrală e fie interogată, fie ascultată. Fiecare magistrală din
-     cardul unui bridge arată cât de ocupat i-a fost firul în ultimul minut
-     — *ocupat 37 % · capacitate rămasă ~63 %* — măsurat pe fir (timpul de
-     așteptare a rândului nu se numără). Când magistrala nu mai face față
-     scrie *peste capacitate*: încetinește grupurile de citire care nu au
-     nevoie de viteză, crește viteza (baud) sau împarte slave-urile pe două
-     magistrale. Treci cu mouse-ul peste bară ca să vezi partea fiecărui
-     dispozitiv.
-   - **Schimbarea ulterioară:** în pagina dispozitivului, **Configurare →
-     Conexiune** este același formular. Un dispozitiv Modbus poate trece
-     între Modbus TCP, UDP, RTU, ASCII, prin rețea și doar ascultare,
-     pentru că harta lui citește oricum după adresă. ID-ul, topicurile și
-     istoricul rămân. Hărțile HTTP și MQTT citesc după cale, deci trecerea
-     spre sau dinspre ele cere un dispozitiv nou. Contorul principal rămâne
-     pe Modbus TCP (adresa i se poate schimba), iar un dispozitiv care are
-     componente își păstrează felul în care e accesat.
-   - **Salvarea:** Salvează trimite doar ce ai schimbat — un formular
-     neatins nu trimite nimic. Schimbarea *felului* în care e accesat e
-     explicată lângă alegere. Alt protocol (UDP sau ASCII pornit ori oprit,
-     TCP spre RTU) pornește conexiunea de la zero: setările pe care
-     formularul nu le arată (reîncercări, reglaje) revin la valorile
-     implicite. Mutarea pe un bridge sau de pe el le păstrează: pe un
-     bridge, adresa și linia serială proprii se golesc (le are bridge-ul);
-     de pe el, primește adresa pe care o scrii (portul 502 dacă nu-l
-     schimbi). Un dispozitiv de pe un bridge îl părăsește doar când alegi
-     altă cale (o adresă directă, un port serial pe acest host sau *Scoate-l
-     de pe bridge…*); alegerea altei magistrale îl mută și îi păstrează
-     topicurile și istoricul. Un timeout Modbus e între 1 și 30 s; unul
-     salvat în afara plajei (scris de mână) rămâne până îl schimbi. Un refuz
-     al gateway-ului apare sub câmpul la care se referă.
-   - **HTTP/JSON**: un URL care întoarce JSON; fiecare registru își scoate
-     valoarea cu un `json_path` (de ex. `Body.Data.PowerReal_P_Sum`).
-     URL-urile trebuie să ducă la un host din LAN-ul privat, dacă nu e
-     setat `security.allow_nonlan_http_devices` (protecție SSRF).
-   - **MQTT**: broker, port, autentificare/TLS, un topic de abonare; fiecare
-     registru citește din mesajul JSON după `json_path` sau ia mesajul gol
-     ca număr, și poate avea topicul lui, cu wildcard-uri `+`/`#`.
+| Calea | Se deschide la |
+|---|---|
+| Dispozitive → **Adaugă dispozitiv** (și, pe un gateway fără niciun dispozitiv, oferta de la prima pornire) | Ce este? |
+| **+ Dispozitiv** pe magistrala unui bridge, **Adaugă** dintr-o scanare de magistrală | Conexiune — magistrala completată, următoarea adresă liberă luată (și modelul, când scanarea l-a recunoscut) |
+| *Folosește* pe un rezultat de descoperire, **Găsite (n)** → **Folosește** | Verificare — modelul și conexiunea completate (Ce este? când modelul nu e cunoscut) |
+| Editorul **Contoare** al unui contor → **Adaugă un echipament pe care îl măsoară acest contor…** | calea „măsurat de contoare”, cu acel contor pe primul rând |
+| ⋯ al unui dispozitiv → **Duplică…** | Conexiune — lista de copiere de mai jos, următoarea adresă liberă |
 
-   Apasă **Testează conexiunea**: pentru Modbus, *orice* răspuns la nivel de
-   protocol — chiar și o excepție — dovedește un dispozitiv viu; pentru HTTP
-   cu un șablon ales, testul spune câte `json_path`-uri au fost găsite;
-   pentru MQTT se conectează și așteaptă scurt un mesaj. La un dispozitiv
-   salvat, Test întreabă dispozitivul așa cum rulează cât timp nu e nimic
-   schimbat; odată ce ai schimbat ceva, încearcă conexiunea așa cum o ține
-   formularul — unitatea și magistrala editate pe un bridge, adresa scrisă
-   după ce l-ai părăsit, variabilele de topic și keepalive-ul incluse — cu
-   parola salvată când câmpul e lăsat gol. Test nu salvează nimic. Un tap
-   de ascultare schimbat nu e sondat (nu transmite niciodată): salvează-l,
-   apoi Test spune ce aude.
-2. **Șablon** — alege din bibliotecă (hărțile incluse sunt în
-   [device-catalog.md](device-catalog.md)). Ca să scrii unul din lista de
-   registre a producătorului, urmează **[device-templates.md](device-templates.md)**:
-   adrese, ordinea cuvintelor, scala, editorul, CSV/YAML și testarea, cu
-   exemple. Poți **încărca** un șablon `.json` (verificat rând cu rând; la
-   ID-uri în conflict ești întrebat înainte de suprascriere), **crea** unul
-   în editor sau **importa o hartă CSV sau YAML**
-   ([csv-import.md](csv-import.md), [yaml-import.md](yaml-import.md)).
-   Cele incluse sunt doar în citire — *Duplică pentru editare*. Un șablon
-   folosit de un dispozitiv nu poate fi șters.
-3. **Rutarea datelor** — **id**-ul dispozitivului devine cheia de rutare:
-   valorile se publică sub prefixul de topic MQTT al dispozitivului
-   (previzualizare live) și ajung în bucket-ul lui InfluxDB (creat automat,
-   păstrare 90 de zile), cu tag-ul lui de dispozitiv. **Atenție:** identitatea
-   de rutare e fixă după creare — schimbarea ei ar lăsa orfane istoricul și
-   entitățile Home Assistant.
+Fiecare răspuns se păstrează la **Înapoi**, pe banda pașilor și când alegi
+altă cale; **Esc**, ✕ și **Anulează** întreabă înainte să le arunce.
+
+1. **Ce este?** — caută după model, marcă sau tip (cuvinte în engleză sau
+   română, sinonime, cu sau fără diacritice) ori restrânge cu cipurile de
+   tip; alege cardul modelului (↑/↓ se mută, Spațiu alege, Enter alege și
+   merge mai departe). Un card arată porturile modelului și semnele lui:
+   *Doar ascultă*, *Cere scrieri de configurare*, *Are părți*, *Notă*
+   (notele apar sub listă când îl alegi). Hărțile incluse sunt în
+   [device-catalog.md](device-catalog.md); ca să scrii una din lista de
+   registre a producătorului, urmează **[device-templates.md](device-templates.md)**.
+   **Încarcă șablon**, **Șablon nou** și, pentru modelul ales, **Duplică
+   pentru editare** (unul inclus) sau **Editează**, și **Exportă** sunt sub
+   listă ([csv-import.md](csv-import.md), [yaml-import.md](yaml-import.md)).
+   Deasupra cardurilor de model sunt trei alte căi: *Nu știu modelul — încep de la conexiune*
+   (primii doi pași inversați; pasul modelului oferă apoi modelele care
+   vorbesc ce a ales conexiunea), *Nu comunică — îl măsoară alte contoare*
+   (§5.4), *Mai multe la fel pe o magistrală*. **Găsite (n)** listează ce a
+   auzit deja gateway-ul fără să întrebe nimic (dispozitive care se anunță
+   pe MQTT, bridge-urile găsite cu *Caută în LAN*); de aici nu pornește
+   nicio căutare în rețea. Un cip de tip numără ce arată acum lista lui,
+   după căutare și după conexiunea aleasă.
+
+2. **Conexiune** — întrebările vin în ordine, fiecare răspuns restrângându-l
+   pe următorul: **portul** (RS-485 · Ethernet · CAN · API web · MQTT; un
+   model cu un singur port îl spune ca fapt, cu *Schimbă modelul*) → **unde
+   e magistrala** (un port pe acest host, magistrala unui bridge, o adresă)
+   → **rolul pe magistrală: Master** (gateway-ul interoghează) **sau
+   Listen-only** (alt master interoghează; gateway-ul e un monitor pasiv) →
+   **protocolul** → **linia** → **adresa**. O opțiune care nu se poate lua
+   rămâne în listă, cu motivul alături.
+   - **Rolul.** Pe o magistrală pe care n-o revendică nimeni nu există o
+     valoare implicită — spune-l. O magistrală pe care alt dispozitiv al
+     acestui gateway o interoghează deja sau o ascultă îl precompletează, cu
+     motivul, iar celălalt rol e refuzat acolo (niciodată doi masteri,
+     niciodată o interogare pe o magistrală ascultată). Un model care doar
+     ascultă precompletează Listen-only; Ethernet preselectează Master, cu
+     motivul. Rolul unei magistrale Seplos V2 nu e ales niciodată în locul
+     tău și nici păstrat când schimbi magistrala (§5.6).
+   - **Linia.** Pe o magistrală care are deja dispozitive linia e a
+     magistralei, moștenită și blocată („setată de magistrală: deye o
+     citește la 9600 8N1”); o schimbi pentru toate dispozitivele cu
+     **Linia magistralei…**. Pe o magistrală goală se propune linia
+     modelului, altfel 9600 8N1 (o valoare uzuală — verifică dispozitivul).
+     Un convertor își păstrează propria linie.
+   - **Adresa.** Cea implicită a modelului când e liberă, altfel următoarea
+     liberă pe acea magistrală („1 e deye; 2 e liberă”).
+   - **CAN.** Interfețele host-ului sunt listate; **listen-only pe interfață
+     e o barieră fermă** — Înainte așteaptă, cu comanda `ip link` exactă,
+     până când interfața e pornită și în listen-only (§5.5).
+   - **API web.** Host-ul și id-ul dispozitivului; calea apelului e a
+     modelului.
+   - **MQTT.** Broker, port, autentificare/TLS, topicul de abonare,
+     variabilele de topic; presetări pentru zigbee2mqtt și Theengs/BTHome.
+   - **Modbus TCP** la o adresă sau **printr-un gateway Modbus TCP** (un
+     convertor în modul *Modbus TCP to RTU*: se scrie doar unitatea); **Prin
+     UDP** pentru puținele dispozitive al căror manual o cere. **Modbus RTU
+     / ASCII** pe un port serial al acestui host (ales dintr-o listă, mai
+     jos), pe magistrala unui bridge
+     ([rtu-over-network.md](rtu-over-network.md)) sau la adresa unui
+     convertor. Mai mulți slave pe o magistrală sunt mai multe dispozitive,
+     cu adrese diferite: împart o conexiune și își așteaptă rândul. Fiecare
+     magistrală din cardul unui bridge arată cât de ocupat i-a fost firul în
+     ultimul minut.
+
+   **Selectorul de porturi seriale.** Un port serial al acestui host
+   (Modbus RTU sau ASCII, tap-ul listen-only, Seplos V2) se alege dintr-o
+   listă, nu se scrie: fiecare port cu numele, tipul (USB, HAT RS-485, UART
+   al plăcii), modelul și starea (*Liber*, *Interogat*, *Ascultat*,
+   *Ocupat*, *Consolă*, *Necunoscut* sau nemapat). Un port e salvat după
+   calea pe care o are în container: legătura lui `/dev/serial/by-id` când
+   containerul o vede, altfel nodul, altfel un alias mapat
+   (`/dev/ttyMETER`). Un port USB fără legătură stabilă spune că numele lui
+   `ttyUSB` se poate schimba la o replugare și să-i mapezi legătura by-id
+   sau un alias udev. Un port care nu poate fi luat rămâne în listă, cu
+   motivul: interogarea unui port pe care alt dispozitiv doar îl ascultă,
+   sau ascultarea unuia pe care alt dispozitiv îl interoghează, numește acel
+   dispozitiv; un port ținut de alt program numește programul; un port
+   nemapat în container arată linia `devices:` din compose și opțiunea
+   `docker run --device` de adăugat. **Reîmprospătează** recitește lista; o
+   cale pe care lista n-o vede se scrie la **Avansat**.
+
+   **Testează conexiunea** întreabă dispozitivul o dată (la Modbus, orice
+   răspuns la nivel de protocol — chiar și o excepție — dovedește un
+   dispozitiv viu; la HTTP, câte `json_path`-uri au fost găsite; la MQTT, un
+   mesaj). Un tap nu are Test: nu transmite niciodată. **Înainte** întreabă
+   gateway-ul doar despre conexiune (`dry_run=true&only=connection`): un
+   refuz apare la câmpul lui și nu se salvează niciodată nimic.
+
+3. **Verificare** — o citire de probă pe server pornește când ajungi aici:
+   doar citiri (Modbus FC3/FC4), prin conexiunea magistralei când un
+   dispozitiv al acestui gateway o interoghează deja — cu linia și timpul
+   de așteptare ale acelei magistrale, și o spune — în limita din Setări →
+   *Modbus* → **Bugetul previzualizării** (**Citiri per previzualizare**,
+   implicit 4, 1–20; **Ascultă (s)**, implicit 10, 1–60; `preview:` în
+   `config.yaml`). Pe o magistrală ascultată se
+   alătură ascultătorului și spune **auzite n din m grupuri**. Arată
+   valorile cu unitatea și o etichetă de calitate (*ok · fără răspuns ·
+   adresă ilegală · în afara domeniului · pare cu octeții inversați · fără
+   valoare (santinelă)*), ce spune dispozitivul că este (SunSpec, FC43) față
+   de modelul ales — la o nepotrivire **Folosește <modelul ca care
+   răspunde>** te duce înapoi la Ce este?, cu conexiunea păstrată —, ce
+   conține (bateriile și senzorii unui GX: **bifate**, redenumibile, create
+   odată cu el, în aceeași cerere), încărcarea pe care ar adăuga-o
+   magistralei și, pentru un model cu scrieri de configurare, de ce unele
+   valori rămân goale (un dispozitiv nou are scrierile blocate). Un refuz e
+   spus împreună cu ce se poate face: un convertor pentru care nu garantează
+   nimeni (bifează **Deschide conexiunea oricum**, se auditează, apoi
+   **Rulează din nou**), o magistrală ocupată (încearcă din nou), o
+   magistrală ascultată (alege Listen-only). **Rulează din nou**, **Schimbă
+   modelul**. Verificarea nu blochează niciodată: când a eșuat sau a fost
+   sărită, butonul spune **Înainte — fără verificare**.
+
+4. **Nume și salvare** — o singură pagină:
+   - **Numele** și **id-ul** (din model și adresă până scrii tu; id-ul e
+     **fix după creare**: denumește topicurile și istoricul). **Tipul** (al
+     modelului, se poate schimba, **+ Adaugă tip…**).
+   - **Unde e**, **etichetele**, **descrierea**; **Plăcuța** (pliată;
+     precompletată din ce a citit verificarea, fiecare valoare spunând de
+     unde vine; seria e arătată utilizatorilor autentificați și publicată
+     doar când setările de confidențialitate o permit); **Recomandate pentru
+     <tip>** (pliat, opțional).
+   - **Ieșirile** ca cipuri care se deschid pe loc: **MQTT** (pornit;
+     prefixul dat de modelul gateway-ului, fix după creare), **InfluxDB**
+     (pornit; bucket-ul, creat dacă lipsește, și heartbeat-ul „gateway: N
+     s”), **Home Assistant** (pornit; doar cu MQTT), **OPC UA oprit** (un
+     dispozitiv nou nu e servit până nu îl pornești: ⋯ → **Ieșiri…**).
+   - **Scrieri**: *Creat cu scrierile blocate: nu se scrie nimic în
+     dispozitiv până când un administrator nu îl deblochează din ⋯ →
+     Deblochează scrierile…*; scrierile de configurare ale unui model
+     așteaptă și ele acea deblocare.
+   - **Începe citirea acum**.
+   - **Ce se va crea** — banda de revizuire, din simularea (dry run) întregii
+     creări de către gateway: identitatea, firul și magistrala pe care intră
+     (cine mai e pe ea), modelul, ce vine odată cu el, ieșirile (prefix,
+     bucket și tag, nodul HA, OPC UA), scrierile — fiecare cu **Schimbă**.
+     **Creează** așteaptă (aria-disabled) cât timp gateway-ul refuză, cu
+     motivul alături.
+
+   **Creează** arată **Creat · citește · scrieri blocate**, cu **Deschide-l**
+   · **Adaugă încă unul la fel (unitatea N)** · **Gata**. **Creează și adaugă
+   încă unul la fel** trece direct la următorul. *Încă unul la fel* și ⋯
+   **Duplică** copiază: modelul, tipul, conexiunea (aceeași magistrală, linia
+   și rolul ei), ieșirile, *Începe citirea acum*, locul, etichetele,
+   producătorul și modelul, atributele recomandate. Nu se copiază: numele și
+   id-ul (se propun următoarele), adresa (următoarea liberă pe magistrală),
+   descrierea, seria, firmware-ul, data instalării, racordul la rețea al unui
+   contor, componentele. Modul unei magistrale Seplos se copiază doar pe
+   aceeași magistrală. Nu se deblochează niciodată nimic.
+
+**Calea „măsurat de contoare”** (*Nu comunică*): ce este (tipul, **+ Adaugă
+tip…**) · contoarele care îl măsoară · Nume și salvare (§5.4).
+
+**Mai multe la fel pe aceeași magistrală** (*Scanezi magistrala, bifezi
+unitățile, le adaugi deodată*) are doi pași, **Mai multe la fel** și
+**Unități** (un model ales înainte e propus pentru fiecare unitate; **Alege
+un model** te duce înapoi).
+- **Mai multe la fel** e pasul Conexiune — cum se ajunge la magistrală
+  (RS-485 sau un gateway Modbus TCP) și rolul pe ea — cu *Găsiți unitățile
+  de pe această magistrală* în întrebarea despre adresă:
+  - **Scanează magistrala** când gateway-ul e master: întreabă fiecare
+    adresă, doar citiri (FC3/FC4 și identificarea dispozitivului FC43), câte
+    o adresă, prin conexiunea magistralei, așa că dispozitivele de pe ea
+    citesc în continuare între întrebări. **Adresele** 1–32 implicit, până
+    la 1–247; o adresă tăcută costă o jumătate de secundă. Scanarea e
+    refuzată pe o magistrală pe care ascultă orice dispozitiv. Când reguli
+    armate citesc sau comandă un dispozitiv de pe magistrală, întreabă întâi
+    (*Încetiniți o magistrală de care depind reguli armate?* — **Scanează
+    oricum**). Unde nimeni nu poate spune cine mai ține portul (un
+    convertor), întreabă înainte să deschidă o conexiune (**Deschide și
+    scanează**).
+  - **Ascultă adresele** când gateway-ul doar ascultă: se alătură
+    ascultătorului magistralei cel mult **Ascultă (s)** din bugetul
+    previzualizării, listează adresele auzite, ce le întreabă masterul și
+    cât de des, și nu transmite nimic. Pachetele Seplos nu sunt scanate cu
+    întrebări niciodată: ascultă cât timp pachetul master interoghează, sau
+    scrie adresa DIP a fiecărui pachet.
+  - Fiecare rând: unitatea, ce spune că este, modelul sugerat și *deja:
+    <dispozitiv>* când un dispozitiv al acestui gateway are acea adresă
+    (nu e întrebată). Bifează unitățile (**Bifează toate unitățile
+    libere**), apoi **Adaugă N selectate**.
+- **Unități**: câte un rând pe unitate — numele, id-ul (`<model>-u<unitate>`,
+  făcut unic, fix după creare) și modelul — și un bloc *Pentru toate
+  unitățile*: **Începe citirea acum**, **Descoperire Home Assistant**,
+  **Bucket InfluxDB**. **Creează N dispozitive** verifică întâi fiecare rând
+  cu gateway-ul (o probă fără salvare); dacă unul e refuzat, nu se creează
+  nimic, iar rândul spune de ce. Apoi dispozitivele se creează unul câte
+  unul, fiecare rând cu starea lui (*se creează…*, *creat*, *eșuat*); un rând
+  eșuat își păstrează motivul, un rând creat nu mai e trimis niciodată.
+  Fiecare e creat cu scrierile blocate.
+
+**Schimbarea ulterioară:** în pagina dispozitivului, ⋯ → **Editează
+conexiunea…** (sau **E**) deschide același pas Conexiune ca secțiunea
+*Conexiune* a dialogului de editare, salvat cu singurul lui **Salvează**
+(§4); *Configurare* îl arată doar în citire. Un dispozitiv Modbus poate
+trece între Modbus TCP, UDP, RTU, ASCII, prin rețea și doar ascultare,
+pentru că harta lui citește oricum după adresă; id-ul, topicurile și
+istoricul rămân. Hărțile HTTP și MQTT citesc după cale, deci trecerea spre
+sau dinspre ele cere un dispozitiv nou. Salvează trimite doar ce ai
+schimbat. **Previzualizare** (în antetul paginii, de la operator în sus)
+citește dispozitivul o dată prin conexiunea lui, ca pasul Verificare;
+secțiunea Conexiune a dialogului de editare are și ea **Previzualizare**,
+pentru conexiunea așa cum e editată, înainte de Salvează — nu se salvează
+nimic.
 
 După creare, dispozitivul începe imediat să citească: șabloanele îngrijite
 își aleg singure setul recomandat de registre (harta Janitza alege 58 din
 4.126); un șablon neîngrijit cu peste 300 de registre nu alege nimic, ca să
 nu inunde MQTT/InfluxDB cu mii de serii dintr-un clic.
 
-**Instalări existente:** contorul inițial apare automat ca dispozitivul #1,
-cu identitatea de rutare blocată — topicurile, bucket-ul, tag-urile și
-entitățile HA rămân identice.
+**O instalare nouă pornește fără niciun dispozitiv**: oferta de la prima
+pornire deschide **Adaugă dispozitiv**. O instalare de dinainte de 3.96 își
+păstrează contorul inițial ca dispozitivul #1 (*primarul*), cu identitatea
+de rutare blocată — topicurile, bucket-ul, tag-urile și entitățile HA rămân
+identice.
 
-**Ștergerea unui dispozitiv** îi păstrează fișierul de registre pe disc
-(siguranța datelor) și e refuzată cât timp ceva îl folosește — o regulă
-care îl comandă sau îl citește, un pas de secvență, câmpul calculat al altui
-dispozitiv, un dispozitiv pe care îl măsoară, un contor virtual pe care îl
-alimentează, o formulă de șablon care îl numește. Pagina lui le arată sub
-**Folosit de**; schimbă-le întâi sau **dezactivează** dispozitivul (toate
-referințele rămân neatinse).
+**Un dispozitiv nou are scrierile blocate.** Fiecare dispozitiv creat — din
+Adaugă dispozitiv, din API, un anunț MQTT adoptat, o instalație nouă — e
+salvat cu `write_locked: true`, orice ar spune cererea. Nu i se scrie nimic
+(scrieri brute, comenzi, scrierile de configurare ale unui model) până când
+un administrator nu alege ⋯ → **Deblochează scrierile…** și confirmă.
+**Blochează scrierile** are efect imediat. Antetul dispozitivului spune
+*scrieri blocate* / *scrieri permise*. Comutatorul general al gateway-ului
+(Setări → Securitate → *Scrieri Modbus*) trebuie să fie și el pornit (§14).
+
+**Ștergerea unui dispozitiv** (⋯ → **Șterge…**, administrator) e refuzată
+cât timp ceva îl folosește — o regulă care îl comandă sau îl citește, un pas
+de secvență, câmpul calculat al altui dispozitiv, un dispozitiv pe care îl
+măsoară, un contor virtual pe care îl alimentează, o formulă de șablon care
+îl numește. Pagina lui le arată sub **Folosit de**; schimbă-le întâi sau
+**dezactivează** dispozitivul (toate referințele rămân neatinse). Dialogul
+spune ce pleacă odată cu el (componentele, atributele, magistrala pe care o
+părăsește). Citirea lui se oprește și iese din configurație; selecția lui de
+măsurători rămâne pe disc.
+
+După o ștergere, un mesaj oferă **Anulează** timp de 10 s (Anulează ia
+focusul tastaturii; Esc închide mesajul). Anulează restaurează dispozitivul
+și redeschide pagina de pe care a fost șters. O restaurare îl aduce înapoi
+cum era, mai puțin ce o restaurare pune mereu pe sigur, iar mesajul o spune
+înainte de clic: un dispozitiv deblocat revine cu **scrierile blocate**,
+legările de comenzi care erau pornite revin **oprite**, iar componentele lui
+revin cu scrierile blocate. Un REST push al dispozitivului pornește din nou
+(mesajul numește host-ul).
+
+Mai târziu, rândul de încheiere al meniului ⋯, **Dispozitive șterse:
+restaurează…** (din meniul oricărui dispozitiv, din pagină sau din listă),
+deschide dialogul **Dispozitive șterse (restaurabile)**: fiecare dispozitiv
+șters a cărui configurație a fost păstrată, când a fost șters, câte
+măsurători avea și cum revine. Un dispozitiv care nu poate reveni cum era
+spune de ce înainte de clic (*Nu poate fi restaurat așa cum era: …*,
+verificările restaurării însăși); repară ce numește, sau șterge ce i-a luat
+locul, apoi deschide lista din nou. **Restaurează** pe fiecare rând; **Uită**
+șterge definitiv configurația păstrată (întreabă întâi).
 
 ### 5.3 Cum se arată o unitate — decide șablonul
 
@@ -406,8 +708,8 @@ reîmprospătează prin API (`POST /api/devices/{id}/refresh-from-template`).
 
 O pompă de căldură, un boiler sau un încărcător adesea nu are contor
 propriu; îl măsoară un contor de pe alimentarea lui. Un UPS sau un convertor
-are un contor pe intrare și unul pe ieșire. **Dispozitiv → Contoare** le
-numește, fiecare într-un rol:
+are un contor pe intrare și unul pe ieșire. ⋯ → **Contoare…** al
+dispozitivului le numește (*Configurare* le arată), fiecare într-un rol:
 
 | Rol | Când | Ce primește dispozitivul |
 |---|---|---|
@@ -436,8 +738,8 @@ ele: harta Samsung MIM-B19N calculează `cop_estimated =
 heat_output_estimated / power_electric`.
 
 **Un dispozitiv fără nicio conexiune** — un UPS fără comunicație, o
-sarcină pe care doar o măsori — se adaugă cu **Adaugă dispozitiv → Fără
-conexiune: măsurat prin contoare**: nu citește nimic singur, iar contoarele
+sarcină pe care doar o măsori — se adaugă cu **Adaugă dispozitiv → Nu
+comunică — îl măsoară alte contoare**: nu citește nimic singur, iar contoarele
 lui sunt felul în care e măsurat.
 
 Un dispozitiv care se măsoară singur (un invertor, o pompă de căldură cu
@@ -446,6 +748,135 @@ unitățile unei instalații. API: `GET /api/meter-roles` (rolurile și
 setările), `PUT /api/devices/{id}/meters` cu `{meters: [{role, device,
 power, energy?, sign?}], options?}`; `[]` scoate toate legăturile. Vechiul
 `PUT /api/devices/{id}/energy-meter` setează încă un singur contor de consum.
+
+### 5.5 CAN, listen-only
+
+Gateway-ul citește o magistrală CAN **ascultând**: sosesc cadre, rândurile
+de semnal ale șablonului le decodează, iar valorile ajung în MQTT, InfluxDB,
+Home Assistant, interfață și reguli ca ale oricărui dispozitiv. Nu transmite
+niciodată: driverul CAN nu are cale de transmisie, iar un dispozitiv CAN nu
+poate fi scris. Harta inclusă este `pylontech_can_inverter`, legătura în
+protocolul Pylontech dintre BMS-ul unei baterii și invertorul ei (inclusiv
+cadrele Seplos 0x370/0x371).
+
+**De ce ai nevoie.** O interfață CAN pe care procesul gateway-ului o vede —
+`can0` de la un adaptor USB (gs_usb / candleLight) sau de la un HAT
+(MCP2515), ori `vcan0` pentru teste — configurată **de host**, listen-only,
+la bitrate-ul magistralei:
+
+```sh
+ip link set can0 down && ip link set can0 type can bitrate 500000 listen-only on && ip link set can0 up
+```
+
+`listen-only on` face controlerul însuși tăcut (fără ACK, fără cadre de
+eroare). Gateway-ul nu-l setează niciodată; citește indicatorul din kernel
+la fiecare deschidere a interfeței și îl arată (*listen-only* / *not
+listen-only*, cu un avertisment). Verifică-l pe host cu
+`ip -details link show can0`.
+
+> **Docker.** În Docker, un container vede interfețele CAN ale host-ului doar cu rețeaua
+> host-ului (Compose: `network_mode: host`; `docker run --network host`). Pentru
+> citire nu e nevoie de nicio capabilitate. Rețeaua host-ului înseamnă că
+> porturile containerului sunt porturile host-ului: `ports:` publicate sunt
+> ignorate, iar interfața, contoarele virtuale, :502 și OPC UA ascultă direct pe
+> host — verifică să nu se ciocnească porturile. Containerul rămâne în rețeaua
+> host-ului și pentru tot restul. Listen-only se setează pe host
+> (`ip link … listen-only on`).
+
+**Adăugarea.** Adaugă dispozitiv → portul **CAN**: interfețele host-ului
+sunt listate cu pornit/oprit, bitrate și listen-only. **Listen-only e o
+barieră fermă**: o interfață oprită sau care poate transmite nu poate fi
+aleasă, iar pasul arată comanda de mai sus de rulat pe host, apoi
+**Reîmprospătează**. Câmpurile: *Purtător* (SocketCAN; purtătorul prin
+bridge-ul serial e listat, încă nu se poate alege), *Interfață* (implicit
+`can0`), *Bitrate* (doar afișat — îl setează host-ul; 10000–1000000,
+implicit 500000), *Învechit după (s)* (1–3600; atâta liniște = învechit; 30
+s când cheia lipsește). Se oferă doar șabloanele al căror transport e CAN.
+**Test** spune dacă interfața există, e pornită și listen-only, și ce a auzit
+în 2 s.
+
+În `config.yaml`:
+
+```yaml
+devices:
+  - id: bms-can
+    template: pylontech_can_inverter
+    connection:
+      protocol: can
+      carrier: socketcan
+      channel: can0
+      bitrate: 500000        # cât merge magistrala — setat de host
+      stale_after_s: 5
+```
+
+Nu există interogare: timpul unei valori e momentul sosirii cadrului ei.
+Interfața poate lipsi la pornire, se poate opri sau deconecta: driverul o
+spune o dată, reîncearcă la fiecare 3 s și își revine singur. Lista de
+dispozitive, Prezentarea și pagina Status arată contoarele: cadre, cadre și
+id-uri necunoscute, erori de decodare, cadre de eroare, listen-only. Un rând
+aflat cu totul după capătul unui cadru mai scurt lipsește, nu e o eroare.
+Rândurile de șablon pentru CAN: [device-templates.md](device-templates.md).
+Ghidul complet, cu fiecare contor și cadrele hărții incluse: [can.md](can.md) (EN).
+
+### 5.6 BMS Seplos V2
+
+Pachetele Seplos **V2** (generația 10E / 16S) nu vorbesc Modbus pe portul
+RS-485; vorbesc protocolul ASCII Seplos V2. Gateway-ul îl citește cu un
+driver propriu și pune fiecare răspuns într-o hartă virtuală fixă de
+registre, pe care șablonul `seplos_bms_v2` o citește ca pe orice hartă.
+Pachetele Seplos **V3** vorbesc Modbus RTU: folosește
+`seplos_bms_v3_rtu_tap` ([rtu-serial.md](rtu-serial.md)).
+
+- **Doar citire.** Driverul codează doar comenzile de citire (telemetrie,
+  alarme, identitate); nimic dintr-un pachet nu poate fi schimbat din
+  gateway.
+- **Conexiunea.** Protocolul **Seplos V2** pe un port serial al acestui
+  host (`seplos_v2`) sau printr-un bridge TCP ↔ RS-485 transparent
+  (`seplos_v2-tcp`, host-ul și portul lui). Un gateway Modbus TCP nu merge:
+  transmite doar Modbus. Pachetele vorbesc implicit la 9600 8N1. Adresa
+  (`unit_id`) e adresa pachetului, de pe comutatorul DIP.
+- **Rolul: o alegere, niciodată o valoare implicită.** **Master**
+  (`mode: poll`) doar pe o magistrală fără alt master: portul RS-485 al unui
+  singur pachet sau un port pe care nu întreabă nimic altceva.
+  **Listen-only** (`mode: listen`) pe magistrala dintre pachetele unei bănci,
+  unde pachetul master le interoghează deja pe celelalte: doi masteri se
+  ciocnesc. Un dispozitiv nou trebuie să spună rolul (formularul nu
+  preselectează nimic; API-ul refuză o creare sau un Test fără el); un
+  dispozitiv salvat fără rol e citit ca poll.
+- **Ascultarea nu comandă niciodată magistrala.** Un port ascultat se
+  deschide cu RTS și DTR jos; un singur dispozitiv pe adresă de pachet (al
+  doilea e refuzat, nu îl înlocuiește niciodată pe primul). Valorile sosesc
+  pe măsură ce le întreabă masterul.
+- **O bancă în paralel.** Un pachet master V2 își întreabă pachetele slave
+  doar un rezumat scurt (o dată pe secundă, 19200 Bd pe magistrala dintre
+  pachete). Citește fiecare slave cu șablonul `seplos_bms_v2_tap`
+  (Listen-only; salvarea lui ca Master e refuzată): extremele de celulă și
+  de temperatură, curentul, tensiunea pachetului, capacitatea rămasă și
+  totală, SOC, plus calculatele `battery_power`, `cell_delta`,
+  `energy_remaining`, `energy_to_full`. Banca întreagă (inclusiv masterul)
+  vine din legătura CAN a bateriei spre invertor (§5.5); totalurile băncii
+  peste mai multe dispozitive sunt câmpuri calculate care citesc alte
+  dispozitive (§7).
+
+```yaml
+devices:
+  - id: bms-pack-1
+    template: seplos_bms_v2
+    connection:
+      protocol: seplos_v2          # sau seplos_v2-tcp cu host + port
+      serial_port: /dev/ttyBMS     # mapat în container
+      baudrate: 9600
+      unit_id: 1                   # adresa pachetului (comutatorul DIP)
+      mode: listen                 # poll | listen — obligatoriu pentru un dispozitiv nou
+```
+
+> Decodarea telemetriei, alarmelor și identității V2 urmează protocolul
+> V2.0 publicat și nu e încă verificată pe echipament; fiecare rând din
+> șabloanele incluse spune dacă a fost verificat. Verifică pe pachetul tău
+> înainte să te bazezi pe o valoare.
+
+Ghidul complet — protocolul, harta virtuală de registre, modurile,
+cablarea și ascultarea dintre pachete: [seplos-v2.md](seplos-v2.md) (EN).
 
 ---
 
@@ -559,7 +990,9 @@ neschimbate. Fiecare câmp: [config-reference.md](config-reference.md).
   completează doar după ce cea dinainte a tăcut mai mult decât *învechit
   după*. **Testează unitățile** întreabă fiecare unitate prin fiecare sursă;
   unitățile, sursele și topicurile se editează pe cardurile grupurilor.
-- **Pagina unei unități**: **Citită prin** înlocuiește *Conexiune*;
+- **Pagina unei unități**: linia ei spune cum e citită (*citit prin sunspec
+  (Modbus TCP 5 s) + solarapi (HTTP 10 s)*); ⋯ → **Redenumește…** arată
+  **Citită prin** și numele ei;
   **Măsurători** arată un selector de sursă când unitatea e citită pe mai
   multe căi (fiecare sursă cu harta și bifele ei); **Comenzi** (§14b). O
   unitate citită pe două căi e `ok` doar cât timp sunt toate în regulă: o
@@ -661,7 +1094,7 @@ greșită e refuzată, cu numele câmpului. Toate trei sunt și în `config.yaml
 | Latența Modbus crește, apoi citirile cad în rafale | datalogger-ul cedează peste ~26 de tranzacții pe minut: încetinește grupurile Modbus, setează `endpoint_min_gap_s` (0,3 s), citește câmpurile rapide prin HTTP |
 | `units_online` < `units_total` noaptea | normal: invertoarele care dorm sunt `down`; contoarele de energie își păstrează ultima valoare, totalul spune `partial` / `offline` |
 | Un total nu apare niciodată | grupul are o singură unitate (fără total, intenționat), sau unei unități active îi lipsește un contor de energie — suma e reținută, nu publicată incompletă |
-| O unitate nu are fila *Conexiune* | corect: conexiunea ei e pe surse — folosește *Citită prin* și editorul de surse din cardul grupului |
+| O unitate nu are *Editează conexiunea…* | corect: conexiunea ei e pe surse — folosește ⋯ → *Redenumește…* (Citită prin) și editorul de surse din cardul grupului |
 
 ---
 
@@ -671,7 +1104,7 @@ Fapte pe care nu le poartă nicio măsurătoare, pentru sistemele care citesc
 gateway-ul (un EMS, un HMI, un SCADA):
 - **unde e amplasamentul**: Setări → **Amplasament**;
 - **un contor este racordul la rețea**, cu limitele lui de import și
-  export: fila **Atribute** a dispozitivului;
+  export: ⋯ → **Despre (atribute)…** al dispozitivului (se vede în *Configurare*);
 - **intrările PV ale unui invertor**: panouri, kWp, orientare, înclinare,
   câte un rând pe orientare;
 - **energia utilizabilă și limitele unei baterii**;
@@ -681,6 +1114,39 @@ Apeși **+** și alegi din catalogul gateway-ului; nimic nu e obligatoriu.
 Coordonatele sunt arătate aproximativ oricui nu e admin și sunt scoase
 dintr-un backup curățat. Un EMS le poate seta pe toate prin API, cu un token
 de serviciu de admin. Ghidul complet: [attributes.md](attributes.md).
+
+**Identitatea.** Fiecare dispozitiv și fiecare instalație au și o categorie
+*identitate*: **descrierea** (până la 500 de caractere), **unde e** (unde e
+montat), **etichetele** (până la 16 cuvinte scurte, pentru filtre și
+căutare), **producătorul**, **modelul**, **seria**, **firmware-ul** și
+**data instalării**. Pasul *Nume și salvare* din Adaugă dispozitiv le cere
+(plăcuța precompletată din ce a citit Verificarea); mai târziu sunt în
+secțiunea *Identitate* a dialogului de editare, salvate cu singurul lui
+**Salvează**. Se publică în `meta` al dispozitivului, sub
+`attributes.identity`. Două dintre ele urmează alegerile de confidențialitate
+din Setări → **Amplasament** → *Confidențialitate*: *unde e* nu se publică
+cât timp alegerea pentru coordonate e oprită, iar seria pleacă doar cu
+**Publică numerele de serie** pornit (oprit implicit; e arătată mereu
+utilizatorilor autentificați, în jurnalul de audit și în diferența de
+backup).
+
+**Tipurile de dispozitive.** Un dispozitiv are un **tip**, dintr-un singur
+catalog pentru fiecare listă, filtru și meniu. Tipurile incluse — contor,
+invertor, baterie, amplasament, pompă de căldură, acționare, UPS,
+încărcător, senzor, convertor, altul — au un comportament (totalurile
+amplasamentului, dispozitivele măsurate de contoare, tablourile). Îți
+adaugi tipuri proprii în **Șabloane → Tipuri de dispozitive** → **Adaugă
+tip**: un id (fix ulterior), numele în engleză și în română, o pictogramă
+și cu ce **Se comportă ca** (unul dintre tipurile incluse: ce contează
+pentru totalurile amplasamentului și pe MQTT). **+ Adaugă tip…**, oriunde
+se alege un tip, creează unul pe loc. Un tip folosit încă de un dispozitiv,
+de un dispozitiv șters restaurabil, de un șablon sau de un grup de instalație
+nu poate fi șters (îi numește). Un șablon poate lista tipurile proprii care
+i se potrivesc (editorul de șabloane: *Se potrivește și acestor tipuri*).
+Tipul se setează în Adaugă dispozitiv și în dialogul de editare (⋯ →
+**Tip: <tip>…**); lista de dispozitive filtrează după tip și după etichetă.
+Un dispozitiv salvat cu `kind:` îl păstrează ca tip, iar `kind` pe care îl
+publică rămâne același.
 
 ---
 
@@ -888,8 +1354,26 @@ căile lor din container; „sari peste verificare” e doar pentru teste).
 
 - **Topicuri**: `<prefixul dispozitivului>/<topicul registrului sau numele
   derivat>`. Dispozitivul #1 își păstrează prefixul istoric; dispozitivele
-  noi folosesc implicit `mqtt.default_topic_pattern` (`mbg/devices/{device}`);
-  unitățile unei instalații folosesc prefixul grupului (§5b).
+  noi primesc `mqtt.default_topic_pattern` (gol = valoarea implicită a
+  domeniului de identitate, mai jos); unitățile unei instalații folosesc
+  prefixul grupului (§5b). Prefixul unui dispozitiv e fix după creare, iar
+  un prefix egal cu, aflat în interiorul sau care conține prefixul altui
+  dispozitiv, al unei componente, al unei instalații sau al gateway-ului e
+  refuzat.
+- **Identitatea gateway-ului** (Setări → General → *Identitatea
+  gateway-ului*): **Id-ul gateway-ului** (litere mici, cifre și `-`, 2–32) și
+  **Cum se denumesc dispozitivele noi**. *Per gateway* (`identity_scope:
+  gateway`, o instalare nouă, cu un id generat `mbg-xxxxxx`): topic
+  `mbg/<gateway>/devices/<dispozitiv>`, bucket `<gateway>-<dispozitiv>`,
+  id-uri Home Assistant `mbg_<gateway>_dev_<dispozitiv>_…` — ca două
+  gateway-uri să poată împărți un broker și un InfluxDB. *Ca până acum*
+  (`legacy`, orice instalare de dinainte de 3.97): `mbg/devices/<dispozitiv>`,
+  bucket `<dispozitiv>`. `{gateway}` se poate folosi în ambele modele
+  implicite. Oricare alegere denumește **doar dispozitivele noi**: un
+  dispozitiv existent își păstrează topicul, bucket-ul și entitățile Home
+  Assistant (fiecare dispozitiv își salvează nodul HA, `mqtt.ha_node`). O
+  restaurare de snapshot sau un import de backup păstrează id-ul și domeniul
+  acestui gateway.
 - **Modul de publicare**: `changed` (implicit — se publică doar valorile
   schimbate; memoria de schimbări confirmă doar după o publicare reușită,
   deci o cădere a brokerului nu pierde nimic) sau `all` (fiecare citire).
@@ -913,7 +1397,7 @@ căile lor din container; „sari peste verificare” e doar pentru teste).
 - **Descoperirea Home Assistant**: pornită implicit. Fiecare dispozitiv
   devine un dispozitiv HA cu registrele selectate ca senzori (`unique_id`
   `mbg_dev_<dispozitiv>_<adresă>_<nume>` pentru dispozitivele care nu sunt
-  primul), cu clase de dispozitiv/stare potrivite unităților de măsură, plus
+  primul, sau `mbg_<gateway>_dev_…` în domeniul per gateway), cu clase de dispozitiv/stare potrivite unităților de măsură, plus
   un **`binary_sensor` de conectivitate** pe dispozitiv (disponibilitatea).
   Registrele pe care șablonul le marchează ca inscriptibile devin entități HA
   **`number`/`select`** (limitele din șablon, păzite dublu de
@@ -921,8 +1405,10 @@ căile lor din container; „sari peste verificare” e doar pentru teste).
   descoperirea cu scriere se înregistrează la pornire, deci controlul
   supraviețuiește unui restart. Contoarele virtuale își publică propriile
   entități de diagnostic (starea, rata cererilor, erorile, prospețimea…).
-  Ștergerea unui dispozitiv îi golește descoperirea reținută, iar HA îi
-  scoate entitățile.
+  Descoperirea se publică pentru un dispozitiv doar cât timp ieșirea lui
+  MQTT e pornită: oprirea MQTT sau a descoperirii îi retrage entitățile, o
+  singură dată. Ștergerea unui dispozitiv îi golește descoperirea reținută,
+  iar HA îi scoate entitățile.
 - **Migrarea prefixelor de topic** — `mqtt.compat_aliases` publică dublu
   numele vechi de topic lângă cele noi, ca consumatorii să poată fi mutați
   fără gol (vezi [config-reference.md](config-reference.md)); scoate
@@ -944,6 +1430,20 @@ registru se setează în fila Măsurători. Îndreaptă Grafana spre același
 bucket. Amândouă vin în stiva compose implicită — InfluxDB se configurează
 singur la prima pornire, iar Grafana ascultă pe `:3000` (vezi §2); aici e
 vorba doar de legarea gateway-ului la ele (sau la instanțele tale).
+
+**Heartbeat.** În modul `changed` o valoare se scrie doar când se schimbă;
+una constantă ar lăsa atunci o cronologie de stare sau un panou „ultima
+valoare” gol ore întregi. **Rescrie o valoare neschimbată la fiecare (s)**
+(`influxdb.heartbeat_interval`) o scrie din nou după ce n-a mai fost scrisă
+atâta timp: un punct obișnuit, cu momentul citirii, scris la citirea
+următoare — un dispozitiv care nu mai citește nu mai scrie. Secunde întregi
+0–86400; `0` îl oprește; `write_interval` rămâne pauza minimă; modul `all`
+nu se schimbă. Un `config.yaml` fără cheie primește
+`heartbeat_interval: 600` la prima încărcare (o linie INFO; ca orice
+salvare din interfață, rescrierea pierde comentariile fișierului). Un
+dispozitiv, o instalație sau un grup își pot seta valoarea proprie (Ieșiri
+→ InfluxDB, care arată *gateway: N s* lângă un câmp gol); totalurile unei
+instalații folosesc valoarea instalației, altfel pe a gateway-ului.
 
 **Garanțiile datelor.** Fiecare punct poartă momentul *citirii*, nu al
 trimiterii. Dacă InfluxDB nu mai e accesibil, punctele merg într-un **tampon
@@ -983,7 +1483,8 @@ dispozitiv) citesc înapoi aceste date.
 
 ## 10. REST push și fluxul HTTP/JSON
 
-Pagina dispozitivului → **Ieșiri** — două ieșiri suplimentare pe
+⋯ → **Ieșiri…** al dispozitivului (secțiunea *Ieșiri* a dialogului de
+editare: setezi, apoi **Salvează**) — două ieșiri suplimentare pe
 dispozitiv, amândouă opționale:
 
 - **Ieșirea HTTP/JSON** — servește valorile live ale dispozitivului ca JSON
@@ -999,8 +1500,8 @@ dispozitiv, amândouă opționale:
   Autentificarea merge în `headers` (păstrate mascate, neatinse la salvare).
   Destinațiile *pot* fi externe (spre deosebire de intrările HTTP ale
   dispozitivelor), dar redirecționările sunt refuzate, ca acreditările tale
-  să nu poată fi retrimise altundeva. Livrarea e fără confirmare; cardul
-  arată ultima stare, iar **Test** trimite o dată imediat.
+  să nu poată fi retrimise altundeva. Livrarea e fără confirmare; *Configurare*
+  arată ultima stare, iar **Testează push** trimite o dată imediat.
 
 ---
 
@@ -1384,15 +1885,23 @@ Scrierea în echipamentele din teren e păzită pe mai multe niveluri. Totul e
    scala și `offset` — inversat la scriere, `brut = (valoare − offset) ×
    scală`, inclusiv la revenirea de siguranță) vine mereu din rândul
    șablonului, niciodată de la apelant.
-4. **Dispozitivul principal e blocat la scriere implicit**
-   (`security.primary_write_locked`; deblochează-l intenționat, din fila lui
-   Comenzi, sau Conexiune când nu are comenzi); dispozitivele HTTP/JSON și
-   registrele input/discrete nu pot fi scrise.
+4. **Orice dispozitiv nou are scrierile blocate** (§5.2), la fel și
+   primarul, implicit (`security.primary_write_locked`). Un administrator
+   deblochează unul intenționat: ⋯ → **Deblochează scrierile…**, confirmat.
+   Dispozitivele HTTP/JSON, un dispozitiv care doar ascultă (un tap, Seplos
+   V2 în listen, CAN) și registrele input/discrete nu pot fi scrise.
 5. Limită de rată pe IP (`security.write_rate_limit_per_s`, implicit 10/s).
 
-`POST /api/devices/<id>/write` cu `{"address": ..., "value": ...}` scrie
-FC6/FC16 (holding) sau FC5 (coil), verifică prin citire înapoi și scrie
-fiecare încercare în jurnalul de audit.
+`POST /api/devices/<id>/write` cu `{"address": ..., "value": ...}`
+(**Scrie…** din pagina dispozitivului) scrie FC6/FC16 (holding) sau FC5
+(coil), verifică prin citire înapoi și scrie fiecare încercare în jurnalul
+de audit. O scriere brută își așteaptă rândul pe magistrala dispozitivului
+ca o comandă (§14b.3): o valoare mai nouă pentru același registru o
+înlocuiește pe una care încă așteaptă, iar o scriere care a așteptat peste
+30 s expiră fără să fie scrisă. **Un registru pe care îl scrie oricare
+comandă a dispozitivului nu e scris niciodată brut** — nici din API, nici din
+Home Assistant, nici de un admin: folosește comanda, care scrie toată
+rețeta.
 
 **Lease-uri dead-man.** Adaugă `"lease_ms": 5000` și scrierea armează un
 lease: dacă nu e reînnoit (de altă scriere cu lease) în 5 s, gateway-ul
@@ -1427,8 +1936,9 @@ vocabular al verdictelor.
    șablon fără `commands` nu oferă nimic.
 3. **Bifeaz-o**: pagina instalației → cardul grupului → *Editează grupul* →
    **Comenzi acceptate de acest grup** (se aplică fiecărei unități). Pe un
-   dispozitiv de sine stătător: pagina lui → **Comenzi** → **Activată pe
-   acest dispozitiv**. Nebifată = refuzată peste tot. **Test** (o rulare de
+   dispozitiv de sine stătător: ⋯ → **Comenzi și legări…** (pe tot
+   ecranul) → **Activată pe acest dispozitiv**, apoi **Salvează**. Nebifată
+   = refuzată peste tot. **Test** (o rulare de
    probă) merge înainte s-o bifezi: citește dispozitivul și arată ce s-ar
    scrie, fără să scrie.
 4. **Rulează-o**: butonul **Comenzi…** al cardului de grup — comanda,
@@ -1510,7 +2020,44 @@ rulare e auditată (`action: command`: cine, calea, unitatea, parametrii,
 cadrele, înainte → după, verdictul), scrisă în Jurnalul unității și
 publicată pe MQTT: `<prefixul unității>/cmd/result` (nereținut) și
 `<prefixul unității>/cmd/<nume>/state` reținut (ce i s-a spus ultima dată
-dispozitivului, pentru un controler care repornește). Citirea înapoi Fronius
+dispozitivului — doar rezultatele aplicate — pentru un controler care
+repornește). O comandă venită prin MQTT primește un răspuns pe `cmd/result`
+orice s-ar întâmpla cu ea: refuzată (cu `held: true` și `retry_after_s` când
+ritmul canalului o ține), `superseded` de o valoare mai nouă a aceleiași
+setări înainte să ruleze, `expired` după ce a așteptat magistrala mai mult
+de `max_age_s`, `cancelled`, sau rulată; pune un `id` în mesaj ca s-o
+găsești pe a ta; `queued_ms` spune cât a așteptat.
+
+**Cum așteaptă comenzile magistrala.** Fiecare scriere spusă unui
+dispozitiv — REST, MQTT, Home Assistant, OPC UA, un grup, o secvență, o
+regulă, o reîmprospătare, revenirea unui lease, o scriere brută de registru
+— trece printr-un singur dispecer: o **bandă** pe fir (o magistrală Modbus,
+o sursă MQTT), deci un dispozitiv lent le întârzie doar pe cele de pe
+propria lui magistrală, niciodată pe celelalte. Pe o bandă, un **loc** pe
+dispozitiv și canal: o valoare mai nouă a aceleiași setări o înlocuiește pe
+una care încă așteaptă (cea înlocuită primește `superseded`; un cursor HA
+tras de la un capăt la altul scrie prima valoare și ultima), iar altă
+comandă sau alți parametri stau la rând, în ordine. Cel mult 8 așteaptă pe
+un loc; a 9-a e refuzată (*coada e plină*, REST 429). `coalesce: false`
+într-un șablon le păstrează pe toate (un impuls). O comandă mai veche decât
+`max_age_s` al canalului (30 s) când îi vine rândul e `expired`, niciodată
+scrisă târziu. Prin REST, o comandă poate răspunde și cu 409 `superseded` /
+`expired` / `cancelled`, 503 pe un gateway în standby sau care se oprește,
+504 când încă rulează la capătul așteptării. Pagina Status avertizează
+despre o bandă a cărei cea mai veche comandă a trecut de jumătate din
+`max_age_s`.
+
+**Ritmul unui canal.** Un șablon poate spația scrierile pe o setare (un GX
+își ține setările în flash): `min_interval_s`, iar la un motor
+`min_on_s`, `min_off_s`, `max_starts_per_h`. O scriere venită prea devreme
+e refuzată cu `held: true` și `retry_after_s`. Un dispozitiv își poate seta
+ritmul propriu peste cel al șablonului (`channels:` mai sus; în interfață,
+pe canal, în **Comenzi și legări…**: *Interval minim*, cu *Vârstă maximă*
+și protecțiile unui motor la Avansat, valoarea șablonului alături). O
+reînnoire care nu schimbă nimic (dispozitivul ține deja valoarea) nu e
+ținută și nu scrie nimic: `already_set: true`.
+
+Citirea înapoi Fronius
 se publică ca `<prefixul unității>/controls/power_limit_pct`,
 `…/power_limit_enabled`, `…/power_limit_revert_s`, `…/power_limit_ramp_s`,
 `…/connected` (grupul `controls` e citit intenționat o dată pe oră —
@@ -1549,9 +2096,11 @@ fiecare rulare îl recitește imediat).
   la scriere → parametrii se înțeleg, sunt în limite și nu au nume
   necunoscute (o greșeală de scriere e refuzată, niciodată ignorată) → o
   sursă Modbus rulează (o unitate citită doar prin Solar API nu poate scrie)
-  → limita de rată pe cale și pe unitate. Autentificarea (§14) e verificată
-  de ruta API înaintea tuturor acestora. O singură comandă rulează odată; o a
-  doua pentru aceeași unitate așteaptă, nu e niciodată unită cu prima.
+  → limita de rată pe cale și pe unitate → ritmul canalului. Autentificarea
+  (§14) e verificată de ruta API înaintea tuturor acestora. O singură
+  scriere rulează odată pe o magistrală; o valoare mai nouă a aceleiași
+  setări o înlocuiește pe una care încă așteaptă (`superseded`), orice
+  altceva își așteaptă rândul.
   **Nimic nu se reîncearcă după ce a plecat un cadru** (scrierile dintr-o
   secvență nu sunt sigur repetabile); un dispozitiv inaccesibil răspunde
   `error`, fără nimic scris.
@@ -1622,7 +2171,7 @@ dispozitivului variabilele de topic `portal` (ID-ul de portal VRM) și `vebus`
 (instanța invertorului/încărcătorului). Pe 8883, setează `tls_insecure: true`
 (*Acceptă certificatul propriu* în formular) sau `tls_ca`.
 
-În fila **Configurare → Conexiune** a unui dispozitiv MQTT, topicul,
+În editorul de conexiune al unui dispozitiv MQTT (⋯ → **Editează conexiunea…**), topicul,
 variabilele de topic și parola apar ca ••••, pentru că topicul și variabilele
 lui pot conține ID-ul de portal al GX-ului. Ochiul de lângă fiecare îl
 arată. Variabilele de topic sunt perechi `nume=valoare` separate prin
@@ -1813,12 +2362,33 @@ La fiecare `every_s`, motorul calculează semnalul (vârsta lui e a celei mai
    nimic; la mai puțin de `min_interval_s` de la ultima comandă → *ține
    (limită de rată)*. **Armată**: comanda rulează pe aceeași cale ca orice
    altă cale (`via: rule:<id>`, aceleași porți, audit și `…/cmd/result`).
-   **Shadow**: *shadow (ar rula …)*.
+   **Shadow**: *shadow (ar rula …)*. **Întrebată din nou la magistrală.**
+   Chiar înainte să plece scrierea unei reguli armate, sub lacătul
+   magistralei, gateway-ul întreabă încă o dată dacă mai e valabilă: pusă pe
+   **pauză** între timp (un scriitor cu `override_s` sau un operator),
+   **cedată** (altă regulă a câștigat canalul între timp — o forțare, o nouă
+   cerere, o limită mai mică) sau **ținută** (canalul a fost scris între timp
+   — o reîmprospătare, revenirea unui dead-man, altă regulă — iar ritmul lui
+   o ține). O astfel de scriere se termină `cancelled` (`dropped:
+   paused|yielded|held`), e auditată, nu contează ca eșec, iar jurnalul de
+   decizii spune *cancelled — held: …*; regula o trimite din nou când are
+   voie. Cererile urgente nu sunt niciodată cedate sau ținute; o scriere de
+   eliberare nu e întrebată niciodată.
 5. **Bucla închisă** — fără nimic nou de cerut, valoarea reală e comparată cu
    cea cerută: diferită peste toleranță mai mult de `reassert_s` →
    *reassert*; valoarea reală lipsă sau mai veche de 3 × intervalul ei de
    citire → *sweep* (recitită acum, cel mult o dată pe minut), în loc de o
-   scriere oarbă.
+   scriere oarbă. Un reassert respectă ritmul canalului ca orice altă
+   scriere (§14b.3): jurnalul de decizii spune *drift seen — <canal>: …*,
+   abaterea e păstrată, iar corecția pleacă la primul tic în care canalul o
+   permite. **Cererile de urgență nu așteaptă niciodată un ritm** — o
+   treaptă `fast`, o valoare `safe` sau fixă la stale, o pauză după
+   `max_on_s`; `min_interval_s` al regulii se aplică totuși. O regulă
+   `steps` cu o treaptă `fast` nu poate comanda un canal cu ritm: salvarea
+   sau armarea ei e refuzată (422), la fel și setarea unui ritm pe acel
+   canal cât timp regula e armată. O abatere ținută peste 5 minute apare ca
+   `drift_held_s` / `drift_held_long` în starea regulii și pe pagina
+   Status.
 
 Publicat: **`mbg/rules/<id>/state`** reținut `{mode, enabled, state, signal,
 units: {<unitate>: {state, want, clamp, paused_until, last_action, ignored,
@@ -1884,6 +2454,8 @@ autentificare. **Armarea nu e disponibilă prin MQTT** — doar din interfață
 | Comenzile din Node-RED / HA întorc acum 409 | o regulă armată deține ținta — trimite `override_s`, folosește *Pauză…*, sau pune regula înapoi în shadow |
 | Armarea e refuzată | `security.allow_writes` oprit, fără autentificare / `API_KEY`, sau regula nu poate rula (motivul e pe card) |
 | *reassert* la fiecare câteva minute | dispozitivul nu ține valoarea cerută (ceasul lui propriu de revenire, un al doilea scriitor) — citește `…/cmd/result` și jurnalul Decizii |
+| Deciziile spun *cancelled — held / yielded / paused* | scrierea a fost întrebată din nou la magistrală și nu mai era valabilă (§14c.3 pasul 4); regula o trimite din nou când are voie — nimic de reparat dacă nu se repetă |
+| *drift seen — <canal>: …* și corecția așteaptă | ritmul canalului (`min_interval_s`, `min_off_s`, porniri pe oră) o ține; pagina Status numește o regulă ținută peste 5 minute |
 | Alerta *rule … cannot apply …* | trei eșecuri la rând: scrieri oprite, unitate blocată la scriere, protecție picată (model 123 / factor de scală), fără sursă Modbus — rulează comanda de mână din fila Comenzi a unității ca să vezi motivul |
 
 ---
@@ -2264,6 +2836,13 @@ are o capcană, e oferită alternativa corectă.
 | Înscrierea passkey eșuează | ești pe un URL cu IP sau pe HTTP simplu — folosește `localhost` sau un nume de host peste HTTPS |
 | Configurația s-a stricat după o editare | pornirea restaurează automat ultima configurație bună; fișierul stricat e păstrat ca `config.yaml.bad`; sau revino la un snapshot din Setări → Backup și restaurare |
 | Scrierile întorc 403 | `security.allow_writes` oprit, fără acreditare (autentificare/cheie API), registrul nedeclarat inscriptibil, sau valoare în afara `write_min`/`write_max` |
+| Un dispozitiv nou nu scrie nimic / valorile lui de configurare rămân goale | are scrierile blocate, ca orice dispozitiv nou — ⋯ → **Deblochează scrierile…** (§5.2) |
+| *Acest dispozitiv a fost modificat în altă parte de când l-ați deschis.* (412) | alt tab sau un client API l-a salvat între timp — **Reîncarcă dispozitivul** păstrează ce ai scris și marchează ce diferă; dialogul de editare îți reaplică singur modificările și așteaptă **Salvează** |
+| Un port serial apare nemapat | portul nu e în containerul gateway-ului: adaugă linia `devices:` (sau `--device`) pe care o arată, apoi recreează containerul; la un adaptor USB mapează legătura `/dev/serial/by-id/…` |
+| Adaugă dispozitiv refuză Master pe o magistrală | alt dispozitiv al acestui gateway doar ascultă acolo (sau invers): niciodată doi masteri, niciodată o interogare pe o magistrală ascultată — alege Listen-only sau dezactivează întâi ascultătorul |
+| Interfața CAN nu poate fi aleasă | e oprită sau nu e listen-only — rulează pe host comanda `ip link … listen-only on` pe care o arată pasul, apoi **Reîmprospătează** (§5.5) |
+| Verificarea spune *ocupat* sau *409* | pe acea magistrală rulează altă previzualizare sau scanare, ori magistrala pornește — **Rulează din nou** după un moment; rulează cel mult 4 previzualizări odată (429) |
+| Un dispozitiv șters lipsește din *Dispozitive șterse* | configurația lui n-a putut fi păstrată la ștergere (mesajul a spus-o) sau a fost **Uitat** |
 
 Tot blocat? Deschide un issue — include `docker compose logs` și
 configurația ta (cu secretele ascunse).

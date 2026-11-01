@@ -1,5 +1,5 @@
 // Multi-Bus Gateway — multi-protocol Modbus/HTTP/MQTT acquisition gateway.
-// Copyright (C) 2024-2026 Stefan Maldaianu <sm26449@diysolar.ro>  — AGPL-3.0-or-later
+// Copyright (C) 2024-2026 Stefan Maldaianu <stefan@multibus.dev>  — AGPL-3.0-or-later
 //
 // An MQTT device's form: the topic, its variables and the password are shown
 // as •••• with an eye; the keepalive is the template's, its own (every N s)
@@ -7,7 +7,7 @@
 //
 //   CHROMIUM_PATH=… MBG_URL=http://127.0.0.1:8099 node mqtt_device_form_e2e.mjs
 import { chromium } from 'playwright';
-import { openDeviceTab } from './lib/device-page.mjs';
+import { openDeviceTab, saveDeviceEditor } from './lib/device-page.mjs';
 
 const BASE = process.env.MBG_URL || 'http://127.0.0.1:8099';
 const DEV = 'e2e-gx';
@@ -70,7 +70,7 @@ try {
   await page.selectOption('#ddvKaMode', 'custom');
   check('choosing "its own" shows them', await page.locator('#ddvKaFields').isVisible());
   await page.fill('#ddvKaEvery', '600');
-  await page.click('[data-action="saveDeviceDetail"]');
+  await saveDeviceEditor(page);                      // the Edit modal's one Save (L3.4)
   await page.waitForTimeout(1200);
   let c = await conn();
   check('its own keepalive is saved (600 s)', c.keepalive?.every_s === 600
@@ -81,7 +81,7 @@ try {
   await openDeviceTab(page, 'connection');
   await page.waitForSelector('#ddvKaMode');
   await page.selectOption('#ddvKaMode', 'off');
-  await page.click('[data-action="saveDeviceDetail"]');
+  await saveDeviceEditor(page);                      // the Edit modal's one Save (L3.4)
   await page.waitForTimeout(1200);
   c = await conn();
   check('off is saved as false', c.keepalive === false, JSON.stringify(c.keepalive));
@@ -90,7 +90,7 @@ try {
   await openDeviceTab(page, 'connection');
   await page.waitForSelector('#ddvKaMode');
   await page.selectOption('#ddvKaMode', 'template');
-  await page.click('[data-action="saveDeviceDetail"]');
+  await saveDeviceEditor(page);                      // the Edit modal's one Save (L3.4)
   await page.waitForTimeout(1200);
   c = await conn();
   check("back to the template's: no keepalive of its own", c.keepalive == null, JSON.stringify(c.keepalive));

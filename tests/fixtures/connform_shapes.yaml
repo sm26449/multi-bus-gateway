@@ -80,3 +80,13 @@ devices:
     template: mqtt_json_generic
     enabled: false
     connection: {protocol: mqtt, broker: 192.0.2.10, port: 1883, topic: 'x/#', keepalive: false}
+  - id: seplos-listen
+    name: Seplos V2 pack, listened to on a local port
+    template: seplos_bms_v2
+    enabled: false
+    connection: {protocol: seplos_v2, serial_port: /dev/ttyBMS0, baudrate: 9600, parity: N, unit_id: 2, mode: listen}
+  - id: seplos-net
+    name: Seplos V2 pack polled through a bridge's TCP port (mode not stored)
+    template: seplos_bms_v2
+    enabled: false
+    connection: {protocol: seplos_v2-tcp, host: 192.0.2.95, port: 4198, unit_id: 0}

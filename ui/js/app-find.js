@@ -1,5 +1,5 @@
 /* Multi-Bus Gateway — multi-protocol Modbus/HTTP/MQTT acquisition gateway.
- * Copyright (C) 2024-2026 Stefan Maldaianu <sm26449@diysolar.ro>
+ * Copyright (C) 2024-2026 Stefan Maldaianu <stefan@multibus.dev>
  * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 // find — augments JanitzaMonitor.prototype
@@ -12,19 +12,43 @@
 
 Object.assign(JanitzaMonitor.prototype, {
 
-    // ── kinds (the server's device_kind.py taxonomy) ──────────────────────
+    // ── types (the server's catalog: GET /api/device-types, ADR-0027) ──────
+    // The built-ins' icons stay here so a list drawn before the catalog
+    // arrives still has them; the order, the user types, their words and
+    // their icons come from the catalog (_loadDeviceTypes).
     _KIND_ICON: {
         meter: 'bi-speedometer2', inverter: 'bi-sun', battery: 'bi-battery-half',
         site: 'bi-hdd-stack', heat_pump: 'bi-thermometer-sun', drive: 'bi-gear-wide-connected',
-        ups: 'bi-plug', charger: 'bi-ev-station', sensor: 'bi-thermometer-half', other: 'bi-box',
+        ups: 'bi-plug', charger: 'bi-ev-station', sensor: 'bi-thermometer-half',
+        converter: 'bi-arrow-left-right', other: 'bi-box',
     },
-    _KIND_ORDER: ['meter', 'inverter', 'battery', 'site', 'heat_pump', 'drive', 'ups', 'charger', 'sensor', 'other'],
+    _KIND_ORDER: ['meter', 'inverter', 'battery', 'site', 'heat_pump', 'drive', 'ups', 'charger', 'sensor', 'converter', 'other'],
 
+    async _loadDeviceTypes() {
+        let cat = null;
+        try { const r = await fetch('/api/device-types'); if (r.ok) cat = await r.json(); }
+        catch (e) { console.error(e); }
+        if (!cat || !Array.isArray(cat.types)) return this._deviceTypes || null;
+        this._deviceTypes = cat;
+        this._deviceTypeById = Object.fromEntries(cat.types.map(x => [x.id, x]));
+        // `other` last, user types before it: the order every list and facet uses
+        const ids = cat.types.map(x => x.id).filter(id => id !== 'other');
+        this._KIND_ORDER = [...ids, 'other'];
+        this._KIND_ICON = { ...JanitzaMonitor.prototype._KIND_ICON,
+            ...Object.fromEntries(cat.types.filter(x => !x.builtin).map(x => [x.id, x.icon_class || 'bi-box'])) };
+        this._KIND_WORDS = { ...JanitzaMonitor.prototype._KIND_WORDS,
+            ...Object.fromEntries(cat.types.filter(x => !x.builtin).map(x => [x.id, Object.values(x.labels || {}).join(' ')])) };
+        return cat;
+    },
+
+    // a type's words: the catalog's in the UI language (English the
+    // fallback), else the language file, else the id
     _kindLabel(k) {
-        const en = { meter: 'Meter', inverter: 'Inverter', battery: 'Battery / BMS', site: 'System / GX',
-                     heat_pump: 'Heat pump', drive: 'Drive (VFD)', ups: 'UPS', charger: 'EV charger',
-                     sensor: 'Sensor', other: 'Other' };
-        return this.t(`kind.${k || 'other'}`, en[k] || en.other);
+        const id = k || 'other';
+        const ty = (this._deviceTypeById || {})[id];
+        if (ty && !ty.builtin) return (ty.labels || {})[this._lang] || (ty.labels || {}).en || id;
+        const fallback = ty ? ((ty.labels || {}).en || id) : (id === 'other' ? 'Other' : id);
+        return this.t(`kind.${id}`, fallback);
     },
 
     // the kind as a small icon a sighted user scans for, and words for a
@@ -149,7 +173,7 @@ Object.assign(JanitzaMonitor.prototype, {
     _findState(page) {
         this._find = this._find || {};
         if (!this._find[page]) {
-            const facets = page === 'devices' ? ['kind', 'state', 'proto'] : ['kind', 'vendor', 'proto', 'origin'];
+            const facets = page === 'devices' ? ['kind', 'label', 'state', 'proto'] : ['kind', 'vendor', 'proto', 'origin'];
             const views = page === 'devices' ? ['tree', 'list'] : ['cards', 'list'];
             this._find[page] = {
                 q: '', sel: Object.fromEntries(facets.map(f => [f, new Set()])),
@@ -199,9 +223,9 @@ Object.assign(JanitzaMonitor.prototype, {
     _findFacetLabel(page, f) {
         const t = (k, d) => this.t(k, d);
         return ({
-            kind: t('find.facet.kind', 'Kind'), state: t('find.facet.state', 'State'),
+            kind: t('find.facet.kind', 'Type'), state: t('find.facet.state', 'State'),
             proto: t('find.facet.proto', 'Protocol'), vendor: t('find.facet.vendor', 'Vendor'),
-            origin: t('find.facet.origin', 'Origin'),
+            origin: t('find.facet.origin', 'Origin'), label: t('find.facet.label', 'Label'),
         })[f] || f;
     },
 
@@ -403,10 +427,12 @@ Object.assign(JanitzaMonitor.prototype, {
         const fold = x => this._fold(x);
         st.items = (devices || []).map(d => ({
             id: d.id,
-            f: { kind: [d.kind || 'other'], state: [this._devState(d)], proto: this._devProtos(d) },
+            // filed by its type (a user type included, ADR-0027), found by its labels
+            f: { kind: [d.type || d.kind || 'other'], label: d.labels || [], state: [this._devState(d)], proto: this._devProtos(d) },
             text: fold([d.id, d.name, d.template, d.host, d.http_url, d.mqtt_in_topic, d.mqtt_in_broker,
                         d.endpoint_id, epName[d.endpoint_id], d.component_of, byId[d.component_of]?.name,
                         d.bridge, d.kind, this._kindLabel(d.kind), this._KIND_WORDS[d.kind || 'other'],
+                        d.type, d.type ? this._kindLabel(d.type) : '', ...(d.labels || []),
                         ...this._devProtos(d),
                         // searched in either language: "unit 3" and the page's own word
                         d.unit_id != null ? `unit ${d.unit_id} ${this.t('common.unitN', 'unit {n}', { n: d.unit_id })}` : '',
@@ -602,7 +628,7 @@ Object.assign(JanitzaMonitor.prototype, {
         if (!box) return;
         const t = (k, d, p) => this.t(k, d, p);
         const cols = [
-            ['name', t('find.col.name', 'Name')], ['kind', t('find.facet.kind', 'Kind')],
+            ['name', t('find.col.name', 'Name')], ['kind', t('find.facet.kind', 'Type')],
             ['state', t('find.facet.state', 'State')], ['proto', t('find.facet.proto', 'Protocol')],
             ['template', t('find.col.template', 'Template')], ['age', t('find.col.seen', 'Last value')],
             ['part', t('find.col.partOf', 'Part of')],
@@ -631,18 +657,19 @@ Object.assign(JanitzaMonitor.prototype, {
         <div class="find-table-wrap">
         <table class="find-table">
             <caption class="sr-only">${this._esc(t('find.devTable', 'Devices, one row each'))}</caption>
-            <thead><tr>${cols.map(([k, label]) => `<th scope="col" aria-sort="${ariaSort(k)}"><button type="button" class="find-sort" data-sort="${k}">${this._esc(label)}<i aria-hidden="true" class="bi ${k === key ? (desc ? 'bi-caret-down-fill' : 'bi-caret-up-fill') : 'bi-chevron-expand'}"></i></button></th>`).join('')}</tr></thead>
+            <thead><tr>${cols.map(([k, label]) => `<th scope="col" aria-sort="${ariaSort(k)}"><button type="button" class="find-sort" data-sort="${k}">${this._esc(label)}<i aria-hidden="true" class="bi ${k === key ? (desc ? 'bi-caret-down-fill' : 'bi-caret-up-fill') : 'bi-chevron-expand'}"></i></button></th>`).join('')}<th scope="col"><span class="sr-only">${this._esc(t('ddv.actionsShort', 'Actions'))}</span></th></tr></thead>
             <tbody>${rows.map(d => `
                 <tr data-f="${this._esc(d.id)}">
                     <td><span class="status-dot" style="--dot:${hc[d.data_health] || hc.idle}" aria-hidden="true"></span>
                         <a href="#/devices/${encodeURIComponent(d.id)}" class="find-open">${this._esc(d.name || d.id)}</a>
                         <span class="dev-chip">${this._esc(d.id)}</span></td>
-                    <td>${this._kindCellHtml(d.kind)}</td>
+                    <td>${this._kindCellHtml(d.type || d.kind)}</td>
                     <td>${this._esc(this._verdictWord(d))}</td>
                     <td>${this._esc(this._devProtos(d).map(p => this._protoLabel(p)).join(' + '))}</td>
                     <td>${this._esc(d.template || '—')}</td>
                     <td class="num">${d.enabled === false ? '—' : d.staleness_age_s != null ? this._esc(t('find.ago', '{s} s ago', { s: d.staleness_age_s })) : '—'}</td>
                     <td>${this._esc(partOf(d) || '—')}</td>
+                    <td class="find-act">${this._devRowMenuHtml(d, 'table')}</td>
                 </tr>`).join('')}</tbody>
         </table></div>`;
         box._for = st.items;
@@ -744,7 +771,7 @@ Object.assign(JanitzaMonitor.prototype, {
         const sort = st.sort || 'name';
         const desc = sort.startsWith('-');
         const key = sort.replace(/^-/, '');
-        const cols = [['name', t('find.col.name', 'Name')], ['kind', t('find.facet.kind', 'Kind')],
+        const cols = [['name', t('find.col.name', 'Name')], ['kind', t('find.facet.kind', 'Type')],
             ['vendor', t('find.facet.vendor', 'Vendor')], ['proto', t('find.facet.proto', 'Protocol')],
             ['origin', t('find.facet.origin', 'Origin')], ['used', t('find.col.usedBy', 'Used by')],
             ['regs', t('templates.regs', 'registers')]];
@@ -764,7 +791,7 @@ Object.assign(JanitzaMonitor.prototype, {
         <div class="find-table-wrap">
         <table class="find-table">
             <caption class="sr-only">${this._esc(t('find.tplTable', 'Templates, one row each'))}</caption>
-            <thead><tr>${cols.map(([k, label]) => `<th scope="col" aria-sort="${ariaSort(k)}"><button type="button" class="find-sort" data-sort="${k}">${this._esc(label)}<i aria-hidden="true" class="bi ${k === key ? (desc ? 'bi-caret-down-fill' : 'bi-caret-up-fill') : 'bi-chevron-expand'}"></i></button></th>`).join('')}</tr></thead>
+            <thead><tr>${cols.map(([k, label]) => `<th scope="col" aria-sort="${ariaSort(k)}"><button type="button" class="find-sort" data-sort="${k}">${this._esc(label)}<i aria-hidden="true" class="bi ${k === key ? (desc ? 'bi-caret-down-fill' : 'bi-caret-up-fill') : 'bi-chevron-expand'}"></i></button></th>`).join('')}<th scope="col"><span class="sr-only">${this._esc(t('ddv.actionsShort', 'Actions'))}</span></th></tr></thead>
             <tbody>${rows.map(x => `
                 <tr data-f="${this._esc(x.id)}">
                     <td><button type="button" class="find-open link-btn" data-tm-view="${this._esc(x.id)}">${this._esc(x.name || x.id)}</button> <span class="dev-chip">${this._esc(x.id)}</span></td>
@@ -786,43 +813,5 @@ Object.assign(JanitzaMonitor.prototype, {
         }));
         box.querySelectorAll('[data-tm-view]').forEach(b => b.addEventListener('click', () => this.viewTemplate(b.dataset.tmView)));
     },
-
-    // ── a device's kind, set by an administrator ──────────────────────────
-    async setDeviceKind(id) {
-        const t = (k, d, p) => this.t(k, d, p);
-        const dev = (this._devices || []).find(d => d.id === id) || {};
-        const own = dev.kind_source === 'override' ? dev.kind : '';
-        const derived = dev.kind_source === 'override' ? '' : (dev.kind || 'other');
-        // a device measured only by its meters: the kinds the gateway allows
-        // for it, and nothing to derive from (no template)
-        const mo = dev.protocol === 'none'
-            ? ((await (this._meterRoles ? this._meterRoles() : null)) || {}).meter_only_kinds : null;
-        const options = mo
-            ? [...(mo.first || []), ...(mo.more || [])].map(k => ({ value: k, label: this._kindLabel(k) }))
-            : [{ value: '', label: t('kind.derive', 'Not set — derive it ({kind})', { kind: this._kindLabel(derived || 'other') }) }]
-                .concat(this._KIND_ORDER.filter(k => k !== 'other').map(k => ({ value: k, label: this._kindLabel(k) })));
-        let result = null;
-        const got = await this.askValues({
-            title: t('kind.setTitle', 'Kind of {name}', { name: dev.name || id }),
-            message: t('kind.setMsg', 'How the device is filed and found. It changes no reading, topic or history.'),
-            fields: [{ name: 'kind', label: t('find.facet.kind', 'Kind'), kind: 'select', options,
-                       initial: mo ? (dev.kind || options[0]?.value) : own, required: !!mo }],
-            confirmLabel: t('common.save', 'Save'),
-            submit: async v => {
-                const r = await fetch(`/api/devices/${encodeURIComponent(id)}/organise`, {
-                    method: 'PATCH', headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ kind: v.kind || null }),
-                });
-                const d = await r.json().catch(() => ({}));
-                if (!r.ok) return this._respError(r, d);
-                result = d;
-                return null;
-            },
-        });
-        if (!got || !result) return;
-        this.showToast('success', t('kind.saved', 'Kind saved'),
-            `${dev.name || id}: ${this._kindLabel(result.kind)} — ${this._kindSourceWords(result.kind_source)}`);
-        await this._fetchDevices(true);
-        if (this._devDetail && this._devDetail.id === id) await this.openDeviceDetail(id);
-    },
+    // a device's type, picked by an administrator: ⋯ → Type… (the Edit device dialog's Identity, app-device-edit.js)
 });

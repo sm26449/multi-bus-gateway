@@ -44,7 +44,7 @@ git clone https://github.com/sm26449/multi-bus-gateway.git && cd multi-bus-gatew
 
 # 2) Environment — uncomment and set the four REQUIRED secrets (the broker refuses a placeholder), optionally pin a release
 cp .env.example .env
-echo 'MBG_VERSION=3.84.2' >> .env      # a version, a minor line (3.84) or latest
+echo 'MBG_VERSION=3.92' >> .env        # a version (3.92.1), a minor line (3.92) or latest
 
 # 3) Pull and start the COMPLETE stack
 docker compose pull
@@ -148,7 +148,7 @@ docker run -d --name multi-bus-gateway --restart unless-stopped \
   -p 8080:8080 -p 1502-1512:1502-1512 -p 502:502 \
   --sysctl net.ipv4.ip_unprivileged_port_start=0 \
   --env-file .env -v "$PWD/config:/app/config" \
-  ghcr.io/sm26449/multi-bus-gateway:3.84.2
+  ghcr.io/sm26449/multi-bus-gateway:3.92
 docker logs multi-bus-gateway | grep -A3 'FIRST RUN'
 ```
 
@@ -163,10 +163,10 @@ together. Starting with `--user` skips the entrypoint's `chown`, so the
 
 ## D. The RTU serial bridge
 
-For Modbus RTU over a USB adapter the recommended path is the bundled
-`serial-bridge` service (ser2net + a supervisor): it owns the adapters,
-exposes each as a stable TCP endpoint on the internal Docker network, and
-the gateway stays unprivileged. It is an opt-in profile because it needs
+For Modbus RTU over a USB adapter or an RS-485 HAT the recommended path is
+the bundled `serial-bridge` service (ser2net + a supervisor): it owns the
+serial ports, exposes each as a stable TCP endpoint on the internal Docker
+network, and the gateway stays unprivileged. It is an opt-in profile because it needs
 `/dev`:
 
 ```bash
@@ -174,19 +174,82 @@ docker compose --profile rtu-bridge up -d
 ```
 
 - **Permissions.** `/dev` is mounted read-only and `device_cgroup_rules`
-  allow only ttyUSB (major 188) and ttyACM (major 166) nodes; the process runs
-  as uid 10002 in `dialout`. No udev rule is required on the host for a
-  standard USB adapter; if you add your own rules, keep the nodes group
-  `dialout`-readable.
+  allow exact device majors only: ttyUSB (188), ttyACM (166), the Pi's own
+  UARTs ttyAMA (204), plus four slots for a board's other UARTs that
+  `scripts/serial-access.sh` fills (below). The process runs as uid 10002 in
+  `dialout`. No udev rule is required on the host for a standard USB adapter;
+  if you add your own rules, keep the nodes group `dialout`-readable.
+- **RS-485 HAT ports appear in Scan.** The bridge lists the board's own
+  UARTs next to the USB adapters: `ttySC0`/`ttySC1` on SC16IS752 HATs such as
+  the Waveshare RS485 CAN HAT (B), `ttyAMA*`, real `ttyS*`, `ttymxc*`,
+  `ttyO*`, each keyed by the device behind it (`spi0.0:0`), so the key
+  survives a reboot. Every port has a status:
+  - `ok`: it can be picked;
+  - `no-access`: the container may not open it yet. An SC16IS7xx HAT gets
+    a *dynamic* device major at boot (509 on a Pi 5), which compose cannot
+    know. Run, in the directory of `docker-compose.yml`:
+
+    ```bash
+    sh scripts/serial-access.sh        # writes BRIDGE_TTY_1..4 into .env
+    docker compose --profile rtu-bridge up -d serial-bridge
+    ```
+
+    The script allows exactly the majors of the UARTs present (a real
+    `ttyS` by its exact minor, since major 4 also holds the virtual
+    consoles), skipping consoles and Bluetooth UARTs. It refuses anything
+    that is not a tty and never writes a wildcard. It also records which
+    driver each slot is for, so after a kernel update that moves the HAT to
+    another major the bridge warns that the slot is stale (shown on the
+    bridge in the gateway). Run the script again then, or after a new HAT;
+    the Scan shows the command next to the port, with a Copy button.
+
+    With a plain `docker run` instead of compose, the fix shown is the exact
+    rule to recreate the container with, e.g.
+    `--device-cgroup-rule='c 509:* rmw'` (a real `ttyS`: `'c 4:64 rmw'`).
+  - `not-enabled`: a UART of the SoC itself (`ttyAMA*`, a real `ttyS*`,
+    `ttymxc*`, `ttyO*`). It may already be in use by a GPS, a login console
+    or a modem, which the bridge cannot see, so it is served only once you
+    enable it: **Enable** in the bridge's Buses dialog, or `BRIDGE_INCLUDE`
+    in `.env`. RS-485 HAT channels (`ttySC*`) need no opt-in;
+  - `reserved`: the kernel console or the Bluetooth UART, never served;
+  - `busy`: another program holds it exclusively.
+
+  **`BRIDGE_TTY_1..4` are trusted operator input.** The compose files grant
+  whatever they contain. The script only ever writes exact tty majors; a
+  hand-written wildcard (`*:*`) there removes the container's device
+  isolation.
+
+  The gateway's UI shows the ports it cannot use, with the reason, but does
+  not let you pick them. Details: [serial-bridge-api.md](serial-bridge-api.md#get-adapters).
+- **One owner per line.** A port mapped straight into the gateway (direct
+  serial, [rtu-serial.md §1](rtu-serial.md#1-direct-serial)) cannot also be
+  served by the bridge. Put it in `BRIDGE_EXCLUDE`, or move the device to the
+  bridge. The bridge sees only a program that holds a port **exclusively**
+  (as `busy`); one that opened it plainly — pyserial's default, gpsd, a
+  getty — is invisible to it.
 - **Exclusions.** An adapter another container already owns (a BMS, say)
   must be listed in `BRIDGE_EXCLUDE` in `.env` (`1a86:7523@1-1`, a stable id,
-  or a `/dev` path) — cross-container in-use detection cannot work.
+  or a `/dev` path). Cross-container in-use detection only works when the
+  other program locks the port.
 - **`SERIAL_BRIDGE_URL`.** The gateway reaches the bridge's control API at
   `http://mbg-serial-bridge:7000` by default; set the variable only if you
   rename the container. The control port is published on `127.0.0.1` only;
   data ports 7001–7099 are never published.
-- Then **Add device → Modbus RTU → Over network → Scan** and pick the
-  adapter. Baud/parity are set on the bridge (9600 8N1), not per device.
+- Then add the bridge on the Devices page (**Add bridge → MBG serial
+  bridge**, host `mbg-serial-bridge`), and on one of its buses press
+  **+ Device**: Add Device opens on its Connection step with that bus filled
+  in ([rtu-serial.md §2.2](rtu-serial.md#22-add-a-device-over-the-bridge)).
+  Baud/parity are set on the bridge's bus (9600 8N1), not per device. A HAT
+  whose RS-485 chip does not switch direction by itself needs the port's
+  **RS-485** box ticked in the bridge's Buses dialog.
+
+**Direct serial instead.** Map the adapter into the gateway service with a
+`devices:` line in a compose override, preferably by its
+`/dev/serial/by-id/…` link or a udev alias, since a `ttyUSBn` name can
+change on a replug. Add Device lists the ports of the host: a port the host
+has but the container does not shows **Not mapped**, with the `devices:`
+line (and, for `docker run`, the `--device` flag) to add; recreate the
+container, then **Refresh** ([rtu-serial.md §1.1](rtu-serial.md#11-the-port-list)).
 
 The bridge image is `ghcr.io/sm26449/multi-bus-gateway-serial-bridge` and
 follows the same `MBG_VERSION` tag. Direct passthrough (`devices:` in a
@@ -210,8 +273,31 @@ compose override) is the alternative — full comparison in
   group for one device, 15–20 % for 5 devices + 3 meters, and a 250 ms
   cadence on a big map saturates a core. Rule of thumb: ~4–5 devices + ~3
   virtual meters with realtime ≥ 1 s; a Pi 4/5 has 2–3× the headroom.
+- **Memory cgroup.** Raspberry Pi OS boots with the kernel's memory controller
+  off: `docker stats` shows 0 B and container memory limits are not enforced.
+  Add `cgroup_enable=memory` to the single line in `/boot/firmware/cmdline.txt`
+  and reboot when you want limits or memory figures (capacity tests need it).
 - Keep sub-second polling for the one register that drives a control loop;
   put counters and diagnostics in the `normal`/`slow` groups.
+- **CAN (listen-only).** A CAN interface (a USB adapter, an MCP2515 HAT such
+  as the Waveshare RS485 CAN HAT) is set up **on the host**, listen-only, at
+  the bus's bitrate — the gateway never changes it and never transmits:
+
+  ```sh
+  ip link set can0 down
+  ip link set can0 type can bitrate 500000 listen-only on
+  ip link set can0 up
+  ip -details link show can0 | grep LISTEN-ONLY     # check
+  ```
+
+  In Docker, a container sees the host's CAN interfaces only with host
+  networking (Compose: `network_mode: host`; `docker run --network host`). No
+  capability is needed to read. Host networking means the container's ports are
+  the host's ports: published `ports:` are ignored, and the UI, the virtual
+  meters, :502 and OPC UA bind directly on the host — check for port clashes.
+  The container stays on the host network for everything else too. Listen-only
+  is set on the host (`ip link … listen-only on`). On bare metal (path F) a reading socket needs
+  no privilege either. See [can.md](can.md).
 - **Enclosure:** [docs/enclosures](enclosures/) has a 3D-printable DIN-rail
   case for a Pi 5 with an NVMe HAT, the Waveshare RS485 CAN HAT (B) and a
   40 mm fan.
@@ -351,9 +437,18 @@ docker compose logs multi-bus-gateway | tail -50    # "Multi-Bus Gateway startin
   degrades the JSON `status` but stays 200.
 - **First login** works with the generated password; **Config → Security**
   to change it.
-- **First device**: **Devices → Add device** (or **Discover devices** for a
-  CIDR scan / SunSpec walk / MQTT browse), **Test connection**, pick a
-  template, save — the device polls immediately and its card turns green.
+- **First device**: a fresh install starts with **no device** — none is
+  assumed (until 3.95 a Janitza UMG 512-PRO was created by default; an
+  upgraded install that has one keeps it, see `primary_device` in the
+  [configuration reference](config-reference.md)). After the first login the
+  gateway offers to add one: **Devices → Add Device** (or **Discover devices**
+  for a CIDR scan / SunSpec walk / MQTT browse) — *What is it?*,
+  *Connection* (with **Test connection**), *Check*, *Name & save* — and the
+  device polls immediately and its card turns green. It is created
+  **write-locked**: nothing is written to it until an admin chooses ⋯ →
+  **Unlock writes…**.
+  Until then the gateway publishes only its own topics (`mbg/gateway/status`,
+  `mbg/gateway/site/meta`).
   With the bundled stack, `docker compose --profile debug up -d` puts MQTT
   Explorer on `127.0.0.1:4000` to watch the topics flow.
 - **Virtual meter**: only after the source is fresh — add an instance on a
@@ -361,7 +456,7 @@ docker compose logs multi-bus-gateway | tail -50    # "Multi-Bus Gateway startin
   consumer's reads ([MANUAL.md §11](MANUAL.md#11-virtual-meters--step-by-step)).
 
 See also: [operations.md](operations.md) · [troubleshooting.md](troubleshooting.md) ·
-[upgrade-guide.md](upgrade-guide.md) · [rtu-serial.md](rtu-serial.md) ·
-[MANUAL.md](MANUAL.md)
+[upgrade-guide.md](upgrade-guide.md) · [rtu-serial.md](rtu-serial.md) · [seplos-v2.md](seplos-v2.md) · [can.md](can.md) ·
+[rtu-over-network.md](rtu-over-network.md) · [MANUAL.md](MANUAL.md)
 
 Verified against 3.83.0

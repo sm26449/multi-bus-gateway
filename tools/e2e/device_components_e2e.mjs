@@ -1,5 +1,5 @@
 // Multi-Bus Gateway — multi-protocol Modbus/HTTP/MQTT acquisition gateway.
-// Copyright (C) 2024-2026 Stefan Maldaianu <sm26449@diysolar.ro>  — AGPL-3.0-or-later
+// Copyright (C) 2024-2026 Stefan Maldaianu <stefan@multibus.dev>  — AGPL-3.0-or-later
 //
 // The components of a device, against a
 // gateway that has a device PARENT with components TYPES… already added (the
@@ -9,7 +9,7 @@
 //   CHROMIUM_PATH=… MBG_URL=http://127.0.0.1:8099 PARENT=gx-test node tools/e2e/device_components_e2e.mjs
 import { chromium } from 'playwright';
 import { watchDialogs } from './lib/dialogs.mjs';
-import { openDeviceTab } from './lib/device-page.mjs';
+import { openDeviceTab, openDeviceEditor } from './lib/device-page.mjs';
 
 const BASE = process.env.MBG_URL || 'http://127.0.0.1:8099';
 const PARENT = process.env.PARENT || 'gx-test';
@@ -55,9 +55,13 @@ try {
   await page.click(`[data-component-toggle="${PARENT}"]`);
   check('Devices: and unfolds', await page.locator(`[data-component-units="${PARENT}"]`).isVisible());
 
-  // the parent's page
+  // the parent's page: the card lists them; adding, renaming and removing
+  // are its editor's (⋯ → Components…, L3.3)
   await page.evaluate(p => window.app.openDeviceDetail(p), PARENT);
   await page.waitForSelector('#devComponentsCard tr[data-comp]');
+  check('parent: the card\'s view changes nothing (no Rename, Remove, Add)',
+        !(await page.locator('#devComponentsCard [data-action="renameComponentUi"]:visible, #devComponentsCard [data-action="removeComponentUi"]:visible, #compAddForm:visible').count()));
+  await openDeviceEditor(page, 'components');
   await page.waitForTimeout(400);
   await shot(page, 'comp-card');
   check('parent: the Components card lists them', (await page.locator('#devComponentsCard tr[data-comp]').count()) === comps.length);
@@ -107,8 +111,9 @@ try {
   const head = await page.locator('#deviceDetailView .section-header').innerText();
   check('component: the breadcrumb names its parent', head.includes(comps[0].name) && /›/.test(head));
   check('component: the banner says what it is part of', /Part of/.test(await page.locator('[data-dpanel="overview"]').innerText()));
-  check('component: no delete of its own, an Open device', (await page.locator('#deviceDetailView .header-actions [data-action="deleteDevice"]').count()) === 0
-    && (await page.locator('#deviceDetailView .header-actions [data-action="openDeviceDetail"]').count()) === 1);
+  // (L3.10) the menu's Danger item is Remove… for a component (through its parent), never Delete…
+  check('component: Remove…, not Delete…, and an Open device', /Remove/.test(await page.locator('#deviceDetailView .header-actions [data-ddv-act="delete"]').textContent() || '')
+    && (await page.locator('#deviceDetailView .header-actions [data-ddv-act="open-parent"]').count()) === 1);
   await openDeviceTab(page, 'connection');
   check('component: no connection form', (await page.locator('#ddvBroker, #ddvProtoShown').count()) === 0);
   await page.click('#deviceDetailView [data-action="closeDeviceDetail"]');

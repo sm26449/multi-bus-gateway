@@ -1,5 +1,5 @@
 # Multi-Bus Gateway — multi-protocol Modbus/HTTP/MQTT acquisition gateway.
-# Copyright (C) 2024-2026 Stefan Maldaianu <sm26449@diysolar.ro>  — AGPL-3.0-or-later
+# Copyright (C) 2024-2026 Stefan Maldaianu <stefan@multibus.dev>  — AGPL-3.0-or-later
 """Endpoint-level aggregates — an endpoint is a real entity, so it publishes its own
 output like any device.
 
@@ -66,6 +66,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from . import role as gateway_role
 from .canonical_fields import mqtt_topic_for
+from .device_types import role_is
 
 logger = logging.getLogger(__name__)
 
@@ -231,7 +232,7 @@ def compute_endpoint_aggregates(config, registry, endpoint_id: str,
     asleep = 0
     asleep_ids = []
     elev = None
-    if _sun_elevation is not None and any(getattr(d, 'role', '') == 'inverter' for d in expected):
+    if _sun_elevation is not None and any(role_is(d, 'inverter') for d in expected):
         try:
             elev = _sun_elevation(endpoint_id)
         except Exception:  # noqa: BLE001 — no sun, no asleep handling
@@ -280,7 +281,7 @@ def compute_endpoint_aggregates(config, registry, endpoint_id: str,
             if elev is not None:
                 _last_fresh_elev[dev.id] = elev
         elif (elev is not None and elev < ASLEEP_BELOW_DEG
-              and getattr(dev, 'role', '') == 'inverter'
+              and role_is(dev, 'inverter')
               and (elev < NIGHT_BELOW_DEG
                    or _last_fresh_elev.get(dev.id, 90.0) < ASLEEP_BELOW_DEG)):
             # asleep: what it sums is 0, not unknown — the same paths the
@@ -421,7 +422,26 @@ class EndpointAggregator(threading.Thread):
         # change-detection contract as every other sink, so an endpoint standing
         # still overnight does not write 8 640 identical points per field
         self._influx_last: Dict[str, Dict[str, Any]] = {}
+        # ADR-0029: when each total / output was last written (monotonic), so a
+        # total standing still (0 W all night) is rewritten every heartbeat
+        self._influx_at: Dict[str, Dict[str, float]] = {}
+        self._influx_out_at: Dict[str, float] = {}
         self._ensured: set = set()
+
+    def _heartbeat(self, endpoint: Dict) -> int:
+        """The installation's influxdb.heartbeat_interval when it sets a valid
+        one, else the gateway's (Settings → InfluxDB)."""
+        from .config import heartbeat_seconds
+        own = heartbeat_seconds((endpoint.get("influxdb") or {}).get("heartbeat_interval"))
+        if own is not None:
+            return own
+        gw = getattr(getattr(self._config, "influxdb", None), "heartbeat_interval", 0)
+        return heartbeat_seconds(gw) or 0
+
+    @staticmethod
+    def _quiet(at: Optional[float], hb: int, now: float) -> bool:
+        """An unchanged value stays unwritten until it has been quiet hb s."""
+        return not (hb > 0 and at is not None and now - at >= hb)
 
     def stop(self):
         self._stop.set()
@@ -530,6 +550,7 @@ class EndpointAggregator(threading.Thread):
         except Exception:  # noqa: BLE001 — influx client optional in tests
             return
         default_bucket = endpoint_bucket(endpoint, pid)
+        hb = self._heartbeat(endpoint)
         changed_only_default = getattr(influx, "publish_mode", "changed") == "changed"
         for out in outs:
             if not isinstance(out, dict) or not bool(out.get("enabled", True)):
@@ -548,7 +569,9 @@ class EndpointAggregator(threading.Thread):
             oid = str(out.get("id") or out.get("measurement"))
             mode = str(out.get("mode") or ("changed" if changed_only_default else "every"))
             key = f"{pid}/@{oid}"
-            if mode == "changed" and self._influx_last.get(key) == fields:
+            now = time.monotonic()
+            if (mode == "changed" and self._influx_last.get(key) == fields
+                    and self._quiet(self._influx_out_at.get(key), hb, now)):
                 continue
             sub = lambda v: str(v).replace("${endpoint_id}", pid)  # noqa: E731
             bucket = sub(out.get("bucket") or "") or default_bucket
@@ -561,6 +584,7 @@ class EndpointAggregator(threading.Thread):
                 point = point.field(k, v)
             influx.write_point(point, ts=ts, bucket=bucket)
             self._influx_last[key] = fields
+            self._influx_out_at[key] = now
 
     def _publish_influx(self, endpoint: Dict, pid: str, agg: Dict[str, Any],
                         sub: str = ""):
@@ -597,12 +621,15 @@ class EndpointAggregator(threading.Thread):
         changed_only = getattr(influx, "publish_mode", "changed") == "changed"
         # change detection is per GROUP: two groups carry the same field names
         # and one shared memo would hide the second group's every value
-        last = self._influx_last.setdefault(f"{pid}/{sub}" if sub else pid, {})
-        ts = time.time()
+        memo = f"{pid}/{sub}" if sub else pid
+        last = self._influx_last.setdefault(memo, {})
+        at = self._influx_at.setdefault(memo, {})
+        hb = self._heartbeat(endpoint)
+        ts, now = time.time(), time.monotonic()
         for name, val in agg.items():
             if not isinstance(val, (int, float)) or isinstance(val, bool):
                 continue                     # status text is MQTT-only
-            if changed_only and last.get(name) == val:
+            if changed_only and last.get(name) == val and self._quiet(at.get(name), hb, now):
                 continue
             meas = "endpoint" if name in _META else (measurement_for(name) or "endpoint")
             point = (Point(meas)
@@ -617,3 +644,4 @@ class EndpointAggregator(threading.Thread):
                 point = point.tag("group", sub)
             influx.write_point(point, ts=ts, bucket=bucket)
             last[name] = val
+            at[name] = now

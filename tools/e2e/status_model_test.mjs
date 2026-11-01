@@ -1,5 +1,5 @@
 // Multi-Bus Gateway — multi-protocol Modbus/HTTP/MQTT acquisition gateway.
-// Copyright (C) 2024-2026 Stefan Maldaianu <sm26449@diysolar.ro>  — AGPL-3.0-or-later
+// Copyright (C) 2024-2026 Stefan Maldaianu <stefan@multibus.dev>  — AGPL-3.0-or-later
 //
 // What the Status page calls a problem (ui/js/status-model.js), with no
 // browser: night, standby, a cold start, rules, folding, outputs, config.
@@ -181,6 +181,29 @@ const run = (snap, memo = {}) => M.assess({ now: 1000, ...snap }, memo);
   check('since: device uses up_since_s', byKey['dev:a'].since === 240 && !byKey['dev:a'].seen);
   check('since: others are seen for 30 s', byKey.mqtt.since === 30 && byKey.mqtt.seen === true, byKey.mqtt);
   check('since: older first within a severity', m.issues[0].key === 'dev:a');
+}
+// a command lane falling behind (ADR-0018 D14): one warning per lane, named
+// after its device when the lane is one's, nothing on a standby
+{
+  const lanes = [{ lane: 'mqtt:gx/default', pending: 3, running: true, oldest_s: 17.4, max_age_s: 30 },
+                 { lane: 'bus:/dev/ttyUSB0', pending: 1, running: false, oldest_s: 20, max_age_s: 30 }];
+  const m = run({ status: { devices: [dev('gx', { name: 'Victron GX' })], command_lanes: lanes } });
+  const byKey = Object.fromEntries(m.issues.map(i => [i.key, i]));
+  const gx = byKey['lane:mqtt:gx/default'], bus = byKey['lane:bus:/dev/ttyUSB0'];
+  check('lane: a warning per lane', gx && bus && gx.sev === 'warn' && bus.sev === 'warn', keys(m));
+  check('lane: named after its device, opens it', gx.name === 'Victron GX' && gx.open.method === 'openDeviceDetail' && gx.open.args[0] === 'gx', gx);
+  check('lane: a bus by its wire', bus.name === '/dev/ttyUSB0' && bus.open.method === 'statusTab', bus);
+  check('lane: the numbers said', gx.what.k === 'status.why.laneLate' && gx.what.p.n === 3 && gx.what.p.s === 17 && gx.what.p.max === 30, gx.what);
+  check('lane: devices tab marked', m.pills.devices.sev === 'warn');
+  const sb = run({ status: { devices: [], command_lanes: lanes }, health: { role: { role: 'standby' } } });
+  check('lane: a standby says nothing', !sb.issues.some(i => i.key.startsWith('lane:')), keys(sb));
+  check('lane: none listed, nothing said', !run({ status: { devices: [] } }).issues.length);
+}
+// rules.recheck / commands.raw_lanes were removed in 3.97: an old status
+// still carrying them says nothing
+{
+  check('removed switches: nothing said',
+        !run({ status: { devices: [], rules_recheck: 'off', raw_lanes: 'off' } }).issues.length);
 }
 // levels and the titlebar count
 {

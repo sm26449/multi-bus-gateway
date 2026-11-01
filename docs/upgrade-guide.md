@@ -9,16 +9,16 @@ An upgrade is just a new image over the same mounted config:
 
 ```bash
 # published image (default): pick the release, pull it, restart on it
-MBG_VERSION=3.79.0 docker compose pull multi-bus-gateway
-MBG_VERSION=3.79.0 docker compose up -d multi-bus-gateway
+MBG_VERSION=3.98.0 docker compose pull multi-bus-gateway
+MBG_VERSION=3.98.0 docker compose up -d multi-bus-gateway
 
 # from source: same, with a local build
 git pull && docker compose build multi-bus-gateway && docker compose up -d multi-bus-gateway
 ```
 
-Put `MBG_VERSION=3.79.0` in `.env` to pin the tag for every later
+Put `MBG_VERSION=3.98.0` in `.env` to pin the tag for every later
 `docker compose up`; `latest` follows the newest release. **Rolling back** is
-the same command with the previous tag (`MBG_VERSION=3.78.2 …`) — read the
+the same command with the previous tag (`MBG_VERSION=3.92.1 …`) — read the
 downgrade warning below first, then restore the matching config snapshot
 (§Snapshots) if the newer version had migrated your config.
 
@@ -38,7 +38,77 @@ informational: loading never depends on it, so the compatibility contract is
 exactly the above. (Device *templates* additionally carry a `schema_version`,
 and newer template schemas are rejected with a clear error.)
 
-## Next release — the Device Builder moved out (breaking)
+## 3.92 → 3.98 — what to know before upgrading
+
+No config migration: every device, topic, bucket and Home Assistant id keeps
+its name. What changes on the first start, and what an API client or an
+automation may notice:
+
+**On the first start**
+- Two settings are written into `config.yaml`, each with one INFO log line:
+  `influxdb.heartbeat_interval: 600` (an unchanged value is written to
+  InfluxDB again every 10 minutes in `changed` mode; `0` turns it off) and a
+  `preview:` section (`max_requests: 4`, `listen_s: 10`, the budget of the
+  read check in Add Device). The file is written like a save from the UI, so
+  **comments and YAML anchors in it are dropped** — keep a copy if you rely
+  on them. In a high-availability pair, upgrade both nodes to the same
+  version.
+- The next save also writes `identity_scope: legacy` (and `gateway.id` when
+  one is set) and `primary_device:`. `legacy` keeps today's names; only a
+  fresh install uses the `gateway` scope (`mbg/<gateway>/devices/<id>`,
+  bucket `<gateway>-<id>`). Changing the scope later names new devices only.
+- A fresh install no longer creates a Janitza UMG 512 device; an existing
+  install keeps its device #1.
+
+**Devices and writes**
+- **New devices are write-locked**, and so are devices adopted from MQTT
+  discovery, new installations and restored devices (a restored one also
+  with its command bindings off). Unlock each one deliberately. Devices you
+  already have keep their setting.
+- **A bus that a device only listens on is never transmitted on.** Test, the
+  unit sweeps, the SunSpec walk and a bridge's scan answer 409 there, and a
+  save that would poll such a bus is refused. Disable the listener first if
+  you really mean to poll.
+- **A register that a command writes cannot be written raw** (Home
+  Assistant entity, `POST /api/devices/{id}/write`, admin and `unguarded`
+  included). Home Assistant drops such an entity; use the command.
+- **`POST /api/devices/{id}/write`** refuses what can never be written (an
+  HTTP device, a read-only bus such as a tap) with **400** before the write
+  lock's **403**. Raw writes queue per device and may answer 409
+  (`superseded`, `expired`, `cancelled`), 429, 503 or 504.
+- **MQTT commands complete asynchronously:** read `<prefix>/cmd/result` for
+  the outcome. The retained `cmd/<name>/state` holds only what was applied.
+- Turning a device's MQTT output or its Home Assistant discovery off now
+  removes its Home Assistant entities.
+
+**API clients**
+- `PATCH /api/devices/{id}` is new and **requires `If-Match`** (428 without
+  it, 412 when stale). The other device writes accept `If-Match` (412 when
+  stale) and behave as before without it. An ETag does not survive a
+  restart: read the device again.
+- Saves are checked more strictly, each refusal a 422 at its field: the
+  advanced connection keys have ranges, the primary meter's `retries` is a
+  whole number 0..10, `POST /api/pq/config` needs `poll_s` ≥ 30, topic
+  prefixes must be valid and must not overlap another one, a REST push
+  header sent with its masked value under a new name is refused, an
+  installation role must be a device type id. Values already stored are not
+  judged again until a save changes them.
+- A device keeps its protocol class: a Modbus device without a template can
+  no longer be turned into an HTTP or MQTT device with `PUT` — create a new
+  one.
+
+**In the UI**
+- The device page's tabs are **Live · Data · Setup · Diagnose**; editing is
+  in the **Edit** dialog (⋯ → Edit…, or the **E** key). Bookmarks to the old
+  Connection, Outputs, Attributes and Meters tabs open Setup at that section.
+- Add Device is a new dialog (Connection, Check, Name & save); serial ports
+  are picked from a list of the host's ports.
+
+`rules.recheck`, `commands.raw_lanes` and the environment variables
+`MBG_RULES_RECHECK` / `MBG_RAW_LANES` are not settings: if a file holds them
+they are ignored with one log line and dropped by the next save.
+
+## 3.92 — the Device Builder moved out (breaking)
 
 - ESP flashing, ESPHome builds and the node list moved out of the gateway;
   they are available in **MBG Pro**. The Builder card, `/api/builder/*`,

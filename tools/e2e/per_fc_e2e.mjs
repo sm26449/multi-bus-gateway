@@ -1,5 +1,5 @@
 // Multi-Bus Gateway — multi-protocol Modbus/HTTP/MQTT acquisition gateway.
-// Copyright (C) 2024-2026 Stefan Maldaianu <sm26449@diysolar.ro>  — AGPL-3.0-or-later
+// Copyright (C) 2024-2026 Stefan Maldaianu <stefan@multibus.dev>  — AGPL-3.0-or-later
 //
 // One address, four registers (3.91): coil 0, discrete 0, holding 0 and
 // input 0 are different things on a real device. A user makes a map holding
@@ -14,7 +14,7 @@ import { chromium } from 'playwright';
 import { execFileSync } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { openDeviceTab } from './lib/device-page.mjs';
+import { openDeviceTab, openDeviceEditor } from './lib/device-page.mjs';
 
 const BASE = process.env.MBG_URL || 'http://127.0.0.1:8099';
 const CTR = process.env.CTR || 'mbg-ui-sandbox';
@@ -134,13 +134,14 @@ try {
   // in the UI: the device's Measurements list has four rows; unticking
   // input 0 removes input 0 only
   await page.evaluate(id => window.app.openDeviceDetail(id), DEV);
-  await openDeviceTab(page, 'measurements');
+  await openDeviceEditor(page, 'measurements');      // ticking is the editor's (⋯ → Measurements…, L3.3)
   const list = page.locator('#deviceRegistersView');
   await list.locator('#selectedRegistersList tr[data-address="100000"]').waitFor();
   const keysShown = await list.locator('#selectedRegistersList tr[data-address]').evaluateAll(trs => trs.map(t => t.dataset.address).sort());
   check('Measurements lists four rows, one per table', keysShown.join(',') === '0,100000,200000,300000', keysShown.join(','));
   // the row re-renders on change, so click it directly (no post-click state check)
   await list.locator('#selectedRegistersList tr[data-address="100000"] input[type=checkbox]').evaluate(el => el.click());
+  await page.click('#ddvEditSave');                    // staged: the full editor's one Save writes it (L3.11b)
   await sleep(1500);
   const after = (await api(`/api/registers/selected?device=${DEV}`)).body;
   const left = (after?.registers || after || []).map(r => r.name).sort();

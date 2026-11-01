@@ -1,5 +1,5 @@
 /* Multi-Bus Gateway — multi-protocol Modbus/HTTP/MQTT acquisition gateway.
- * Copyright (C) 2024-2026 Stefan Maldaianu <sm26449@diysolar.ro>
+ * Copyright (C) 2024-2026 Stefan Maldaianu <stefan@multibus.dev>
  * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 // Plant wizard — adding an INSTALLATION, in the order an operator knows the answers.
@@ -25,12 +25,18 @@ Object.assign(JanitzaMonitor.prototype, {
                     hint: 'Temperature, humidity, irradiance…' },
     },
 
-    // the exact Solar API calls — typed by hand, one wrong parameter still
-    // answers 200 OK with an empty body
-    _SOLAR_API: {
-        inverter: '/solar_api/v1/GetInverterRealtimeData.cgi?Scope=Device&DeviceId=${unit_id}&DataCollection=CommonInverterData',
-        site: '/solar_api/v1/GetPowerFlowRealtimeData.fcgi',
-        meter: '/solar_api/v1/GetMeterRealtimeData.cgi?Scope=Device&DeviceId=${unit_id}',
+    // The exact Solar API calls come from the templates (protocol.http.path,
+    // L3-F6), as the template list says them (`http_path`): one wrong
+    // parameter still answers 200 OK with an empty body, so the call lives
+    // beside the map that reads its answer. {role: path}; a role whose
+    // template has none is absent.
+    _pwHttpPaths(templates) {
+        const out = {};
+        for (const [k, id] of Object.entries(this._TPL_FOR)) {
+            const path = k.endsWith(':http') && (templates.find(x => x.id === id) || {}).http_path;
+            if (path) out[k.split(':')[0]] = path;
+        }
+        return out;
     },
     _TPL_FOR: {           // role × transport → the bundled template, when there is one
         'inverter:http': 'fronius_solar_api_inverter', 'inverter:modbus': 'fronius_sunspec_inverter',
@@ -46,8 +52,9 @@ Object.assign(JanitzaMonitor.prototype, {
         let templates = [];
         try { templates = (await (await fetch('/api/device-templates')).json()).templates || []; }
         catch (e) { console.error(e); }
+        const httpPaths = this._pwHttpPaths(templates);
         this._plantWiz = {
-            step: 1, templates,
+            step: 1, templates, httpPaths,
             data: {
                 id: '', idTouched: false, name: '', host: '', port: 502, ways: 'both', root: 'pv',
                 probe: {}, discovered: null, discoveredFor: '', seedSig: '', groups: [],
@@ -179,7 +186,7 @@ Object.assign(JanitzaMonitor.prototype, {
         this._plantWizCollect();
         const d = this._plantWiz.data, ways = this._pwWays();
         const out = document.getElementById('pwProbeOut');
-        if (!d.host) { if (out) out.innerHTML = `<span style="color:var(--danger,#ef4444);">${this.t('plant.wizard.needHost', 'Enter the datalogger address first.')}</span>`; return false; }
+        if (!d.host) { if (out) out.innerHTML = `<span style="color:var(--danger-text,#c0392b);">${this.t('plant.wizard.needHost', 'Enter the datalogger address first.')}</span>`; return false; }
         if (out && !silent) out.innerHTML = this.t('common.loading', 'Loading…');
         d.probe = {};
         const jobs = [];
@@ -205,7 +212,7 @@ Object.assign(JanitzaMonitor.prototype, {
                 const ok = j.ok || j.success;
                 const m = /(\d+(?:\.\d+)?)\s*ms/.exec(j.message || '');
                 d.probe.modbus = { ok, ms: m ? parseFloat(m[1]) : Math.round(performance.now() - t0),
-                                   msg: ok ? `${this.t('plant.wizard.answered', 'answered')} · ${m ? m[1] : Math.round(performance.now() - t0)} ms (unit 1)` : (j.error || j.message || this.t('plant.wizard.unreachable', 'no answer')) };
+                                   msg: ok ? `${this.t('plant.wizard.answered', 'answered')} · ${m ? m[1] : Math.round(performance.now() - t0)} ms (unit 1)` : (j.detail?.errors?.join(' ') || j.error || j.message || this.t('plant.wizard.unreachable', 'no answer')) };
             } catch (e) { d.probe.modbus = { ok: false, msg: e.message }; }
         })());
         await Promise.all(jobs);
@@ -449,7 +456,7 @@ Object.assign(JanitzaMonitor.prototype, {
             <td>${t('endpoints.group', 'Group')}</td><td>${t('endpoints.unitsTitle', 'Units')}</td>
             <td>${t('endpoints.readVia', 'Read via')}</td><td>${t('endpoints.publishesTo', 'Publishes to')}</td></tr>
           ${rows}
-          ${unread.map(u => `<tr><td colspan="4" style="padding:4px 0;color:var(--warning,#f59e0b);">
+          ${unread.map(u => `<tr><td colspan="4" style="padding:4px 0;color:var(--warning-text,#8a5a00);">
               <i aria-hidden="true" class="bi bi-exclamation-triangle"></i>
               ${this._esc(u.text)}</td></tr>`).join('')}
         </table></div>
@@ -541,8 +548,8 @@ Object.assign(JanitzaMonitor.prototype, {
             // a found meter is addressed by its Modbus unit; its Solar API id
             // (from discovery; the 0 below is only a last resort) goes into
             // the URL literally
-            const call = this._SOLAR_API[g.role] && (g.role === 'meter'
-                ? this._SOLAR_API.meter.replace('${unit_id}', g.meterSolarId ?? '0') : this._SOLAR_API[g.role]);
+            const path = (this._plantWiz.httpPaths || {})[g.role];
+            const call = path && (g.role === 'meter' ? path.replace('${unit_id}', g.meterSolarId ?? '0') : path);
             const url = g.found ? (call ? base + call : '') : (g.url || '').trim();
             const wantHttp = ways.http && url && httpTpl && !(g.role === 'meter' && ways.modbus);
             const wantModbus = ways.modbus && g.role !== 'site' && mbTpl;

@@ -1,5 +1,5 @@
 // Multi-Bus Gateway — multi-protocol Modbus/HTTP/MQTT acquisition gateway.
-// Copyright (C) 2024-2026 Stefan Maldaianu <sm26449@diysolar.ro>  — AGPL-3.0-or-later
+// Copyright (C) 2024-2026 Stefan Maldaianu <stefan@multibus.dev>  — AGPL-3.0-or-later
 //
 // Asset attributes in use, through the UI: a calculated field built on attr()
 // previews and saves; sun_elevation() previews; a wrong place or category is
@@ -12,7 +12,7 @@
 //
 //   CHROMIUM_PATH=… MBG_URL=http://127.0.0.1:8099 node attributes_use_e2e.mjs
 import { chromium } from 'playwright';
-import { openDeviceTab } from './lib/device-page.mjs';
+import { openDeviceTab, openDeviceEditor } from './lib/device-page.mjs';
 
 const BASE = process.env.MBG_URL || 'http://127.0.0.1:8099';
 const DEV = 'umg512';
@@ -63,7 +63,7 @@ try {
 
   // a calculated field on the grid meter, built on its own attribute
   await page.evaluate(id => window.app.openDeviceDetail(id), DEV);
-  await openDeviceTab(page, 'calculated');
+  await openDeviceEditor(page, 'calculated');        // ⋯ → Calculated… (full screen, L3.11b)
   await page.click('[data-action="calcAdd"]');
   await page.fill('#calcName', 'export_room_e2e');
   await page.fill('#calcExpr', 'attr("umg512", "grid_connection", "max_export_kw") * 1000');
@@ -81,7 +81,10 @@ try {
   await page.fill('#calcExpr', 'attr("umg512", "grid_connection", "max_export_kw") * 1000');
   await page.locator('#calcExpr').dispatchEvent('input');
   await page.click('[data-action="calcSave"]');
+  // the full-screen editor stages it; its one Save writes it (L3.11b)
+  await page.click('#ddvEditSave');
   await page.waitForTimeout(1500);
+  await page.click('#ddvEditDone');
   const sel = (await api(`/api/registers/selected?device=${DEV}`)).body || {};
   savedCalc = JSON.stringify(sel).includes('export_room_e2e');
   check('the calculated field saves', savedCalc);

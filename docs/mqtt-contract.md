@@ -13,9 +13,9 @@ are the canonical names in [canonical-fields.md](canonical-fields.md).
 
 | Knob | Default | Effect |
 |---|---|---|
-| `mqtt.topic_prefix` | `multibus/umg512` | the **primary** device's prefix; also the root of the gateway-level topics (`status`, `alert`, `vmeter/…`, `data_health`) |
-| `devices[].mqtt.topic_prefix` | seeded from `mqtt.default_topic_pattern` | every other device's prefix (`${device_id}` substituted); fixed once persisted |
-| `mqtt.default_topic_pattern` | `mbg/devices/{device}` | pattern for **new** devices only |
+| `mqtt.topic_prefix` | `mbg/gateway` (an older install: `multibus/umg512`) | the root of the gateway-level topics (`status`, `alert`, `vmeter/…`, `data_health`, `site/meta`); also the legacy **primary** device's prefix where there is one (`primary_device` in the config reference) |
+| `devices[].mqtt.topic_prefix` | seeded from `mqtt.default_topic_pattern` | every other device's prefix (`${device_id}` substituted); fixed once persisted. A new one is refused when it equals, or sits inside or over, another device's, component's or installation's prefix or `<gw>`, or holds `+`/`#` |
+| `mqtt.default_topic_pattern` | per `identity_scope`: `mbg/devices/{device}` (`legacy`, every install before 3.97), `mbg/{gateway}/devices/{device}` (`gateway`, a fresh install) | pattern for **new** devices only; `{gateway}` = `gateway.id` |
 | `mqtt.retain` | `true` | retain flag of every value/liveness/discovery publish that goes through `MQTTPublisher._publish` |
 | `mqtt.qos` | `0` | QoS of the same publishes; a few topics are hard-wired to QoS 1 (marked below) |
 | `mqtt.publish_mode` | `changed` | `changed` = a value topic publishes only when the rounded value differs from the last confirmed publish; `all` = every poll |
@@ -111,7 +111,9 @@ Sum/average/counter rules and the withheld-counter behaviour are described in
 
 | | |
 |---|---|
-| Payload | JSON: `{"schema": 1, "rev": "…", "level": "device", "id": "pv-u1", "kind": "inverter", "attributes": {…}, "location": {"value": {…}, "from": "site"}}` |
+| Payload | JSON: `{"schema": 1, "rev": "…", "level": "device", "id": "pv-u1", "kind": "inverter", "type": "microinv", "type_label": "Micro-inverter", "attributes": {"identity": {"description": "…", "location": "roof, east", "labels": ["pv"], "manufacturer": "…", "model": "…", "firmware": "…", "installed_on": "2024-05-17"}, …}, "location": {"value": {…}, "from": "site"}}` |
+| Kind and type | `kind` stays a built-in kind as it always was (inverter, meter, battery, sensor, site, ups, charger; a group's role as written; `null` for anything else) — a user type is published as its `behaves_like`. `type` / `type_label` (since 3.97, device level): the device's type from the catalog (a user type included) and its English words |
+| Identity | `attributes.identity`: description, location (where it is mounted — not the coordinates), labels, manufacturer, model, firmware, installed_on; `serial_number` only when `attributes.yaml` `settings.publish_serials` is true (default off). OPC UA follows the same rule |
 | Coordinates | as `settings.location_publish` says: coarse (2 decimals, the default), exact, or left out (`off`) |
 | Direction | gateway publishes |
 | Retained | yes; cleared when the device or the installation is deleted |
@@ -136,6 +138,18 @@ acquisition health as JSON (`{"status": "ok", "stale": false,
 "staleness_age_s": 1.2, "last_success_ts": 1758630131.0, "connected": true,
 "ts": 1758630132}`), retained.
 
+## Bus health — `<gw>/bridges/<bridge>/<port>/health`
+
+| | |
+|---|---|
+| Pattern | `<gw>/bridges/<bridge_id>/<tcp_port>/health` (`<gw>` = `mqtt.topic_prefix`) |
+| Direction | gateway publishes |
+| Retained / QoS | yes / `mqtt.qos` |
+| Payload | JSON: `{"bridge": "pi-garage", "port": 7001, "adapter": "B0045K08", "diagnosis": "wiring", "severity": "warn", "confidence": "high", "client": "192.168.1.10:40312", "connects_10min": 0, "silent_s": 0.0, "line": {"frame": 41, "parity": 3, "overrun": 0, "brk": 0, "buf_overrun": 0, "rx": 918233, "tx": 402112}, "line_note": "", "rates": {"window_s": 300, "line_errors_per_min": 8.8, "frame_per_min": 8.2, …, "mbg_timeouts_per_min": 2.8}, "window_s": 300, "ts": 1761400000.0}`. `line` is `null` when the adapter counts no line errors; a counter it does not keep is `null` |
+| `diagnosis` | `ok`, `line_noise`, `timeouts`, `network`, `device_silent`, `wiring`, `host_overrun`, `collecting`, `no_data`, `unsupported` (a bridge older than diagnostics: nothing is known about the line) |
+| When | every served bus of every bridge of kind `mbg_serial_bridge`, every 30 s; by the active gateway only. Cleared with an empty retained payload when the bridge is removed |
+| Code | `multibus/bridge_diag.py` — `BridgeDiag._publish` |
+
 ## Commands — `<dev>/cmd/<name>`
 
 The command faces of a device's template (`multibus/commands.py`). Only
@@ -145,8 +159,8 @@ commands whose binding has `faces.mqtt: true` (default) get a topic.
 |---|---|---|---|
 | `<dev>/cmd/<name>` | gateway **subscribes** | — (retained deliveries are ignored; the gateway clears the topic on subscribe) | a bare number (`80` → `{"value": 80}`) or a JSON object of parameters; optional `source` names the caller in the audit trail; `command`, `device_id`, `ts` envelope keys are ignored |
 | `<group cmd prefix>/cmd/<name>` | gateway subscribes | same | same payload, fans out to every unit of the group |
-| `<dev>/cmd/result` | gateway publishes | no / **1** | `{"command": "power_limit", "status": "success", "params": {"value": 80}, "before": {...}, "after": {"WMaxLimPct": 80}, "ms": 412, "device": "fronius-u1", "via": "mqtt", "by": "node-red", "ts": 1758630132.418}`; a rejected payload answers `{"command": …, "status": "rejected", "reason": "…", "device": …, "via": "mqtt"}` |
-| `<dev>/cmd/<name>/state` | gateway publishes | yes / **1** | the last applied command: `{"status": "success", "params": {"value": 80}, "after": {"WMaxLimPct": 80}, "ts": 1758630132.418, "via": "mqtt", "by": "node-red"}` |
+| `<dev>/cmd/result` | gateway publishes | no / **1** | `{"command": "power_limit", "status": "success", "params": {"value": 80}, "before": {...}, "after": {"WMaxLimPct": 80}, "ms": 412, "device": "fronius-u1", "via": "mqtt", "by": "node-red", "ts": 1758630132.418}`; a rejected payload answers `{"command": …, "status": "rejected", "reason": "…", "device": …, "via": "mqtt"}`. Since 3.93 every outcome of an MQTT / HA command is published here — refusals (`held: true` + `retry_after_s` when the channel's pace holds it, writes over MQTT off, not enabled, write-locked), `superseded`, `expired`, `cancelled` — with the payload's optional `id` (≤ 64 chars) echoed and `queued_ms`; a standby publishes nothing |
+| `<dev>/cmd/<name>/state` | gateway publishes | yes / **1** | the last applied command (success / mismatch / unverified only — a refusal or an error is never retained): `{"status": "success", "params": {"value": 80}, "after": {"WMaxLimPct": 80}, "ts": 1758630132.418, "via": "mqtt", "by": "node-red"}` |
 
 `status` is one of `success`, `mismatch`, `unverified`, `rejected`, `error`.
 The group prefix is the units' common parent when they sit at
@@ -157,8 +171,14 @@ at boot, on every device/endpoint change and on reconnect.
 Gates (all re-checked on every message, the broker is not trusted):
 `security.allow_writes`, `mqtt.allow_write_entities`, a non-empty
 `mqtt.username`, the command enabled with an MQTT face, the device not
-`write_locked`, parameters inside their bounds. Commands run on a dedicated
-worker (queue of 32; a flood drops, never backs up).
+`write_locked`, parameters inside their bounds. An MQTT message is taken
+by one worker (queue of 32; a flood drops, never backs up) that hands the
+command to the device's **lane**, one per wire (a Modbus bus, an MQTT
+source), and never waits for a bus. In a lane, a newer value for the same
+channel replaces one still waiting (the replaced one is told `superseded`);
+a command still waiting after the channel's `max_age_s` (default 30 s) is
+`expired`, never written late; at most 8 wait per channel. A command that
+is not enabled has no topic, so nothing answers it.
 
 Code: `multibus/api.py` — `_sync_command_topics`, `_mqtt_command`,
 `_publish_command_result`, `_group_cmd_prefix`; `multibus/mqtt_publisher.py`
@@ -178,9 +198,14 @@ audited. A register that a template command writes first (e.g. `WMaxLimPct`)
 is executed *through* that command; one with `scale_from`, or whose fronting
 command is disabled or not HA-faced, is refused rather than written with the
 static scale — and discovery does not advertise such registers in the first
-place. Raw writes take the command lock, so one can never land inside a
-command's guard-read → write → verify sequence. Retained commands are ignored
-and cleared. Code: `multibus/api.py` — `_mqtt_write_command`;
+place. A register any command of the device writes (at any position, on
+the same slave) is never written raw. Raw writes travel the device's lane
+like commands, so one can never land inside a command's guard-read → write →
+verify sequence; a newer value of the same register replaces one still
+waiting (a slider dragged across its range writes the first and the last),
+and a write that waited more than 30 s expires. Every outcome is published
+on `<dev>/cmd/result` with `"command": "raw:holding@<address>"` and `"via":
+"ha"`. Retained commands are ignored and cleared. Code: `multibus/api.py` — `_mqtt_write_command`;
 `multibus/mqtt_publisher.py` — `_write_entity_config`.
 
 ## Rules — `mbg/rules/<rule_id>/…`
@@ -224,18 +249,31 @@ Published on every (re)connect, when a device is added or edited, and (virtual
 meters) about every 5 minutes. Configs that are no longer wanted are deleted
 by publishing an **empty retained payload**; a failed delete is retried on the
 next republish. Knobs: `mqtt.ha_discovery.*`, `devices[].mqtt.ha_discovery`.
+A device's discovery is published only while its MQTT output is on: turning
+MQTT or its discovery off takes its entities back once (remembered in
+`config/ha_discovery_cleared.json`, so a restart does not send the deletes
+again).
 
 | Topic | Component | `unique_id` | Availability |
 |---|---|---|---|
 | `<ha>/sensor/multibus/<addr>_<name>/config` (primary) | `sensor` | `janitza_umg512_<addr>_<name>` | `<gw>/status` |
-| `<ha>/<component>/mbg_dev_<id>/<addr>_<name>/config` (other devices) | `sensor`, or `number` / `select` for write entities | `mbg_dev_<id>_<addr>_<name>` | `<dev>/availability` |
-| `<ha>/binary_sensor/mbg_dev_<id>/connectivity/config` | `binary_sensor` (`connectivity`, diagnostic) | `mbg_dev_<id>_connectivity` | `<gw>/status` |
-| `<ha>/<component>/janitza_vmeter/<id>_<key>/config` | one `binary_sensor` + 8 `sensor`s reading `<gw>/vmeter/<id>/state` with `value_template` | `janitza_vmeter_<id>_<key>` | `<gw>/status` |
+| `<ha>/<component>/<node>/<addr>_<name>/config` (other devices) | `sensor`, or `number` / `select` for write entities | `<node>_<addr>_<name>` | `<dev>/availability` |
+| `<ha>/binary_sensor/<node>/connectivity/config` | `binary_sensor` (`connectivity`, diagnostic) | `<node>_connectivity` | `<gw>/status` |
+| `<ha>/<component>/<vnode>/<id>_<key>/config` (`<vnode>`: `janitza_vmeter` with the legacy primary, else `mbg_vmeter`) | one `binary_sensor` + 8 `sensor`s reading `<gw>/vmeter/<id>/state` with `value_template` | `<vnode>_<id>_<key>` | `<gw>/status` |
 
+`<node>` is a non-primary device's HA node, stored with it at creation
+(`mqtt.ha_node`): `mbg_<gateway>_dev_<id>` for a device created
+under `identity_scope: gateway` (a fresh install; `<gateway>` = `gateway.id`),
+so two gateways on one broker never announce the same entity. A device with
+no stored node — every device created before 3.97, and every one created
+under `legacy` — is `mbg_dev_<id>` (unchanged). Changing the scope or the id
+later names new devices only: no existing entity is renamed. Never edit
+`mqtt.ha_node` by hand: it is the HA device every entity of the device hangs on.
 `<name>` is the register name lower-cased with `[`→`_`, `]` removed (and
 `_g_` removed for non-primary devices). Device blocks: the primary is
 `identifiers: ["janitza_umg512"]`; every other device is
-`identifiers: ["mbg_dev_<id>"]`, `via_device: janitza_umg512`. `device_class`
+`identifiers: ["<node>"]`, with `via_device: janitza_umg512` only when the
+gateway has the legacy primary device (a fresh install has none). `device_class`
 / `state_class` come from the register's explicit HA typing or from the unit
 heuristic (`apply_ha_typing`); text registers carry neither.
 Code: `multibus/mqtt_publisher.py` — `publish_ha_discovery`,
@@ -266,7 +304,7 @@ the old prefix — and clear its retained topics (below).
 ## Subscribing from Node-RED / Home Assistant / another gateway
 
 Minimal wildcard subscriptions (assuming the default `mbg/…` patterns and
-`<gw>` = `multibus/umg512`):
+`<gw>` = `mqtt.topic_prefix`, `mbg/gateway` on a fresh install):
 
 | Want | Subscribe to |
 |---|---|

@@ -1,0 +1,30 @@
+# fronius_endpoint_e2e: the two ways a Fronius plant is read, side by side.
+# `fronius-inverters` through the datalogger's Solar API — answered by
+# tools/e2e/fake_solar_api.mjs, which fixture_up.sh runs in the gateway
+# container's own network namespace (127.0.0.1:18099, nothing else sees it) —
+# and `fronius-meter` directly over SunSpec Modbus at a port that REFUSES.
+# Loopback HTTP is allowed here only because the stand-in lives there.
+primary_device: false
+security:
+  allow_writes: false
+  allow_nonlan_http_devices: true
+endpoints:
+  - id: fronius-inverters
+    name: Fronius inverters
+    enabled: true
+    template: fronius_solar_api_inverter
+    connection:
+      protocol: http
+      url: "http://127.0.0.1:18099/solar_api/v1/GetInverterRealtimeData.cgi?Scope=Device&DeviceId=${unit_id}&DataCollection=CommonInverterData"
+      timeout: 2
+    units: [1, 2]
+    mqtt: {topic_prefix: 'mbg/devices/${device_id}'}
+    influxdb: {enabled: true, bucket: fronius_shadow}
+  - id: fronius-meter
+    name: Fronius meter
+    enabled: true
+    template: fronius_sunspec_meter
+    connection: {protocol: tcp, host: 127.0.0.1, port: 9, timeout: 1}
+    units: [240]
+    mqtt: {topic_prefix: 'mbg/devices/${device_id}'}
+    influxdb: {enabled: true, bucket: fronius_shadow}

@@ -96,7 +96,12 @@ The diamond-shaped vents print without supports. The lid's lip sits about 0.2 mm
 
 ## Photos
 
-The printed enclosure, with the full-vent lid:
+With the standard lid (`lid.stl`): GPIO cover in place, vents over the SoC,
+RS485/CAN and power terminals through the notch.
+
+<img src="photos/standard-lid.jpg" alt="Printed enclosure with the standard lid and the GPIO cover" width="420">
+
+With the full-vent lid (`lid-full-vent.stl`):
 
 | | |
 |---|---|

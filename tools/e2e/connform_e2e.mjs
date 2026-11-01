@@ -1,8 +1,8 @@
 // Multi-Bus Gateway — multi-protocol Modbus/HTTP/MQTT acquisition gateway.
-// Copyright (C) 2024-2026 Stefan Maldaianu <sm26449@diysolar.ro>  — AGPL-3.0-or-later
+// Copyright (C) 2024-2026 Stefan Maldaianu <stefan@multibus.dev>  — AGPL-3.0-or-later
 //
 // The one connection form (ui/js/app-connform.js), in both its places — Add
-// Device step 1 and the device page's Configure → Connection — as a user
+// Device's Connection step (conn-step.js, L3.9) and the device's Edit modal (⋯ → Edit connection…) — as a user
 // meets it: an untouched Save sends nothing, one edited field sends that
 // field, a device leaves a bridge only when told, a change of how it is
 // reached is said, HTTP and MQTT stay what they are, the gateway's refusals
@@ -13,8 +13,9 @@
 //
 //   CHROMIUM_PATH=… MBG_URL=http://127.0.0.1:8097 OUT=<dir> node tools/e2e/connform_e2e.mjs
 import { chromium } from 'playwright';
-import { openDeviceTab } from './lib/device-page.mjs';
+import { openDeviceTab, editorModalOpen, editorSettled, saveDeviceEditor, closeDeviceEditor } from './lib/device-page.mjs';
 import { watchDialogs } from './lib/dialogs.mjs';
+import { openAdd, answer } from './lib/add-device.mjs';
 
 const BASE = process.env.MBG_URL || 'http://127.0.0.1:8097';
 const OUT = process.env.OUT || '';
@@ -35,25 +36,41 @@ async function open(viewport = { width: 1440, height: 950 }, scheme = 'light') {
   page.on('console', m => { if (m.type() === 'error' && !/Failed to load resource/.test(m.text())) page.errs.push(m.text()); });
   page.reqs = [];
   page.on('request', r => { if (r.method() !== 'GET') page.reqs.push({ method: r.method(), url: r.url(), body: r.postData() }); });
-  await watchDialogs(page);
+  page.dlg = await watchDialogs(page);
   await page.goto(BASE + '/');
   await page.waitForLoadState('load');
   const later = page.locator('button:has-text("Later")');
   if (await later.count()) await later.first().click().catch(() => {});
   return page;
 }
-const putsTo = (page, from, id) => page.reqs.slice(from).filter(r => r.method === 'PUT' && r.url.endsWith(`/api/devices/${id}`));
+// a save of a device (never its dry run): the Edit modal's PATCH — {body, connection} each
+const putsTo = (page, from, id) => page.reqs.slice(from)
+  .filter(r => ['PUT', 'PATCH'].includes(r.method) && new URL(r.url).pathname === `/api/devices/${id}` && !/dry_run/.test(r.url))
+  .map(r => { const b = JSON.parse(r.body || '{}'); return { ...r, connection: b.sections ? b.sections.connection : b.connection }; });
+const dryRunsTo = (page, from, id) => page.reqs.slice(from)
+  .filter(r => r.method === 'PATCH' && new URL(r.url).pathname === `/api/devices/${id}` && /dry_run=true/.test(r.url));
 async function connTab(page, id) {
+  if (await editorModalOpen(page)) await closeDeviceEditor(page);
   await page.evaluate(i => window.app.openDeviceDetail(i), id);
-  await openDeviceTab(page, 'connection');
+  await openDeviceTab(page, 'connection');             // the Edit modal at Connection (the primary too)
   await page.waitForSelector('#ddvConn fieldset', { state: 'attached' });
+  // the connection step reads the buses and the matrix first (L3.6)
+  await page.waitForFunction(() => !document.querySelector('#ddvConn .cs-loading'));
 }
+// Save as a user does: the modal's (its footer says why nothing is sent);
+// answers what it said
 async function save(page) {
-  await page.click('#deviceDetailView [data-action="saveDeviceDetail"]');
-  await page.waitForFunction(() => (document.getElementById('ddvFeedback')?.textContent || '').trim()
-    || document.querySelector('#ddvConn [aria-invalid="true"]'), null, { timeout: 10000 });
-  await page.waitForTimeout(300);
-  return (await page.locator('#ddvFeedback').innerText().catch(() => '')).trim();
+  if (await editorModalOpen(page)) {
+    await editorSettled(page);
+    if ((await page.getAttribute('#devEditSave', 'aria-disabled')) === 'true') {
+      await page.click('#devEditSave', { force: true });
+      return (await page.locator('#devEditSummary').innerText()).trim();
+    }
+    const r = await saveDeviceEditor(page);
+    return r && r.ok() ? 'Saved' : (await page.locator('#devEditErrors').innerText().catch(() => '')).trim();
+  }
+  // (L3.11b: every device, the primary too, is edited in the modal)
+  return 'no Edit device modal open';
 }
 
 try {
@@ -64,14 +81,14 @@ try {
     await connTab(page, id);
     const n = page.reqs.length;
     const fb = await save(page);
-    check(`${id}: an untouched Save sends nothing`, !putsTo(page, n, id).length && /Nothing to save/.test(fb), fb);
+    check(`${id}: an untouched Save sends nothing`, !putsTo(page, n, id).length && /Nothing to save|No changes/.test(fb), fb);
   }
 
   // ── one edited field sends that field (and the protocol it rides on) ──
   const edits = [
     ['udp', async () => page.fill('#ddvUnit', '9'), { unit_id: 9, protocol: 'udp' }],
     ['rs', async () => page.selectOption('#ddvBaud', '9600'), { baudrate: 9600, protocol: 'rtu' }],
-    ['hp', async () => page.fill('#ddvTimeoutBr', '7'), { timeout: 7 }],
+    ['hp', async () => page.fill('#ddvTimeout', '7'), { timeout: 7 }],
     ['gwm', async () => page.fill('#ddvUnit', '5'), { unit_id: 5 }],
     ['gx', async () => page.uncheck('#ddvMqttTlsInsecure'), { tls_insecure: false, protocol: 'mqtt' }],
     ['umg512', async () => page.fill('#ddvTimeout', '4'), null],
@@ -82,7 +99,7 @@ try {
     const n = page.reqs.length;
     const fb = await save(page);
     const sent = putsTo(page, n, id)[0];
-    const conn = sent ? JSON.parse(sent.body).connection : null;
+    const conn = sent ? sent.connection : null;
     if (want) check(`${id}: one edited field sends only that`, eq(conn, want), `${JSON.stringify(conn)} · ${fb}`);
     else check('umg512: the primary sends its address in full, Modbus TCP',
                conn && conn.protocol === 'tcp' && conn.timeout === 4 && 'host' in conn && !('bridge' in conn), JSON.stringify(conn));
@@ -91,16 +108,17 @@ try {
 
   // ── a device leaves a bridge only when told, and says so ──
   await connTab(page, 'hp');
-  check('on a bridge: the bridge and its bus are shown, no address', (await page.inputValue('#ddvBridge')) === 'ws'
-        && (await page.locator('#ddvHost, #ddvRtuHost').count()) === 0);
+  check('on a bridge: the bridge and its bus are shown, no address', (await page.inputValue('#ddvBus')) === 'ws::15996'
+        && (await page.locator('#ddvHost').count()) === 0);
   check('on a bridge: no route hint yet', !(await page.isVisible('#ddvRouteHint')));
-  await page.click('#ddvConn label:has(input[name="ddvRtuMode"][value="rtu"])');
+  // the connection step (L3.6): direct serial is the reach "a port on this host"
+  await page.click('#ddvConn label:has(#ddvReach-here)');
   check('direct serial: "starts afresh" is said', await page.isVisible('#ddvRouteHint'));
   await page.fill('#ddvSerial', '/dev/ttyFAKE5');
   {
     const n = page.reqs.length;
     const fb = await save(page);
-    const conn = JSON.parse(putsTo(page, n, 'hp')[0]?.body || '{}').connection || {};
+    const conn = (putsTo(page, n, 'hp')[0] || {}).connection || {};
     check('leaving the bridge sends bridge: null with the whole serial connection',
           conn.bridge === null && conn.protocol === 'rtu' && conn.serial_port === '/dev/ttyFAKE5' && !('host' in conn), JSON.stringify(conn));
     const stored = (await (await fetch(`${BASE}/api/devices`)).json()).devices.find(d => d.id === 'hp');
@@ -115,25 +133,26 @@ try {
   {
     const n = page.reqs.length;
     await save(page);
-    const conn = JSON.parse(putsTo(page, n, 'udp')[0]?.body || '{}').connection || {};
+    const conn = (putsTo(page, n, 'udp')[0] || {}).connection || {};
     check('UDP off: a new protocol, the whole connection', conn.protocol === 'tcp' && conn.host && conn.port && conn.unit_id === 9, JSON.stringify(conn));
   }
 
   // ── HTTP and MQTT stay what they are; a device holding components stays as it is reached ──
   await connTab(page, 'gx');
-  const dis = async v => page.isDisabled(`input[name="ddvProto"][value="${v}"]`);
+  // a port that may not be taken: shown, aria-disabled (focusable), its reason beside (L3-F8)
+  const dis = async v => (await page.getAttribute(`input[name="ddvPortKind"][value="${v}"]`, 'aria-disabled')) === 'true';
   check('gx (holds components): every other way is held, with the reason',
-        await dis('tcp') && await dis('rtu') && await dis('http') && /holds components/.test(await page.innerText('#ddvConn')));
+        await dis('ethernet') && await dis('serial') && await dis('http') && /component/.test(await page.innerText('#ddvConn')));
   await connTab(page, 'web');
-  check('web (HTTP): Modbus and MQTT are held', await dis('tcp') && await dis('mqtt') && !(await dis('http')));
+  check('web (HTTP): Modbus and MQTT are held', await dis('ethernet') && await dis('mqtt') && !(await dis('http')));
 
   // ── refusals at their field: the form's own, then the gateway's ──
   await connTab(page, 'rs');
-  await page.fill('#ddvUnitR', '300');
+  await page.fill('#ddvUnit', '300');
   {
     const n = page.reqs.length;
     await save(page);
-    check('unit 300: said at the field, nothing sent', (await page.getAttribute('#ddvUnitR', 'aria-invalid')) === 'true'
+    check('unit 300: said at the field, nothing sent', (await page.getAttribute('#ddvUnit', 'aria-invalid')) === 'true'
           && !putsTo(page, n, 'rs').length);
   }
   await connTab(page, 'udp');
@@ -150,8 +169,11 @@ try {
   {
     const n = page.reqs.length;
     await save(page);
-    check("the gateway's refusal of a URL lands at the URL",
-          putsTo(page, n, 'web').length === 1 && (await page.getAttribute('#ddvUrl', 'aria-invalid')) === 'true');
+    // the modal's dry run asks the gateway before Save: its refusal lands
+    // at the URL and nothing is saved
+    check("the gateway's refusal of a URL lands at the URL (its dry run), nothing saved",
+          dryRunsTo(page, n, 'web').length >= 1 && !putsTo(page, n, 'web').length
+          && (await page.getAttribute('#ddvUrl', 'aria-invalid')) === 'true');
   }
 
   // ── Test carries what the form holds ──
@@ -181,16 +203,19 @@ try {
     check(`${id}: sections are fieldsets with a legend`, (await page.locator('#ddvConn fieldset > legend').count()) >= 2);
   }
 
-  // ── Add Device: the same form, one Test slot, every mode ──
-  await page.evaluate(() => window.app.openDeviceWizard());
-  await page.waitForSelector('#devWizConn fieldset');
-  for (const v of ['tcp', 'rtu', 'http', 'mqtt']) {
-    await page.click(`#deviceWizardModal label:has(input[name="devWizProto"][value="${v}"])`);
-    check(`wizard ${v}: one Test slot`, (await page.locator('#devWizConn .wiz-test-result').count()) <= 1
-          && (await page.locator('[id^="devWizTestResult"]').count()) <= 1);
-    if (OUT) await page.screenshot({ path: `${OUT}/connform-wizard-${v}-desktop-light.png` });
+  // ── Add Device: the same component (conn-step.js), one Test slot, every port ──
+  await openAdd(page);
+  await page.click('[data-ad-way="connection"]');            // By connection: the port first
+  await page.waitForSelector('#adConnHost fieldset');
+  for (const v of ['ethernet', 'serial', 'http', 'mqtt']) {
+    await answer(page, 'PortKind', v);
+    if (v === 'serial') await answer(page, 'Reach', 'here').catch(() => {});
+    check(`add ${v}: one Test slot`, (await page.locator('#adConnHost .wiz-test-result').count()) <= 1
+          && (await page.locator('[id^="csAddTestResult"]').count()) <= 1);
+    if (OUT) await page.screenshot({ path: `${OUT}/connform-add-${v}-desktop-light.png` });
   }
-  await page.evaluate(() => window.app.closeModal('deviceWizardModal'));
+  page.dlg.answer = true;
+  await page.click('#addDevCancel');
   check('no page errors', page.errs.length === 0, page.errs.join(' | '));
   await page.close();
 

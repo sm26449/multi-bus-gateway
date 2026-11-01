@@ -1,0 +1,79 @@
+# qa_397_conformance_e2e: one of every device shape the 3.97 decisions touch
+# (ADR-0025..0029), nothing reachable and nothing ever transmitted:
+# - `tap1` listens on /dev/ttyQA0 and `rtu1` polls /dev/ttyQA1 — paths that
+#   do not exist, so a refusal that came after an open would show as "no such
+#   file" instead of naming the listener;
+# - `brtap` listens on port 14196 of the bridge `panel`, `brpoll` polls its
+#   port 14197 (127.0.0.1: nothing answers there);
+# - `em1`, `em2`: Modbus TCP meters on the container's own loopback;
+# - `ups1`: meter-only (port none), measured by em1;
+# - `sunfield`: an installation whose groups carry catalog roles.
+# MQTT goes to 127.0.0.1:1883 of the gateway's own network namespace: nothing
+# answers there unless the e2e starts a throwaway broker in it
+# (docker run --network container:<gateway> eclipse-mosquitto), which is how
+# the published meta is read.
+primary_device: false
+mqtt:
+  enabled: true
+  broker: 127.0.0.1
+  port: 1883
+  default_topic_pattern: mbg/devices/{device}
+bridges:
+  - id: panel
+    name: Panel bridge
+    type: rtu_transparent
+    host: 127.0.0.1
+    ports: [{port: 14196}, {port: 14197}]
+devices:
+  - id: em1
+    name: Cabinet meter
+    template: eastron_sdm630
+    enabled: true
+    connection: {protocol: tcp, host: 127.0.0.1, port: 15502, unit_id: 1, timeout: 1}
+  - id: em2
+    name: Garage meter
+    template: eastron_sdm120
+    enabled: true
+    connection: {protocol: tcp, host: 127.0.0.1, port: 15502, unit_id: 2, timeout: 1}
+  - id: tap1
+    name: Bus listener
+    template: eastron_sdm120
+    enabled: true
+    connection: {protocol: rtu_tap, serial_port: /dev/ttyQA0, unit_id: 1, baudrate: 9600}
+  - id: rtu1
+    name: Bus poller
+    template: eastron_sdm120
+    enabled: true
+    connection: {protocol: rtu, serial_port: /dev/ttyQA1, unit_id: 3, baudrate: 9600, timeout: 1}
+  - id: brtap
+    name: Bridge listener
+    template: eastron_sdm120
+    enabled: true
+    connection: {protocol: rtu_tap, bridge: panel, bridge_port: 14196, unit_id: 2}
+  - id: brpoll
+    name: Bridge poller
+    template: eastron_sdm120
+    enabled: true
+    connection: {protocol: rtu-tcp, bridge: panel, bridge_port: 14197, unit_id: 4, timeout: 1}
+  - id: ups1
+    name: Server UPS
+    kind: ups
+    enabled: true
+    connection: {protocol: none}
+    meters:
+      - {role: input, device: em1, power: power_active_total}
+endpoints:
+  - id: sunfield
+    name: Sunfield PV
+    enabled: true
+    groups:
+      - id: inverters
+        role: inverter
+        template: fronius_sunspec_inverter
+        units: [1, 2]
+        connection: {protocol: tcp, host: 127.0.0.1, port: 15502, timeout: 1}
+      - id: grid
+        role: meter
+        units: [{unit_id: 240, id: sunfield-meter-240, name: Grid meter}]
+        connection: {protocol: tcp, host: 127.0.0.1, port: 15502, timeout: 1}
+        template: fronius_sunspec_meter

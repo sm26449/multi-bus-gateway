@@ -1,6 +1,8 @@
 /* End-to-end validation of a listen-only RTU tap as a DEVICE (3.85.0): created
- * through the Add Device wizard, hearing a live bus, edited in the device
- * workspace, and the serial-line rules surfacing in the wizard.
+ * through Add Device (L3.9: a model that only listens → its Connection step,
+ * Listen-only pre-filled with its reason), hearing a live bus, edited in the
+ * device workspace, and the serial-line rules surfacing in Add (a second
+ * device on the tapped line inherits its line, locked).
  *
  * Needs an EPHEMERAL instance (it creates and deletes devices) with auth off,
  * and a fake pack bus on a PTY inside it — the master asks unit 3 for the
@@ -12,7 +14,9 @@
  *   cd tools/e2e && MBG_URL=http://127.0.0.1:8099 TAP_PORT=/tmp/ttyTAPE2E node rtu_tap_device_e2e.mjs
  */
 import { chromium } from 'playwright';
-import { openDeviceTab } from './lib/device-page.mjs';
+import { openDeviceTab, saveDeviceEditor, editorSettled } from './lib/device-page.mjs';
+import { watchDialogs } from './lib/dialogs.mjs';
+import { openAdd, pickModel, answer, fill, next, waitCheck } from './lib/add-device.mjs';
 
 const BASE = process.env.MBG_URL || 'http://127.0.0.1:8099';
 const PORT = process.env.TAP_PORT || '/tmp/ttyTAPE2E';
@@ -37,19 +41,23 @@ const browser = await chromium.launch(
   process.env.CHROMIUM_PATH ? { executablePath: process.env.CHROMIUM_PATH } : {});
 const page = await browser.newPage({ viewport: { width: 1440, height: 950 } });
 page.setDefaultTimeout(15000);
+const dlg = await watchDialogs(page);        // a review before Save (a bus move): answered yes
 const errs = [];
 // step 4's refusal is a deliberate 422 — the browser logs it as a resource error
 page.on('console', m => { if (m.type() === 'error' && !/status of 422/.test(m.text())) errs.push(m.text()); });
 page.on('pageerror', e => errs.push(String(e)));
 
+// Add Device: the listening model, then its Connection step on this host's port
 async function wizardToTap({ serial, baud, unit }) {
-  await page.evaluate(() => window.app.openDeviceWizard());
-  await page.waitForSelector('#deviceWizardModal input[name="devWizProto"][value="rtu"]', { state: 'attached' });
-  await page.click('#deviceWizardModal label:has(input[name="devWizProto"][value="rtu"])');
-  await page.click('#deviceWizardModal label:has(input[name="devWizRtuMode"][value="rtu_tap"])');
-  await page.fill('#devWizSerial', serial);
-  await page.selectOption('#devWizBaud', String(baud));
-  await page.fill('#devWizUnitR', String(unit));
+  await openAdd(page);
+  await pickModel(page, 'seplos', 'seplos_bms_v3_rtu_tap');
+  await answer(page, 'Reach', 'here').catch(() => {});
+  await page.waitForSelector('#csAddSerial');
+  await page.fill('#csAddSerial', serial);
+  await page.locator('#csAddSerial').blur();
+  await page.waitForTimeout(500);
+  if (baud && !(await page.getAttribute('#csAddBaud', 'aria-disabled'))) await page.selectOption('#csAddBaud', String(baud));
+  await fill(page, 'Unit', unit);
 }
 
 try {
@@ -60,28 +68,31 @@ try {
   await page.click('[data-page="devices"]');
   await page.waitForTimeout(800);
 
-  // ---- 1. wizard: the tap is a mode of Modbus RTU --------------------------
+  // ---- 1. Add: a model that only listens → Listen-only, said why ------------
   await wizardToTap({ serial: PORT, baud: 9600, unit: 3 });
-  check('tap mode selected', await page.isChecked('input[name="devWizRtuMode"][value="rtu_tap"]'));
-  check('serial fields shown', await page.isVisible('#devWizSerial'));
-  check('no Test button in tap mode',
-    !(await page.locator('#devWizRtuDirect [data-action="devWizardTest"]').count()));
-  check('listen-only note shown', await page.isVisible('#devWizRtuDirect .bi-ear'));
-  // switching away and back keeps the typed port
-  await page.click('label:has(input[name="devWizRtuMode"][value="rtu"])');
-  check('direct mode brings the Test button back',
-    await page.locator('#devWizRtuDirect [data-action="devWizardTest"]').count() === 1);
-  await page.click('label:has(input[name="devWizRtuMode"][value="rtu_tap"])');
-  check('serial port survives a mode switch', await page.inputValue('#devWizSerial') === PORT);
+  check('Listen-only pre-filled by the model, its reason said', await page.isChecked('#csAddRole-listen')
+    && /listen/i.test(await page.locator('#csAddRoleQ').innerText()));
+  check('Master cannot be taken with this model (aria-disabled, its reason beside)',
+    (await page.getAttribute('#csAddRole-poll', 'aria-disabled')) === 'true');
+  check('serial fields shown', await page.isVisible('#csAddSerial'));
+  check('no Test button for a tap (it never transmits)', !(await page.locator('#csAddTestBtn').count()));
+  // the role answered again keeps the typed port
+  await page.locator('label:has(#csAddRole-listen)').click();
+  check('serial port survives an answer', await page.inputValue('#csAddSerial') === PORT);
 
-  await page.click('#devWizNext');
-  await page.click('.tpl-pick[data-tpl="seplos_bms_v3_rtu_tap"]');
-  await page.click('#devWizNext');
-  await page.fill('#devWizId', ID);
-  await page.fill('#devWizName', 'Tap E2E');
-  if (!(await page.isChecked('#devWizEnabled'))) await page.click('label:has(#devWizEnabled)');
-  await page.click('#devWizNext');
-  await page.waitForSelector('#deviceWizardModal', { state: 'hidden' }).catch(() => {});
+  await next(page);                                    // → Check (it listens: heard n of m)
+  const heard = await waitCheck(page, 30000);
+  check('the check listens on the bus (heard n of m groups)', /heard \d+ of \d+/.test(heard.heard) || heard.refused, JSON.stringify(heard).slice(0, 300));
+  await next(page);                                    // → Name & save
+  await page.fill('#adId', ID);
+  await page.fill('#adName', 'Tap E2E');
+  await page.locator('#adId').dispatchEvent('input');
+  if (!(await page.isChecked('#adEnabled'))) await page.click('label:has(#adEnabled)');
+  await page.waitForSelector('#adReviewBody .ad-strip', { timeout: 15000 }).catch(() => {});
+  check('the review says: writes none — this connection only listens', /none/.test(await page.locator('#adReviewBody [data-layer="writes"]').innerText().catch(() => '')));
+  await page.click('#addDevNext');
+  await page.waitForSelector('#adResult', { timeout: 15000 }).catch(() => {});
+  await page.click('#adResDone').catch(() => {});
 
   let dev = await device(ID);
   check('device created as rtu_tap', dev?.protocol === 'rtu_tap', dev?.protocol);
@@ -108,17 +119,20 @@ try {
   // ---- 3. device workspace: Edit tab knows the tap --------------------------
   await page.evaluate(id => window.app.openDeviceDetail(id), ID);
   await openDeviceTab(page, 'connection');
-  check('edit shows the tap', await page.isChecked('input[name="ddvRtuMode"][value="rtu_tap"]'));
-  check('serial block visible', await page.isVisible('#ddvRtuFields'));
-  check('tcp block hidden', !(await page.isVisible('#ddvTcpFields')));
+  check('edit shows the tap (role Listen-only)', await page.isChecked('input[name="ddvRole"][value="listen"]'));
+  check('serial block visible', await page.isVisible('#ddvSerialPick'));
+  check('tcp block hidden', !(await page.isVisible('#ddvHost')));
   check('serial prefilled', await page.inputValue('#ddvSerial') === PORT);
   await page.click('[data-action="deviceDetailTest"]');
   await page.waitForFunction(() => document.getElementById('ddvTestResult')?.textContent.trim());
   const tr = await page.textContent('#ddvTestResult');
   check('detail Test asks the saved device', /hearing unit 3/.test(tr), tr);
 
-  // save unchanged: the client restarts and re-joins the shared reader
-  await page.locator('[data-action="saveDeviceDetail"]:visible').first().click();
+  // save unchanged (the Edit modal holds it back: "No changes"); the device
+  // keeps running and hearing the shared reader
+  await editorSettled(page);
+  await page.click('#devEditSave', { force: true });
+  await page.click('#devEditCancel');
   await page.waitForTimeout(1500);
   dev = await device(ID);
   check('save keeps rtu_tap', dev?.protocol === 'rtu_tap', dev?.protocol);
@@ -129,22 +143,16 @@ try {
   // ---- 4. the line rules surface in the wizard ----------------------------
   await page.click('[data-page="devices"]');
   await page.waitForTimeout(500);
-  await wizardToTap({ serial: PORT, baud: 19200, unit: 4 });
-  await page.click('#devWizNext');
-  // step 1 asks the gateway first; a clash it cannot judge there is said on Create
-  await page.waitForFunction(() => window.app._devWiz.step === 2
-    || document.querySelector('#devWizBody .field-error[data-placed]') || document.getElementById('devWizFeedback')?.textContent.trim());
-  if (await page.evaluate(() => window.app._devWiz.step) === 2) {
-    await page.click('.tpl-pick[data-tpl="seplos_bms_v3_rtu_tap"]');
-    await page.click('#devWizNext');
-    await page.fill('#devWizId', 'tap-e2e-bad');
-    await page.click('#devWizNext');
-    await page.waitForFunction(() => document.getElementById('devWizFeedback')?.textContent.trim());
-  }
-  const fb = await page.innerText('#devWizBody');
-  check('other baud on a tapped line refused, in the wizard', /same line settings/.test(fb), fb);
+  await wizardToTap({ serial: PORT, baud: 0, unit: 4 });
+  const lineWhy = await page.locator('#csAddLineWhy').innerText();
+  check('a second device on the tapped line inherits its line, locked, saying whose',
+    (await page.getAttribute('#csAddBaud', 'aria-disabled')) === 'true' && await page.inputValue('#csAddBaud') === '9600'
+    && /tap-e2e|Tap E2E/.test(lineWhy), lineWhy);
+  await page.selectOption('#csAddBaud', '19200').catch(() => {});
+  await page.waitForTimeout(300);
+  check('…another baud cannot be chosen there', await page.inputValue('#csAddBaud') === '9600');
   check('refused device not created', !(await device('tap-e2e-bad')));
-  await page.evaluate(() => window.app.closeModal('deviceWizardModal'));
+  await page.evaluate(() => { window.app._ad.done = true; window.app.closeModal('addDeviceModal'); });
 
   // ---- 5. regression: rtu-tcp host edits stick ----------------------------
   await api('/api/devices', { method: 'POST', body: JSON.stringify({
@@ -152,9 +160,12 @@ try {
     connection: { protocol: 'rtu-tcp', host: '127.0.0.1', port: 9, unit_id: 1 } }) });
   await page.evaluate(id => window.app.openDeviceDetail(id), 'rtutcp-e2e');
   await openDeviceTab(page, 'connection');
-  await page.fill('#ddvRtuHost', '127.0.0.2');      // RTU over the network, its typed address
-  await page.locator('[data-action="saveDeviceDetail"]:visible').first().click();
-  await page.waitForTimeout(1200);
+  await page.fill('#ddvHost', '127.0.0.2');      // RTU over the network, its typed address
+  const nRev = dlg.seen.length;
+  await saveDeviceEditor(page);                     // a converter's address is its bus: reviewed, answered yes
+  check('rtu-tcp host edit: reviewed first (a bus move), named', dlg.seen.length > nRev && /Review/.test(dlg.seen[nRev].title)
+    && (dlg.seen[nRev].details || []).some(x => /host/.test(x)), JSON.stringify(dlg.seen[nRev] || null));
+  await page.waitForTimeout(600);
   const rt = await device('rtutcp-e2e');
   check('rtu-tcp host edit persisted', rt?.connection?.host === '127.0.0.2' && rt?.protocol === 'rtu-tcp',
     `${rt?.protocol} ${rt?.connection?.host}`);

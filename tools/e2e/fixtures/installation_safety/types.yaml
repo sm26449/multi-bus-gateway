@@ -1,0 +1,26 @@
+# device_types_e2e: two stand-alone meters and an installation with an
+# inverter group, nothing reachable — the device-type catalog, the template
+# filter by type, a device's type and its identity attributes are what is
+# under test (ADR-0027).
+primary_device: false
+devices:
+  - id: em1
+    name: Cabinet meter
+    template: eastron_sdm630
+    enabled: true
+    connection: {protocol: tcp, host: 127.0.0.1, port: 15502, unit_id: 1, timeout: 1}
+  - id: em2
+    name: Garage meter
+    template: eastron_sdm120
+    enabled: true
+    connection: {protocol: tcp, host: 127.0.0.1, port: 15502, unit_id: 2, timeout: 1}
+endpoints:
+  - id: sunfield
+    name: Sunfield PV
+    enabled: true
+    groups:
+      - id: inverters
+        role: inverter
+        template: fronius_sunspec_inverter
+        units: [1, 2]
+        connection: {protocol: tcp, host: 127.0.0.1, port: 15502, timeout: 1}

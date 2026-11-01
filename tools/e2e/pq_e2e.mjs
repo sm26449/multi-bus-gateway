@@ -3,7 +3,7 @@
  * known credentials, MQTT off, register polling pointed away).
  */
 import { chromium } from 'playwright';
-import { openDeviceTab } from './lib/device-page.mjs';
+import { openDeviceTab, openDeviceEditor } from './lib/device-page.mjs';
 
 const BASE = process.env.MBG_URL || 'http://localhost:8080';
 const USER = process.env.MBG_USER || 'admin';
@@ -105,24 +105,31 @@ try {
     await page.screenshot({ path: SHOT('05-pq-second-event') });
   }
 
-  // ---- 5. Power Quality tab: the recorder card, with the events it records --
+  // ---- 5. the recorder card: an output, staged in the Edit device modal
+  // (⋯ → Outputs…), saved by its one Save (L3.11b, FINDINGS L3-F21) ------------
   await dismissOnboarding();
-  await openDeviceTab(page, 'pq');
-  await page.waitForSelector('#ddvPqEnabled');
-  check('PQ tab: recorder card present', await page.locator('#ddvPqEnabled').count() === 1);
-  check('PQ tab: enabled checkbox reflects config', await page.isChecked('#ddvPqEnabled'));
-  await page.waitForFunction(() => (document.getElementById('ddvPqStatus')?.textContent || '').length > 0,
+  await openDeviceEditor(page, 'outputs');
+  await page.waitForSelector('#devEditPq-enabled');
+  check('Outputs: recorder card present', await page.locator('#devEditPq-enabled').count() === 1);
+  check('Outputs: enabled checkbox reflects config', await page.isChecked('#devEditPq-enabled'));
+  check('Outputs: no button of its own (one Save)', await page.locator('#devEditModal [data-action="savePqRecorder"]').count() === 0);
+  await page.waitForFunction(() => (document.querySelector('#devEditPq [data-pq-status]')?.textContent || '').length > 0,
     { timeout: 15000 }).catch(() => {});
-  const st = await page.locator('#ddvPqStatus').innerText().catch(() => '');
+  const st = await page.locator('#devEditPq [data-pq-status]').innerText().catch(() => '');
   check('PQ tab: live status line filled', st.length > 0, st.slice(0, 90));
   await page.screenshot({ path: SHOT('06-outputs-card') });
 
   // save round-trip (poll_s 300 -> 240 -> back), verifies POST /api/pq/config
   const saveAndWait = async (val) => {
-    await page.fill('#ddvPqPoll', String(val));
+    if (!(await page.locator('#devEditModal.active').count())) {
+      await openDeviceEditor(page, 'outputs');
+      await page.waitForSelector('#devEditPq-poll_s');
+    }
+    await page.fill('#devEditPq-poll_s', String(val));
+    await page.waitForTimeout(500);
     const [resp] = await Promise.all([
       page.waitForResponse(r => r.url().includes('/api/pq/config'), { timeout: 20000 }),
-      page.click('[data-action="savePqRecorder"]'),
+      page.click('#devEditSave'),
     ]);
     return resp.status();
   };

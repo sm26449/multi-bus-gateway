@@ -12,8 +12,9 @@
 > route field data. Retrofit, don't replace.**
 
 Multi-Bus Gateway reads the equipment you already have — energy meters, PV
-inverters, sensors — over **Modbus TCP**, **Modbus RTU**, **HTTP/JSON**
-(Fronius Solar API, Shelly, Tasmota…) or **MQTT**, and routes the data to
+inverters, batteries, sensors — over **Modbus TCP**, **Modbus RTU**,
+**HTTP/JSON** (Fronius Solar API, Shelly, Tasmota…), **MQTT**, **CAN**
+(listen-only) or the **Seplos V2** BMS protocol, and routes the data to
 **MQTT, InfluxDB/Grafana, Home Assistant and REST/JSON feeds**. It can also
 re-serve any source as a **virtual Modbus meter** (Carlo Gavazzi EM24,
 Fronius Smart Meter, SunSpec), so a Victron GX, a Fronius inverter or a
@@ -38,8 +39,9 @@ single meter behind it. See [History](#history) for where it came from.
 - 🏭 **OPC UA server for SCADA and HMI** — every device and value with its
   quality and the time it was read, under stable node ids; encrypted, with
   the gateway's own accounts ([guide](docs/opcua.md)).
-- 🛠️ **Operator-grade UI** — discovery wizard, frame-level diagnostics,
-  config snapshots with rollback, roles and an audit trail.
+- 🛠️ **Operator-grade UI** — Add Device with a read check before saving,
+  bus scan, frame-level diagnostics, config snapshots with rollback, roles
+  and an audit trail.
 - ⚡ **PQ event recorder (Janitza)** — permanently archives the meter's
   on-device power-quality event ring (dips/outages/RVC + RMS waveforms),
   with a dedicated tab, alerts and a queryable history —
@@ -104,22 +106,33 @@ all the same. No vendor lock-in, no per-box cost.
 - **Modbus RTU listen-only tap** — observe a bus that already has a master
   (a BMS master pack, a vendor datalogger) without ever transmitting:
   CRC-driven framing, request/response pairing, FC01/03/04 decode, writes
-  watched; configurable from the device wizard
+  watched; configurable from Add Device
   ([rtu-serial.md §7](docs/rtu-serial.md)).
+- **CAN, listen-only** — SocketCAN (a USB adapter, a HAT), signals decoded
+  from the template with DBC semantics (frame id, start bit, length, byte
+  order); there is no transmit path, and the interface's own listen-only
+  flag is checked and shown. First map: the Pylontech BMS → inverter link.
+- **Seplos V2 BMS** — the packs' RS485 ASCII protocol, read-only by
+  construction: poll a pack, or listen on a bus a master pack already
+  polls (the inter-pack summary of a parallel bank), on a local port or
+  through a serial bridge.
 - **HTTP/JSON** — any JSON endpoint, per-register `json_path`, SSRF-guarded
   (private LAN only by default).
 - **MQTT-in** — subscribe to a broker; value from the JSON payload
   (`json_path`) or the bare payload; per-register topics with `+`/`#`
   wildcards.
-- **Device templates** — the register map as a portable JSON file; 24
+- **Device templates** — the register map as a portable JSON file; 31
   bundled maps with documented provenance
   ([catalog](docs/device-catalog.md)): Janitza UMG 512-PRO (4,126
   registers), ABB B21/B23, Carlo Gavazzi EM24, Eastron SDM120/SDM630,
   Schneider iEM3000, Fronius Smart Meter 65A-3, Fronius SunSpec inverter
   and meter, three Fronius Solar API maps (inverter, per-phase inverter,
-  site, meter), Seplos BMS V3 (RTU tap per pack, MQTT pack and bank), a
-  Victron GX over MQTT, a Samsung heat pump, a Delta VFD-EL drive and MQTT
-  maps (Zigbee2MQTT, Theengs BLE, Tasmota, generic JSON).
+  site, meter), Huawei SUN2000 with its DTSU666 meter and LUNA2000
+  battery, a Deye single-phase hybrid inverter, Seplos BMS V2 (a pack, and
+  the inter-pack tap of a parallel bank) and V3 (RTU tap per pack, MQTT
+  pack and bank), a Pylontech-protocol BMS → inverter CAN link, a Victron
+  GX over MQTT, a Samsung heat pump, a Delta VFD-EL drive and MQTT maps
+  (Zigbee2MQTT, Theengs BLE, Tasmota, generic JSON).
   Provenance and confidence are stated per map in the catalog.
   In-UI editor + upload + export + **CSV/YAML import**
   ([CSV](docs/csv-import.md), [YAML](docs/yaml-import.md)). Per-register
@@ -132,13 +145,34 @@ all the same. No vendor lock-in, no per-box cost.
   family; the editor flags a mismatched unit amber, the save warns).
   One-click **Auto-canonicalize** infers names for a cryptic imported map,
   conservatively ([dictionary](docs/canonical-fields.md)).
-- **Discovery wizard** — CIDR scan on the Modbus port, unit-ID sweep (TCP
-  and RTU), **SunSpec model walk**, MQTT topic browse with payload previews,
-  Fronius Solar API discover, **ESPHome node scan** (native API 6053, works
-  from Docker without mDNS); "Use" prefills the wizard.
-- **Restore a deleted device** — deleting keeps the full definition; a
-  "Deleted devices" card offers one-click restore (connection + template +
-  registers) or permanent "forget".
+- **Add Device** — pick the model (search, type chips) or start from the
+  connection; the connection asked in order (port, where the bus is,
+  **Master / Listen-only**, protocol, line, address), serial ports picked
+  from the host's list, CAN interfaces from the host's; a **read check**
+  before saving (the values with their quality, the identity the device
+  reports, the components found, the load it adds — reads only, never a
+  write); then name, type, attributes and outputs on one page. A new device
+  starts **write-locked**.
+- **Many of the same on one bus** — scan a serial line, a bridge port or a
+  TCP gateway for answering units (or *listen* for them on a bus another
+  master polls), tick the ones to add and create them in one batch.
+- **Discovery** — CIDR scan on the Modbus port, unit-ID sweep (TCP and RTU),
+  **SunSpec model walk**, MQTT topic browse with payload previews, Fronius
+  Solar API discover, **ESPHome node scan** (native API 6053, works from
+  Docker without mDNS); "Use" opens Add Device with it filled in.
+- **Device types and identity** — a type catalog (meter, inverter, battery,
+  heat pump, drive, converter… and your own types), and identity attributes
+  per device: description, where it is mounted, labels, the nameplate
+  (manufacturer, model, serial number — published only when you allow it —,
+  firmware, installed on).
+- **The device page** — one technical line saying how it is reached, one ⋯
+  menu on every surface (each unavailable action says why), Live / Data /
+  Setup / Diagnose tabs, and **one Edit dialog** with one Save (a dry run
+  says what it will do, a change made elsewhere meanwhile is merged rather
+  than overwritten); measurements and commands are edited full screen.
+- **Undo and restore** — a delete ends with **Undo** for 10 s; deleted
+  devices keep their definition and come back from a **Restore** dialog
+  (write-locked, bindings off), or are forgotten for good.
 
 **Measurements**
 - Per-device selected registers, **poll groups**
@@ -158,11 +192,17 @@ all the same. No vendor lock-in, no per-box cost.
 - **Commands** — named, guarded writes declared by the template
   (`power_limit = 60 %`): guard reads, one frame, read-back verification,
   a test that writes nothing, and the same gates from the UI, the API,
-  MQTT and Home Assistant.
+  MQTT and Home Assistant. Every write goes through **one lane per wire**:
+  a slow device delays only its own bus, a newer value replaces one still
+  waiting, nothing is written late, and every MQTT / HA outcome is
+  published on `cmd/result`. A channel's pace (minimum interval, on/off
+  times, starts per hour) can be set per device.
 - **Rules** — a declarative controller: steps, conditions, trims and
   schedules with timers, several rules on one target as layers, sequences
   of commands; new rules run in **shadow** (they decide and log, write
-  nothing) until armed ([rules guide](docs/rules.md)).
+  nothing) until armed; a rule's write is checked once more just before it
+  reaches the bus, and its corrections respect the channel's pace
+  ([rules guide](docs/rules.md)).
 - **OPC UA server** — every device and value for SCADA and HMI panels,
   with quality and read time ([guide](docs/opcua.md)).
 - **Components** — the batteries and sensors a Victron GX holds, each its
@@ -187,10 +227,16 @@ all the same. No vendor lock-in, no per-box cost.
   become **`number`/`select` entities** with template-declared bounds).
 - **InfluxDB** — per-device bucket (auto-created), timestamps = read time,
   **disk-persisted store-and-forward buffer** (no data loss across
-  outages; idempotent replay with original timestamps). Static tags per
+  outages; idempotent replay with original timestamps); an unchanged value
+  is written again every 10 minutes (`heartbeat_interval`), so a steady
+  state never looks like a gap. Static tags per
   device/unit (`battery_id = ${unit_id}`), and an installation's totals can
   also be written under a measurement and field names of your choosing —
   how a dashboard that reads its own schema survives a change of source.
+- **Gateway identity** — a fresh install names new devices under its own
+  gateway id (`mbg/<gateway>/devices/<id>`, bucket `<gateway>-<id>`), so
+  several gateways can share one broker and one InfluxDB; an existing
+  install keeps every name it has.
 - **REST push** — periodic JSON telemetry POST to a URL/webhook,
   `native`/`flat` formats, masked auth headers, redirects refused.
 - **HTTP/JSON output** — live values as a read-only feed at
@@ -244,7 +290,12 @@ publishing over MQTT is an ordinary MQTT device here.
   **canonical-address redirect** (`ui.canonical_url`, `?local` escape hatch).
 - **Gated Modbus writes** — off by default; template allowlist with
   `write_min`/`write_max`, **crash-safe dead-man leases** (auto-revert to
-  `write_safe`), the primary device locked by default (unlock it deliberately).
+  `write_safe`), the primary device locked by default (unlock it deliberately);
+  every new device starts write-locked, a write needs a login or an API key,
+  and a bus a device only listens on is never transmitted on.
+- **Two tabs never overwrite each other** — every device write carries the
+  device's `ETag` (`If-Match`); a change made elsewhere meanwhile is refused
+  (412) and shown, not silently lost.
 
 **Observability & UX**
 - **Prometheus `/metrics`** (device/sink/vmeter series), a **Status** page
@@ -332,7 +383,7 @@ with the credentials from `.env`; the gateway logs in with the same pair
 from the first boot) and InfluxDB self-configures. Want minimal?
 `docker compose up -d multi-bus-gateway mosquitto`. Your own broker or
 Influx? Repoint the gateway from the UI whenever you like — the bundled
-ones are ordinary containers. Pin a release with `MBG_VERSION=3.84.2` in
+ones are ordinary containers. Pin a release with `MBG_VERSION=3.92.1` in
 `.env`; every install path in detail: [docs/install.md](docs/install.md),
 day-two operations: [docs/operations.md](docs/operations.md).
 
@@ -558,7 +609,7 @@ release since is in the [changelog](CHANGELOG.md).
 
 ## Authors
 
-Built by **Stefan Maldaianu** ([sm26449@diysolar.ro](mailto:sm26449@diysolar.ro)),
+Built by **Stefan Maldaianu** ([stefan@multibus.dev](mailto:stefan@multibus.dev)),
 with development assistance from Claude (Anthropic).
 
 ## License
@@ -566,7 +617,7 @@ with development assistance from Claude (Anthropic).
 **GNU Affero General Public License v3.0 or later (AGPL-3.0-or-later)** —
 free and open-source software.
 
-Copyright (c) 2024-2026 Stefan Maldaianu <sm26449@diysolar.ro>
+Copyright (c) 2024-2026 Stefan Maldaianu <stefan@multibus.dev>
 
 You may use, study, modify, and distribute this software, **including
 commercially**. The AGPL condition: if you distribute modified versions — or

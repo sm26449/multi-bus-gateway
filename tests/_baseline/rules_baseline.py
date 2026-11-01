@@ -1,5 +1,5 @@
 # Multi-Bus Gateway — multi-protocol Modbus/HTTP/MQTT acquisition gateway.
-# Copyright (C) 2024-2026 Stefan Maldaianu <sm26449@diysolar.ro>  — AGPL-3.0-or-later
+# Copyright (C) 2024-2026 Stefan Maldaianu <stefan@multibus.dev>  — AGPL-3.0-or-later
 # FROZEN: multibus/rules.py as of 042bdee (before the opt-in OV tuning keys,
 # ADR-0012) — the reference tests/test_ov_tuning_identity.py compares the
 # engine against. Never edit; replace only when a later lot changes the baseline.

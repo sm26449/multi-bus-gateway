@@ -1,5 +1,5 @@
 # Multi-Bus Gateway — multi-protocol Modbus/HTTP/MQTT acquisition gateway.
-# Copyright (C) 2024-2026 Stefan Maldaianu <sm26449@diysolar.ro>
+# Copyright (C) 2024-2026 Stefan Maldaianu <stefan@multibus.dev>
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU Affero General Public License as published by
@@ -302,7 +302,7 @@ def test_env_overrides_redacts_secrets(monkeypatch):
 def test_update_mqtt_none_preserves_secret():
     """A blank password (None) must not clobber a stored secret."""
     c = Config()
-    c.mqtt.password = "kept-secret"
+    c.mqtt.password = "kept-secret"  # leak-check: ok (a test value)
     c.update_mqtt(broker="new-broker", password=None)
     assert c.mqtt.broker == "new-broker"
     assert c.mqtt.password == "kept-secret"

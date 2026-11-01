@@ -1,10 +1,10 @@
 /* Multi-Bus Gateway — multi-protocol Modbus/HTTP/MQTT acquisition gateway.
- * Copyright (C) 2024-2026 Stefan Maldaianu <sm26449@diysolar.ro>
+ * Copyright (C) 2024-2026 Stefan Maldaianu <stefan@multibus.dev>
  * SPDX-License-Identifier: AGPL-3.0-or-later
  */
-// The connection form — augments JanitzaMonitor.prototype. One form says how a
-// device is reached, in Add Device (prefix devWiz) and on the device page's
-// Connection tab (prefix ddv). Its model and what it sends are
+// The connection form — augments JanitzaMonitor.prototype. The form object
+// (_cfForm) under the connection step (conn-step.js: Add, prefix csAdd; the
+// Edit modal, prefix ddv) and the primary meter's own form (prefix ddv). Its model and what it sends are
 // ConnformModel's (connform-model.js); this draws it, reads it back, places
 // the gateway's refusals at their fields and runs its Test.
 //
@@ -14,6 +14,21 @@
 Object.assign(JanitzaMonitor.prototype, {
 
     _cfMount(host, px, M, opts = {}) {
+        const form = this._cfForm(host, px, M, opts);
+        // a new device opens on a bridge its mode can use (RTU over the
+        // network starts on the first bridge there is — unless an address
+        // was typed instead: M.legacy, kept across Back/Next)
+        if (opts.context !== 'edit') this._cfFitBridge(form);
+        this._cfRender(form);
+        return form;
+    },
+
+    // the form object both connection forms share (this one and the
+    // connection step, conn-step.js): its model, what it sends, its Test.
+    // A form may draw itself (form.html), read itself (form.inputs), name
+    // its fields (form.fieldId), judge more (form.moreErrors) and say what
+    // the serial picker judges ports for (form.pickerRole).
+    _cfForm(host, px, M, opts = {}) {
         const CM = window.ConnformModel;
         const form = {
             px, opts, host,
@@ -24,19 +39,24 @@ Object.assign(JanitzaMonitor.prototype, {
         form.M.keepalive = M.keepalive;
         form.orig.keepalive = M.keepalive;
         form.read = () => {
-            form.M = CM.apply(form.M, this._cfInputs(form), form.shown);
+            const inputs = this._cfIn(form);
+            form.M = CM.apply(form.M, inputs, form.shown);
+            // what was read is in M now: the next read counts what changed
+            // since — a field cleared, refused and typed back to the value
+            // the form first showed is read again (FINDINGS CAN-20)
+            if (form.shown) form.shown = Object.assign({}, form.shown, inputs);
             let errors = CM.errors(form.M, (k, d) => this.t(k, d));
-            if (opts.context === 'edit') {
-                // on a saved device only what is being changed can block a
-                // save: a stored value the form would judge differently
-                // never stops a rename
-                // (a value changed, not merely sent: the primary sends its whole
-                // address, and a stored sub-second timeout must not block a
-                // new host)
-                const changed = new Set(CM.changed(form.M, form.orig));
+            // on a saved device only what is being changed can block a
+            // save: a stored value the form would judge differently never
+            // stops a rename (a value changed, not merely sent: the primary
+            // sends its whole address, and a stored sub-second timeout must
+            // not block a new host)
+            const changed = opts.context === 'edit' ? new Set(CM.changed(form.M, form.orig)) : null;
+            if (changed) {
                 errors = Object.fromEntries(Object.entries(errors)
                     .filter(([p]) => changed.has(p.replace(/^connection\./, '').split('.')[0])));
             }
+            if (form.moreErrors) Object.assign(errors, form.moreErrors(changed));
             return { model: form.M, errors };
         };
         form.payload = () => CM.payload(form.M, form.orig, { context: opts.context, primary: !!opts.primary });
@@ -44,22 +64,50 @@ Object.assign(JanitzaMonitor.prototype, {
         form.testConnection = () => CM.testConnection(form.M, opts.context === 'edit' ? form.orig : null);
         form.dirty = () => Object.keys(CM.payload(form.M, form.orig, { context: 'edit', primary: !!opts.primary })).length > 0;
         form.fieldId = path => this._cfFieldId(form, path);
-        form.showErrors = fields => this._placeFieldErrors(host, fields, p => form.fieldId(p));
+        form.showErrors = fields => {
+            // a refusal at the path field is never hidden in a closed "Advanced"
+            for (const p of Object.keys(fields || {})) {
+                const id = form.fieldId(p);
+                const adv = id ? document.getElementById(id)?.closest('details') : null;
+                if (adv) adv.open = true;
+            }
+            return this._placeFieldErrors(host, fields, p => form.fieldId(p));
+        };
         this._cf = this._cf || {};
         this._cf[px] = form;
-        // a new device opens on a bridge its mode can use (RTU over the
-        // network starts on the first bridge there is — unless an address
-        // was typed instead: M.legacy, kept across Back/Next)
-        if (opts.context !== 'edit') this._cfFitBridge(form);
-        this._cfRender(form);
         return form;
+    },
+
+    // what a form shows now, as field keys (its own reader, or this form's)
+    _cfIn(form) {
+        return form.inputs ? form.inputs() : this._cfInputs(form);
+    },
+
+    // a connection about to be sent, with the adapter its bus was picked as
+    // (Scan): set when the address is the picked one, cleared (null) when an
+    // edit moves a bus-bound device to another address by hand — the bus
+    // guard then learns the new one on the first connect
+    _cfWithAdapter(form, conn) {
+        if (!form || !conn || conn.bridge || !('host' in conn || 'port' in conn)) return conn;
+        const host = String(conn.host ?? form.M.host ?? ''), port = String(conn.port ?? form.M.port ?? '');
+        const pk = form.picked;
+        if (pk && pk.adapter && pk.host === host && pk.port === port) return { ...conn, adapter: pk.adapter };
+        if (form.opts.context === 'edit') return { ...conn, adapter: null };
+        return conn;
     },
 
     // draw (or redraw after a change of mode or bridge) and remember what it
     // shows: a field counts as edited only when it differs from that
     _cfRender(form, focusId) {
-        form.host.innerHTML = this._cfHtml(form);
-        form.shown = this._cfInputs(form);
+        // a field that loses focus as it is drawn over fires its change: a
+        // form drawing itself ignores it (form.rendering), never draws twice at once
+        form.rendering = true;
+        try {
+            form.host.innerHTML = form.html ? form.html() : this._cfHtml(form);
+        } finally {
+            form.rendering = false;
+        }
+        form.shown = this._cfIn(form);
         // on a saved device, a change of how it is reached (UDP, framing, a
         // bridge left) is said beside it as soon as it is made
         if (form.opts.context === 'edit' && !form.host._cfWatch) {
@@ -68,7 +116,7 @@ Object.assign(JanitzaMonitor.prototype, {
                 const f = (this._cf || {})[form.px];
                 const hint = document.getElementById(form.px + 'RouteHint');
                 if (!f || !hint) return;
-                const M = window.ConnformModel.apply(f.M, this._cfInputs(f), f.shown);
+                const M = window.ConnformModel.apply(f.M, this._cfIn(f), f.shown);
                 const note = this._cfRouteNote(M, f.orig);
                 hint.hidden = !note;
                 const txt = hint.querySelector('span');
@@ -85,8 +133,10 @@ Object.assign(JanitzaMonitor.prototype, {
         if (!form) return;
         form.read();
         if (el && el.name === `${px}Proto`) {
-            // RTU opens on its recommended mode, over the network
-            form.M.mode = el.value === 'rtu' ? (form.orig.mode === 'rtu' || form.orig.mode === 'rtu_tap' ? form.orig.mode : 'rtu-tcp') : el.value;
+            // RTU opens where the bus is found: a serial port of this host
+            // when it has one (a HAT, a USB adapter), else a bridge — never a
+            // "recommended" network default for a local port (L3-F5)
+            form.M.mode = el.value === 'rtu' ? (form.orig.mode === 'rtu' || form.orig.mode === 'rtu_tap' ? form.orig.mode : this._cfRtuFirst()) : el.value;
             this._cfFitBridge(form);
         } else if (el && el.name === `${px}RtuMode`) {
             form.M.mode = el.value;
@@ -115,6 +165,13 @@ Object.assign(JanitzaMonitor.prototype, {
         const gw = this._bridgeType(((this._bridges || []).find(b => b.id === M.bridge) || {}).type).framing === 'modbus_tcp';
         const ok = M.mode === 'tcp' ? gw : (M.mode === 'rtu-tcp' || M.mode === 'rtu_tap') ? !gw : false;
         if (!ok) { M.bridge = ''; M.bridge_port = null; }
+    },
+
+    // the RTU mode a new device opens on: direct serial when this host has
+    // a serial port it may use, else over the network when a bridge is known
+    _cfRtuFirst() {
+        const ports = ((this._serialPorts || {}).ports || []).filter(p => SerialPorts.choice(p, { role: 'poll' }).pickable);
+        return ports.length || !this._rtuBridges().length ? 'rtu' : 'rtu-tcp';
     },
 
     // bridges that pass RTU frames (a Modbus TCP gateway is reached as TCP)
@@ -163,8 +220,23 @@ Object.assign(JanitzaMonitor.prototype, {
             if (M.mode === 'rtu') { put('framing', 'Framing'); put('timeout', 'TimeoutR'); }
             put('unit_id', 'UnitR');
             break;
+        case 'seplos_v2':
+            put('sv_where', 'SvWhere');
+            out.bus_mode = document.querySelector(`input[name="${px}SvMode"]:checked`)?.value || M.bus_mode || '';
+            if (M.net) { put('host', 'SvHost'); put('port', 'SvPort'); }
+            else {
+                put('serial_port', 'Serial');
+                put('baudrate', 'Baud'); put('parity', 'Parity'); put('stopbits', 'Stop'); put('bytesize', 'Bits');
+            }
+            put('unit_id', 'UnitS');
+            if (M.bus_mode === 'poll') put('timeout', 'TimeoutS');
+            break;
         case 'http':
             put('url', 'Url');
+            break;
+        case 'can':
+            put('carrier', 'CanCarrier'); put('channel', 'CanChannel');
+            put('bitrate', 'CanBitrate'); put('stale_after_s', 'CanStale');
             break;
         case 'mqtt':
             put('broker', 'Broker'); put('mqtt_port', 'MqttPort'); put('topic', 'MqttTopic'); put('vars', 'MqttVars');
@@ -187,19 +259,22 @@ Object.assign(JanitzaMonitor.prototype, {
         const key = CM.fieldOf(path, M);
         if (!key) return null;
         const legacy = M.mode === 'rtu-tcp' && !M.bridge;
+        const sv = M.mode === 'seplos_v2';
         const id = {
             via: M.mode === 'tcp' ? 'Gw' : 'TapWhere',
             bridge: 'Bridge', bridge_port: 'BridgePort',
-            host: legacy ? 'RtuHost' : 'Host',
-            port: legacy ? 'RtuPort' : 'Port',
+            host: sv ? 'SvHost' : legacy ? 'RtuHost' : 'Host',
+            port: sv ? 'SvPort' : legacy ? 'RtuPort' : 'Port',
+            bus_mode: 'SvMode-poll', sv_where: 'SvWhere',
             mqtt_port: 'MqttPort',
-            unit_id: M.mode === 'tcp' ? 'Unit' : M.mode === 'rtu-tcp' ? (legacy ? 'UnitB' : 'UnitBr') : 'UnitR',
-            timeout: M.mode === 'tcp' ? 'Timeout' : M.mode === 'rtu-tcp' ? (legacy ? 'TimeoutB' : 'TimeoutBr') : 'TimeoutR',
+            unit_id: sv ? 'UnitS' : M.mode === 'tcp' ? 'Unit' : M.mode === 'rtu-tcp' ? (legacy ? 'UnitB' : 'UnitBr') : 'UnitR',
+            timeout: sv ? 'TimeoutS' : M.mode === 'tcp' ? 'Timeout' : M.mode === 'rtu-tcp' ? (legacy ? 'TimeoutB' : 'TimeoutBr') : 'TimeoutR',
             serial_port: 'Serial', baudrate: 'Baud', parity: 'Parity', stopbits: 'Stop', bytesize: 'Bits',
             framing: legacy ? 'FramingB' : 'Framing',
             url: 'Url', broker: 'Broker', topic: 'MqttTopic', username: 'MqttUser', password: 'MqttPass',  // leak-check: ok — field ids
             tls: 'MqttTls', tls_insecure: 'MqttTlsInsecure', vars: 'MqttVars',
             ka_mode: 'KaMode', ka_topic: 'KaTopic', ka_every: 'KaEvery',
+            carrier: 'CanCarrier', channel: 'CanChannel', bitrate: 'CanBitrate', stale_after_s: 'CanStale',
         }[key];
         return id && document.getElementById(px + id) ? px + id : null;
     },
@@ -224,18 +299,22 @@ Object.assign(JanitzaMonitor.prototype, {
             : lockClass === 'modbus' ? t('devices.wizard.protoModbusOnly', 'A Modbus device can move between Modbus TCP, RTU, over the network or listen-only — its register map stays valid. HTTP and MQTT read by path, so they need a new device.')
             : lockClass ? t('devices.wizard.protoLocked', 'Fixed after creation — the template map is transport-specific.') : '';
         const routeNote = opts.context === 'edit' ? this._cfRouteNote(M, form.orig) : '';
+        // while choosing (Add Device): what the chosen kind is, under the choice
+        const kindHint = opts.context === 'add' ? this._cfKindHint(M.mode) : '';
         const test = this._cfTestHtml(form);
         return `
         <fieldset class="cf-fieldset">
         <legend class="wiz-eyebrow">${t('devices.wizard.protoQ', 'How is it connected?')}</legend>
-        <div class="seg" role="radiogroup" aria-label="${this._esc(t('devices.wizard.protocol', 'Protocol'))}">
+        <div class="seg" role="radiogroup" aria-label="${this._esc(t('devices.wizard.protocol', 'Protocol'))}" ${kindHint ? `aria-describedby="${px}KindHint"` : ''}>
             ${seg('tcp', 'Modbus TCP', M.mode === 'tcp')}
             ${seg('rtu', 'Modbus RTU', isRtu)}
             ${seg('http', 'HTTP / JSON', M.mode === 'http')}
             ${seg('mqtt', 'MQTT', M.mode === 'mqtt')}
+            ${seg('can', 'CAN', M.mode === 'can')}
+            ${seg('seplos_v2', this._esc(t('cf.svSeg', 'Seplos V2 BMS')), M.mode === 'seplos_v2')}
             ${opts.allowNone ? seg('none', this._esc(t('wizMtr.segShort', 'Meters only')), M.mode === 'none') : ''}
         </div>
-        ${opts.allowNone ? `<div class="field-hint cf-note">${this._esc(t('wizMtr.segHint', 'Meters only: no connection of its own — it is measured by meters you already have.'))}</div>` : ''}
+        ${kindHint ? `<div class="field-hint cf-note cf-kind-hint" id="${px}KindHint">${this._esc(kindHint)}</div>` : ''}
         ${lockHint ? `<div class="field-hint cf-lock"><i aria-hidden="true" class="bi bi-lock"></i> ${lockHint}</div>` : ''}
         <div class="field-hint cf-route" id="${px}RouteHint" role="status" ${routeNote ? '' : 'hidden'}><i aria-hidden="true" class="bi bi-arrow-repeat"></i> <span>${this._esc(routeNote)}</span></div>
         </fieldset>
@@ -243,7 +322,86 @@ Object.assign(JanitzaMonitor.prototype, {
         ${M.mode === 'http' ? this._cfHttpHtml(form, test) : ''}
         ${M.mode === 'tcp' ? this._cfTcpHtml(form, test) : ''}
         ${isRtu ? this._cfRtuHtml(form, test) : ''}
-        ${M.mode === 'mqtt' ? this._cfMqttHtml(form, test) : ''}`;
+        ${M.mode === 'mqtt' ? this._cfMqttHtml(form, test) : ''}
+        ${M.mode === 'seplos_v2' ? this._cfSeplosHtml(form, test) : ''}
+        ${M.mode === 'can' ? this._cfCanHtml(form, test) : ''}`;
+    },
+
+    // the line under the connection choice: what the chosen kind is — each
+    // kind its own, from the language files; a kind they have no line for
+    // shows none (never another kind's)
+    _cfKindHint(mode) {
+        const kind = ['rtu', 'rtu-tcp', 'rtu_tap'].includes(mode) ? 'rtu' : String(mode || '');
+        if (!kind || !(this._t && this._t[`cf.kindHint.${kind}`])) return '';
+        return this.t(`cf.kindHint.${kind}`);
+    },
+
+    // a Seplos V2 BMS: its own ASCII protocol, read-only. Where the bus is (a
+    // serial port here, or a bridge's raw TCP port) and how it is read: the
+    // gateway asks (poll) or only listens to a master pack (listen)
+    _cfSeplosHtml(form, test) {
+        const { px, M } = form;
+        const t = (k, d) => this.t(k, d);
+        const listen = M.bus_mode === 'listen', poll = M.bus_mode === 'poll';
+        const rer = this._act('_cfRerender', [px], { el: true, on: 'change' });
+        // nothing chosen for a new device: the user says whether a master is on the bus
+        const mode = (value, label) => `<label class="seg-btn ${M.bus_mode === value ? 'on' : ''}"><input type="radio" id="${px}SvMode-${value}" name="${px}SvMode" value="${value}" ${M.bus_mode === value ? 'checked' : ''} ${rer}><span class="s"></span> ${label}</label>`;
+        return `<fieldset class="cf-fieldset" id="${px}SeplosFields"><legend class="sr-only">Seplos V2</legend>
+            <div class="seg seg-sm" role="radiogroup" aria-label="${this._esc(t('cf.svModeQ', 'How the gateway reads the bus'))}">
+                ${mode('poll', this._esc(t('cf.svPoll', 'Ask the packs (poll)')))}
+                ${mode('listen', this._esc(t('cf.svListen', 'Listen only')))}
+            </div>
+            <div class="form-row">
+                <div class="form-group"><label class="form-label" for="${px}SvWhere">${t('devices.wizard.tapWhere', 'Where the bus is')}</label>
+                    <select id="${px}SvWhere" class="input" ${rer}>
+                        <option value="serial" ${M.net ? '' : 'selected'}>${this._esc(t('devices.wizard.tapLocal', 'A serial port on this host'))}</option>
+                        <option value="net" ${M.net ? 'selected' : ''}>${this._esc(t('cf.svNet', 'A serial bridge on the network (host and port)'))}</option></select></div>
+                ${M.net ? `<div class="form-group flex-2"><label class="form-label" for="${px}SvHost">${t('cf.bridgeHost', 'Bridge address')}</label>
+                    <input type="text" id="${px}SvHost" class="input" value="${this._esc(M.host)}" placeholder="192.168.1.80" spellcheck="false" autocomplete="off"></div>
+                    ${this._cfNum(px, 'SvPort', t('lbl.port', 'Port'), M.port ?? '', 1, 65535, '')}`
+                : ''}
+            </div>
+            ${M.net ? '' : this._cfSerialHtml(form)}
+            <div class="form-row">
+                ${this._cfNum(px, 'UnitS', t('cf.packAddr', 'Pack address'), M.unit_id, 0, 255, this._esc(t('cf.packAddrHint', 'The pack’s DIP switch address (ADR)')))}
+                ${poll ? this._cfTimeout(px, 'TimeoutS', M) : ''}
+            </div>
+            ${M.net ? '' : this._serialLineHtml(px, M)}
+            <div class="field-hint cf-note"><i aria-hidden="true" class="bi ${listen ? 'bi-ear' : 'bi-info-circle'}"></i> ${!M.bus_mode
+                ? t('cf.svModeHint', 'Choose first: if a master pack already polls this bus (the inter-pack bus of a bank), only listen; ask the packs only on a bus with no other master.')
+                : listen ? t('cf.svListenNote', 'Listen only: a master pack already polls this bus — the gateway never transmits, it decodes the answers the pack at this address gives, at the master’s rhythm. Several packs can listen on one bus, each with its own address.')
+                : t('cf.svPollNote', 'The gateway is the master and asks the pack at this address, read commands only. Never poll a bus where a master pack already polls (the inter-pack bus): listen there. Seplos V2 packs usually talk at 9600 8N1.')}</div>
+            <div class="field-hint">${t('cf.svReadOnly', 'Read-only: the driver can only send read commands, nothing on the pack can be changed from the gateway. Not yet verified on hardware.')}</div>
+            ${test}</fieldset>`;
+    },
+
+    // a CAN link: the carrier, the interface it listens on, the bitrate the
+    // bus runs at (set by the host, shown), how long a quiet bus stays fresh.
+    // The gateway never transmits on it; the interface itself is made
+    // listen-only by the host (ip link … listen-only on).
+    _cfCanHtml(form, test) {
+        const { px, M } = form;
+        const t = (k, d) => this.t(k, d);
+        const rates = [125000, 250000, 500000, 1000000];
+        if (M.bitrate != null && !rates.includes(+M.bitrate)) rates.push(+M.bitrate);
+        return `<fieldset class="cf-fieldset" id="${px}CanFields"><legend class="sr-only">CAN</legend>
+            <div class="form-row">
+                <div class="form-group"><label class="form-label" for="${px}CanCarrier">${t('cf.canCarrier', 'Carrier')}</label>
+                    <select id="${px}CanCarrier" class="input" aria-describedby="${px}CanCarrierHint">
+                        <option value="socketcan" ${M.carrier !== 'bridge' ? 'selected' : ''}>SocketCAN</option>
+                        <option value="bridge" disabled>${this._esc(t('cf.canBridgeLater', 'Serial bridge (later)'))}</option></select>
+                    <div class="field-hint" id="${px}CanCarrierHint">${t('cf.canCarrierHint', 'A CAN interface the gateway process sees (a USB adapter, a HAT).')}</div></div>
+                <div class="form-group"><label class="form-label" for="${px}CanChannel">${t('cf.canChannel', 'Interface')}</label>
+                    <input type="text" id="${px}CanChannel" class="input" value="${this._esc(M.channel || '')}" placeholder="can0" spellcheck="false" autocomplete="off">
+                    <div class="field-hint">${t('cf.canChannelHint', 'As the host names it: can0, can1, vcan0.')}</div></div>
+                <div class="form-group"><label class="form-label" for="${px}CanBitrate">${t('cf.canBitrate', 'Bitrate — set by the host, shown only')}</label>
+                    <select id="${px}CanBitrate" class="input" aria-describedby="${px}CanBitrateHint">
+                        ${rates.map(r => `<option value="${r}" ${+M.bitrate === r ? 'selected' : ''}>${r / 1000} kbit/s</option>`).join('')}</select>
+                    <div class="field-hint" id="${px}CanBitrateHint">${t('cf.canBitrateHint', 'What the bus runs at; the host sets it on the interface, the gateway does not change it.')}</div></div>
+                ${this._cfNum(px, 'CanStale', t('cf.canStale', 'Stale after (s)'), M.stale_after_s ?? 5, 1, 3600, `1–3600 · ${t('common.default', 'default')} 5`)}
+            </div>
+            <div class="field-hint cf-note" id="${px}CanNote"><i aria-hidden="true" class="bi bi-ear"></i> ${t('cf.canListenNote', 'Listen-only: the gateway never transmits on a CAN bus — it decodes the frames it hears. Set the interface listen-only on the host too: ip link set can0 type can bitrate 500000 listen-only on. Test says whether the interface exists, is up and listen-only, and what it hears in 2 s.')}</div>
+            ${test}</fieldset>`;
     },
 
     // what a save of M would do to how it is reached, said beside the choice:
@@ -260,11 +418,22 @@ Object.assign(JanitzaMonitor.prototype, {
         return '';
     },
 
+    // what the serial picker judges a port for: the form's own say (the
+    // connection step: an unanswered role is 'unknown', L3-F4), else the mode's
+    _cfPickerRole(form) {
+        return form.pickerRole ? form.pickerRole() : SerialPorts.role(form.M.mode, form.M.bus_mode);
+    },
+
+    // Test's action: the names the forms always had (e2e and docs refer to
+    // them), else the form's own Test by its prefix
+    _cfTestAttr(px) {
+        if (px === 'ddv') return 'data-action="deviceDetailTest" data-with-el';
+        return this._act('_cfTest', [px], { el: true });
+    },
+
     _cfTestHtml(form) {
         if (form.M.mode === 'none') return '';
-        // the action names the forms always had (e2e and docs refer to them)
-        const action = form.px === 'devWiz' ? 'devWizardTest' : 'deviceDetailTest';
-        return `<div class="cf-test"><button type="button" data-live class="btn btn-secondary btn-sm" id="${form.px}TestBtn" data-action="${action}" data-with-el>
+        return `<div class="cf-test"><button type="button" data-live class="btn btn-secondary btn-sm" id="${form.px}TestBtn" ${this._cfTestAttr(form.px)}>
                 <i aria-hidden="true" class="bi bi-activity"></i> ${this.t('devices.wizard.testConn', 'Test connection')}</button>
             <span class="wiz-test-result" id="${form.px}TestResult" role="status" aria-live="polite"></span></div>`;
     },
@@ -329,9 +498,8 @@ Object.assign(JanitzaMonitor.prototype, {
         } else {
             body = `<div id="${px}RtuDirect">
                 ${tap ? this._cfTapWhereHtml(form) : ''}
+                ${tapNet ? '' : this._cfSerialHtml(form)}
                 <div class="form-row">
-                    ${tapNet ? '' : `<div class="form-group flex-2"><label class="form-label" for="${px}Serial">${t('devices.wizard.serialPort', 'Serial port')}</label>
-                        <input type="text" id="${px}Serial" class="input" value="${this._esc(M.serial_port)}" placeholder="/dev/ttyUSB0" spellcheck="false" autocomplete="off"></div>`}
                     ${tap ? '' : `<div class="form-group"><label class="form-label" for="${px}Framing">${t('devices.wizard.framing', 'Framing')}</label>
                         <select id="${px}Framing" class="input" title="${this._esc(t('devices.wizard.framingHint', 'RTU (binary, CRC) is what almost every device speaks. ASCII (“:” … LRC, readable hex) is found on older PLCs and meters — use it only when the manual says Modbus ASCII. All slaves on one line speak the same one.'))}">
                             <option value="rtu" ${M.framing !== 'ascii' ? 'selected' : ''}>RTU</option>
@@ -347,11 +515,194 @@ Object.assign(JanitzaMonitor.prototype, {
         }
         return `<fieldset class="cf-fieldset" id="${px}RtuFields"><legend class="sr-only">Modbus RTU</legend>
             <div class="seg seg-sm" role="radiogroup" aria-label="${this._esc(t('devices.wizard.rtuMode', 'RTU connection mode'))}">
-                ${mode('rtu-tcp', t('devices.wizard.rtuOverNet', 'Over network (auto-detect)'), ` <span class="seg-reco">${t('common.recommended', 'recommended')}</span>`)}
                 ${mode('rtu', t('devices.wizard.rtuDirect', 'Direct serial'))}
+                ${mode('rtu-tcp', t('devices.wizard.rtuOverNet', 'Over network (auto-detect)'))}
                 ${mode('rtu_tap', t('devices.wizard.rtuTap', 'Listen only (tap)'))}
             </div>
             ${body}</fieldset>`;
+    },
+
+    // ── the serial port of this host (ADR-0028) ──────────────────────────
+    // A list of the ports GET /api/serial-ports names, each with its kind and
+    // state; picking one fills the path field (a USB adapter's by-id link),
+    // which stays under "Advanced" for a path the list cannot see. What the
+    // form reads and sends is that field, as before. A port the form may not
+    // use is still a button — focusable, aria-disabled, its reason beside it.
+    _cfSerialHtml(form) {
+        const { px } = form;
+        const t = (k, d) => this.t(k, d);
+        const sp = this._serialPorts;
+        // the list is read once per page and again on Refresh (or when stale)
+        if (!sp || (!sp.loading && Date.now() - (sp.at || 0) > 30000)) setTimeout(() => this._cfSerialLoad(), 0);
+        const open = this._cfSerialWantsPath(form);
+        return `<div class="form-group cf-serial" id="${px}SerialPick">
+            <div class="cf-serial-head">
+                <span class="form-label" id="${px}SerialLbl">${t('devices.wizard.serialPort', 'Serial port')}</span>
+                <button type="button" class="btn btn-secondary btn-sm" id="${px}SerialRefresh" ${this._act('_cfSerialRefresh', [px])}>
+                    <i aria-hidden="true" class="bi bi-arrow-repeat"></i> ${t('cf.portsRefresh', 'Refresh')}</button>
+                <span class="field-hint cf-serial-status" id="${px}SerialStatus" role="status"></span>
+            </div>
+            <div id="${px}SerialList" class="cf-ports" role="group" aria-labelledby="${px}SerialLbl">${this._cfSerialListHtml(form)}</div>
+            <details class="cf-serial-adv" id="${px}SerialAdv" ${open ? 'open' : ''}>
+                <summary>${t('cf.portAdvanced', 'Advanced: type a path')}</summary>
+                <label class="form-label" for="${px}Serial">${t('cf.portPath', 'Serial port path')}</label>
+                <input type="text" id="${px}Serial" class="input" value="${this._esc(form.M.serial_port)}" placeholder="/dev/ttyUSB0" spellcheck="false" autocomplete="off" ${this._act('_cfSerialTyped', [px], { on: 'input' })}>
+                <div class="field-hint">${t('cf.portPathHint', 'For a path the list cannot show: a udev alias, or a port mapped into the container under another name.')}</div>
+            </details></div>`;
+    },
+
+    // what the form will store now: the path field once drawn, else the model
+    _cfSerialCurrent(form) {
+        const el = document.getElementById(form.px + 'Serial');
+        return el ? el.value : String(form.M.serial_port || '');
+    },
+
+    // the path field is opened when the stored path is none of the listed
+    // ports, or when no listed port can be picked
+    _cfSerialWantsPath(form) {
+        const sp = this._serialPorts;
+        if (!sp || !sp.ports) return false;
+        const cur = this._cfSerialCurrent(form).trim();
+        const role = this._cfPickerRole(form);
+        const self = form.opts.context === 'edit' ? form.opts.deviceId : null;
+        if (cur && !sp.ports.some(p => SerialPorts.matches(p, cur))) return true;
+        return !sp.ports.some(p => SerialPorts.choice(p, { role, self }).pickable);
+    },
+
+    _cfSerialListHtml(form) {
+        const { px, M } = form;
+        const t = (k, d, p) => this.t(k, d, p);
+        const sp = this._serialPorts;
+        if (!sp || !sp.ports) return `<div class="field-hint">${t('cf.portsLoading', 'Looking for the serial ports of this host…')}</div>`;
+        const role = this._cfPickerRole(form);
+        const self = form.opts.context === 'edit' ? form.opts.deviceId : null;
+        const cur = this._cfSerialCurrent(form).trim();
+        const items = sp.ports.map((p, i) => {
+            const c = SerialPorts.choice(p, { role, self });
+            const on = SerialPorts.matches(p, cur);
+            const why = this._cfPortWhy(c);
+            const stPill = { '': 'ok', unknown: 'off', console: 'off', polled: c.pickable ? 'info' : 'warn',
+                             listened: c.pickable ? 'info' : 'warn' }[c.why] || 'warn';
+            return `<div class="cf-port-row" data-port="${this._esc(p.name || '')}" data-state="${this._esc(c.why || 'free')}">
+                <button type="button" class="cf-port ${on ? 'on' : ''}" id="${px}Port-${i}" aria-pressed="${on}"
+                    ${c.pickable ? '' : 'aria-disabled="true"'} ${why ? `aria-describedby="${px}PortWhy-${i}"` : ''}
+                    ${this._act('_cfSerialPick', [px, i])}>
+                    <i aria-hidden="true" class="bi ${on ? 'bi-check-circle-fill' : 'bi-circle'}"></i>
+                    <span class="cf-port-name">${this._esc(SerialPorts.label(p))}</span>
+                    <span class="sink-pill off">${this._esc(this._cfPortKindText(p))}</span>
+                    <span class="sink-pill ${stPill}">${this._esc(this._cfPortStateText(c.why))}</span>
+                    <code class="cf-port-path">${this._esc(SerialPorts.value(p))}</code></button>
+                ${why ? `<div class="field-hint cf-port-why" id="${px}PortWhy-${i}">${why}</div>` : ''}</div>`;
+        });
+        const none = !sp.ports.length
+            ? `<div class="field-hint">${sp.error ? this._esc(sp.error) : t('cf.portsNone', 'No serial port was found on this host. Type its path under Advanced.')}</div>` : '';
+        const hidden = sp.hidden ? `<div class="field-hint">${this._esc(this.tn('cf.portsHidden', sp.hidden, '{n} console ports not shown: the system uses them.'))}</div>` : '';
+        return items.join('') + none + hidden;
+    },
+
+    _cfPortKindText(p) {
+        const t = (k, d) => this.t(k, d);
+        return ({
+            usb: t('cf.portKind.usb', 'USB'),
+            hat: t('cf.portKind.hat', 'RS-485 HAT'),
+            board_uart: t('cf.portKind.board_uart', 'Board UART'),
+        })[SerialPorts.kind(p)] || t('cf.portKind.other', 'Other');
+    },
+
+    _cfPortStateText(why) {
+        const t = (k, d) => this.t(k, d);
+        return ({
+            '': t('cf.portState.free', 'Free'),
+            polled: t('cf.portState.polled', 'Polled'),
+            listened: t('cf.portState.listened', 'Listened to'),
+            busy: t('cf.portState.busy', 'In use'),
+            not_mapped: t('cf.portState.not_mapped', 'Not mapped'),
+            unknown: t('cf.portState.unknown', 'Unknown'),
+            console: t('cf.portState.console', 'Console'),
+        })[why] || t('cf.portState.unknown', 'Unknown');
+    },
+
+    // why a port is shown as it is, and for one not mapped the lines to add
+    _cfPortWhy(c) {
+        const t = (k, d, p) => this.t(k, d, p);
+        const who = (c.who || []).join(', ');
+        const fixLine = s => `<span class="br-fix"><code class="br-fix-cmd">${this._esc(s)}</code>
+            <button type="button" class="btn btn-secondary btn-sm" ${this._act('copyText', [s], { el: true })}
+              title="${this._esc(t('bridges.copyFix', 'Copy the command'))}" aria-label="${this._esc(t('bridges.copyFix', 'Copy the command'))}"><i aria-hidden="true" class="bi bi-clipboard"></i></button></span>`;
+        switch (c.why) {
+        case 'listened': return c.pickable
+            ? this._esc(t('cf.portListenedJoin', 'Listened to by {who}; another listener may join.', { who }))
+            : this._esc(t('cf.portListened', 'Listened to by {who}: another master owns this bus, so nothing may poll on it. Choose “Listen only”, or another port.', { who }));
+        case 'polled': return c.pickable
+            ? this._esc(t('cf.portPolledShare', 'Polled by {who}; another unit on the same bus may be polled too.', { who }))
+            : this._esc(t('cf.portPolled', 'Polled by {who}: a bus is either polled or listened to, never both.', { who }));
+        case 'busy': return this._esc(t('cf.portBusy', 'Open in another program: {who}.', { who }));
+        case 'unknown': return this._esc(t('cf.portUnknown', 'Whether another program uses it cannot be read from here.'));
+        case 'console': return this._esc(t('cf.portConsole', 'The system console: never used for a bus.'));
+        case 'not_mapped': return `${this._esc(t('cf.portNotMapped', 'Not mapped into the gateway’s container. Add it under the gateway service’s devices: in docker-compose, then recreate the container:'))}
+            ${c.fix ? fixLine(c.fix.compose) + ` ${this._esc(t('cf.portNotMappedRun', 'or, with docker run:'))} ` + fixLine(c.fix.docker_run) : ''}
+            ${c.fix && c.fix.taken ? `<span class="cf-port-note">${this._esc(t('cf.portNameTaken', 'Its name in this container is already another device (a renamed mapping), so the line above maps it under another path.'))}</span>`
+            : c.fix && c.fix.note ? `<span class="cf-port-note">${this._esc(t('cf.portNotMappedUsb', 'A USB adapter’s ttyUSB name can change when it is replugged: map its /dev/serial/by-id/… link (ls -l /dev/serial/by-id on the host) or a udev alias instead, as the same path inside.'))}</span>` : ''}`;
+        default: return '';
+        }
+    },
+
+    async _cfSerialLoad() {
+        if (this._serialPortsLoading) return this._serialPortsLoading;
+        this._serialPorts = Object.assign({}, this._serialPorts || {}, { loading: true });
+        this._serialPortsLoading = (async () => {
+            try {
+                const r = await fetch('/api/serial-ports');
+                const d = await r.json();
+                if (!r.ok) throw new Error((d.detail?.errors || [d.detail || r.statusText]).join('; '));
+                this._serialPorts = { ports: d.ports || [], hidden: d.hidden || 0, error: d.error || '', at: Date.now() };
+            } catch (e) {
+                this._serialPorts = { ports: [], hidden: 0, error: String(e.message || e), at: Date.now() };
+            }
+        })();
+        try { await this._serialPortsLoading; } finally { this._serialPortsLoading = null; }
+        for (const px of Object.keys(this._cf || {})) this._cfSerialFill(px);
+    },
+
+    // redraw one form's list (after a load, a pick, a path typed)
+    _cfSerialFill(px, focusId = null) {
+        const form = (this._cf || {})[px];
+        const list = document.getElementById(px + 'SerialList');
+        if (!form || !list) return;
+        list.innerHTML = this._cfSerialListHtml(form);
+        const adv = document.getElementById(px + 'SerialAdv');
+        if (adv && !adv.open && this._cfSerialWantsPath(form)) adv.open = true;
+        if (focusId) document.getElementById(focusId)?.focus();
+    },
+
+    async _cfSerialRefresh(px) {
+        this._serialPorts = Object.assign({}, this._serialPorts || {}, { at: 0 });
+        await this._cfSerialLoad();
+        const sp = this._serialPorts || {};
+        const st = document.getElementById(px + 'SerialStatus');
+        if (st) st.textContent = sp.error ? sp.error : this.tn('cf.portsFound', (sp.ports || []).length, '{n} serial port(s) found.');
+    },
+
+    _cfSerialPick(px, i) {
+        const form = (this._cf || {})[px];
+        const p = ((this._serialPorts || {}).ports || [])[i];
+        const el = document.getElementById(px + 'Serial');
+        if (!form || !p || !el) return;
+        const role = this._cfPickerRole(form);
+        const self = form.opts.context === 'edit' ? form.opts.deviceId : null;
+        if (!SerialPorts.choice(p, { role, self }).pickable) return;   // its reason is beside it
+        el.value = SerialPorts.value(p);
+        el.dispatchEvent(new Event('input', { bubbles: true }));
+        el.dispatchEvent(new Event('change', { bubbles: true }));
+        this._cfSerialFill(px, `${px}Port-${i}`);
+    },
+
+    // a path typed: the list shows which port it names
+    _cfSerialTyped(px) {
+        const list = document.getElementById(px + 'SerialList');
+        const form = (this._cf || {})[px];
+        if (!form || !list) return;
+        list.innerHTML = this._cfSerialListHtml(form);
     },
 
     // RTU over the network without a bridge record: its address typed, or
@@ -382,28 +733,46 @@ Object.assign(JanitzaMonitor.prototype, {
             </div>
             <div class="field-hint" id="${px}BridgeHint">${M.host
                 ? this._esc(t('devices.wizard.bridgeBound', 'Bound to {ep} — the adapter keeps this endpoint across replug.').replace('{ep}', `${M.host}:${M.port ?? ''}`))
-                : t('devices.wizard.bridgeScanHint', 'Plug the adapter in and press Scan. Baud rate is set on the bridge (default 9600 8N1).')}</div>`;
+                : t('devices.wizard.bridgeScanHint', 'Plug the adapter in and press Scan. Baud rate is set on the bridge (default 9600 8N1).')}</div>
+            <div id="${px}PortsBlocked">${this._bridgeWarningsHtml(form.bridgeWarnings)}${this._portBlockedHtml(BridgePorts.split(form.adapters).blocked)}</div>`;
     },
 
+    // every port the bridge lists: the ones it serves can be picked; the
+    // others (a HAT channel the container may not open, the console, a port
+    // another program holds) are shown disabled, with why under the list
     _cfAdapterOptions(form) {
         const M = form.M;
-        const ads = (form.adapters || []).filter(a => a.available && a.tcp_port);
+        const { usable: ads, blocked } = BridgePorts.split(form.adapters);
         const cur = (M.host && M.port) ? `${M.host}::${M.port}` : '';
-        if (!ads.length && !cur) return `<option value="">${this._esc(this.t('devices.wizard.noAdapters', '— press Scan to detect adapters —'))}</option>`;
+        if (!ads.length && !blocked.length && !cur) return `<option value="">${this._esc(this.t('devices.wizard.noAdapters', '— press Scan to detect adapters —'))}</option>`;
+        // the value carries the adapter's stable id: the device is bound to
+        // THAT adapter, and the bus guard refuses another one on this port
         const opts = ads.map(a => {
-            const v = `${a.bridge_host}::${a.tcp_port}`;
-            const label = `${a.model || a.manufacturer || a.vendor_id || 'serial'}${a.serial ? ' (' + a.serial + ')' : ''} → :${a.tcp_port}`;
-            return `<option value="${this._esc(v)}" ${v === cur ? 'selected' : ''}>${this._esc(label)}</option>`;
+            const ep = `${a.bridge_host}::${a.tcp_port}`;
+            const v = `${ep}::${a.stable_id || ''}`;
+            const label = `${this._portKindText(a)} · ${BridgePorts.label(a)} → :${a.tcp_port}`;
+            return `<option value="${this._esc(v)}" ${ep === cur ? 'selected' : ''}>${this._esc(label)}</option>`;
         });
         if (cur && !ads.some(a => `${a.bridge_host}::${a.tcp_port}` === cur)) {
             opts.unshift(`<option value="${this._esc(cur)}" selected>${this._esc(`${M.host}:${M.port}`)}</option>`);
+        } else if (!cur) {
+            // nothing bound yet: never show a port as chosen while its address
+            // is not filled in (several ports used to look picked, unbound)
+            opts.unshift(`<option value="" selected>${this._esc(ads.length
+                ? this.t('devices.wizard.pickPort', '— pick a port —')
+                : this.t('devices.wizard.noUsable', '— no port can be used yet (see below) —'))}</option>`);
+        }
+        for (const a of blocked) {
+            opts.push(`<option value="" disabled>${this._esc(`${this._portKindText(a)} · ${BridgePorts.label(a)} — ${this._portStatusText(BridgePorts.status(a))}`)}</option>`);
         }
         return opts.join('');
     },
 
     // a picked adapter fills the address it is reached at
     _cfAdapterPick(px, value) {
-        const [host, port] = String(value).split('::');
+        const [host, port, adapter] = String(value).split('::');
+        const form = (this._cf || {})[px];
+        if (form) form.picked = host ? { host, port: String(port), adapter: adapter || '' } : null;
         const h = document.getElementById(px + 'RtuHost');
         const p = document.getElementById(px + 'RtuPort');
         if (h && host) h.value = host;
@@ -423,12 +792,14 @@ Object.assign(JanitzaMonitor.prototype, {
             if (!r.ok) throw new Error((data.detail?.errors || [data.detail || r.statusText]).join('; '));
             if (!data.available) throw new Error(data.error || this.t('devices.wizard.bridgeDown', 'Serial bridge not reachable.'));
             form.adapters = data.adapters || [];
-            const avail = form.adapters.filter(a => a.available && a.tcp_port);
+            form.bridgeWarnings = data.warnings || [];
+            const { usable: avail, blocked } = BridgePorts.split(form.adapters);
             form.read();
             if (avail.length === 1) { form.M.host = avail[0].bridge_host; form.M.port = avail[0].tcp_port; }
             ok = avail.length > 0;
             msg = avail.length ? this.tn('devices.wizard.scanFound', avail.length, 'Found {n} adapters.')
                 : this.t('devices.wizard.scanNone', 'No available adapters — plug one in and Scan again.');
+            if (blocked.length) msg += ' ' + this.tn('devices.wizard.scanBlocked', blocked.length, '{n} more cannot be used yet — see below.');
         } catch (e) { msg = String(e.message || e); }
         this._cfRender(form, `${px}ScanBtn`);
         const out = document.getElementById(px + 'TestResult');
@@ -480,6 +851,9 @@ Object.assign(JanitzaMonitor.prototype, {
         if (M.bridge_port != null && !ports.some(p => +p.port === +M.bridge_port)) ports.unshift({ port: M.bridge_port });
         const port = M.bridge_port ?? (ports[0] || {}).port;
         const used = (ports.find(p => +p.port === +port)?.devices || []).filter(x => x.id !== opts.deviceId);
+        // a bus a device only listens to is not asked on (ADR-0025): said
+        // before Next, not only by the refusal after it
+        const listeners = used.filter(x => x.tap);
         return `<div class="form-row align-end" id="${px}BridgeRow">
             <div class="form-group flex-2"><label class="form-label" for="${px}Bridge">${t('devices.wizard.bridge', 'Bridge')}</label>
               <select id="${px}Bridge" class="input" ${this._act('_cfRerender', [px], { el: true, on: 'change' })}>
@@ -493,7 +867,9 @@ Object.assign(JanitzaMonitor.prototype, {
             ${this._cfUnit(px, 'UnitBr', M)}
             ${this._cfTimeout(px, 'TimeoutBr', M)}
           </div>
-          <div class="field-hint cf-note" id="${px}BridgeHint2">${used.length
+          <div class="field-hint cf-note" id="${px}BridgeHint2">${listeners.length
+              ? `<i aria-hidden="true" class="bi bi-ear"></i> ${this._esc(t('devices.wizard.busListened', 'Listened to by {list}: another master polls this bus and the gateway only listens. A device that asks here would collide with that master — saving is refused. Choose Listen only (tap) to join it, or another bus.', { list: listeners.map(x => x.name || x.id).join(', ') }))}`
+              : used.length
               ? this._esc(t('devices.wizard.busHas', 'Also on this bus: {list} — each slave needs its own unit id; they take turns on one connection.', { list: used.map(x => `${x.name || x.id} (unit ${x.unit_id})`).join(', ') }))
               : this._esc(t('devices.wizard.busEmpty', 'First device on this bus.'))}
             ${opts.context === 'edit' ? ' ' + this._esc(t('devices.busMoveHint', 'Pick another bus to move it there; its topics and history stay.')) : ''}
@@ -538,9 +914,14 @@ Object.assign(JanitzaMonitor.prototype, {
             buses.unshift({ b: { id: M.bridge, name: `${M.bridge} (${t('devices.missingBridge', 'not found')})`, host: '' }, p: { port: M.bridge_port ?? '' } });
         }
         if (!buses.length) return '';
+        // the bus picked is polled by a device of ours: a listener is refused there
+        const picked = buses.find(({ b, p }) => `${b.id}::${p.port}` === cur);
+        const pollers = ((picked && picked.p.devices) || []).filter(x => !x.tap && x.id !== form.opts.deviceId);
+        const polledNote = pollers.length
+            ? `<div class="field-hint cf-note" id="${px}TapPolled"><i aria-hidden="true" class="bi bi-exclamation-triangle"></i> ${this._esc(this.t('devices.wizard.busPolled', 'Polled by {list}: a bus is either polled or listened to, never both — a listener is refused here. Choose a bus nobody polls.', { list: pollers.map(x => x.name || x.id).join(', ') }))}</div>` : '';
         return `<div class="form-row"><div class="form-group flex-2">
             <label class="form-label" for="${px}TapWhere">${t('devices.wizard.tapWhere', 'Where the bus is')}</label>
-            <select id="${px}TapWhere" class="input" ${form.opts.lockMode ? 'disabled' : ''} ${this._act('_cfRerender', [px], { el: true, on: 'change' })}>
+            <select id="${px}TapWhere" class="input" ${form.opts.lockMode ? 'disabled' : ''} ${pollers.length ? `aria-describedby="${px}TapPolled"` : ''}${this._act('_cfRerender', [px], { el: true, on: 'change' })}>
               <option value="" ${cur ? '' : 'selected'}>${t('devices.wizard.tapLocal', 'A serial port on this host')}</option>
               ${buses.map(({ b, p }) => {
                   const v = `${b.id}::${p.port}`;
@@ -548,6 +929,7 @@ Object.assign(JanitzaMonitor.prototype, {
               }).join('')}
             </select>
             <div class="field-hint">${t('devices.wizard.tapWhereHint', 'Through a bridge, the gateway reads the bridge’s port and never writes to it. Only transparent bridges and the MBG serial bridge pass the bus’s traffic on — a Modbus TCP gateway only answers questions. The line settings are the bus’s, set on the bridge.')}</div>
+            ${polledNote}
           </div></div>`;
     },
 
@@ -566,9 +948,9 @@ Object.assign(JanitzaMonitor.prototype, {
                 ${this._secretInput(`${px}MqttTopic`, M.topic || '', `placeholder="sensors/# or shellies/shelly1/status" aria-describedby="${px}MqttTopicHint ${px}MqttMaskHint"`, t('devices.wizard.mqttTopic', 'Topic (subscribe)'))}
                 <div class="field-hint" id="${px}MqttTopicHint">${t('devices.wizard.mqttTopicHint', 'The device subscribes here; values are read from the JSON payload by the template’s json_path. + and # wildcards supported.')}</div>
                 <div class="field-hint" id="${px}MqttMaskHint"><i aria-hidden="true" class="bi bi-eye-slash"></i> ${t('cf.maskedWhy', 'The topic and its variables are hidden on screen: they can carry an identifier of the installation (a GX portal id). Show them with the eye button.')}</div>
-                ${edit ? '' : `<div class="cf-presets"><span class="field-hint">${t('devices.wizard.presets', 'Presets:')}</span>
-                    <button type="button" class="calc-chip" ${this._act('_devWizMqttPreset', ['zigbee2mqtt_sensor', 'zigbee2mqtt/<friendly_name>'])}><i aria-hidden="true" class="bi bi-broadcast-pin"></i> Zigbee (zigbee2mqtt)</button>
-                    <button type="button" class="calc-chip" ${this._act('_devWizMqttPreset', ['ble_theengs_sensor', 'home/TheengsGateway/BTtoMQTT/<MAC>'])}><i aria-hidden="true" class="bi bi-bluetooth"></i> BLE (Theengs/BTHome)</button></div>`}
+                ${edit || px !== 'csAdd' ? '' : `<div class="cf-presets"><span class="field-hint">${t('devices.wizard.presets', 'Presets:')}</span>
+                    <button type="button" class="calc-chip" ${this._act('_adMqttPreset', ['zigbee2mqtt_sensor'])}><i aria-hidden="true" class="bi bi-broadcast-pin"></i> Zigbee (zigbee2mqtt)</button>
+                    <button type="button" class="calc-chip" ${this._act('_adMqttPreset', ['ble_theengs_sensor'])}><i aria-hidden="true" class="bi bi-bluetooth"></i> BLE (Theengs/BTHome)</button></div>`}
             </div>
             <div class="form-group">
                 <label class="form-label" for="${px}MqttVars">${t('devices.mqttVars', 'Topic variables')}</label>
@@ -589,7 +971,7 @@ Object.assign(JanitzaMonitor.prototype, {
             </div>
             ${this._cfKeepaliveHtml(form)}
             <div class="cf-test">
-                <button type="button" data-live class="btn btn-secondary btn-sm" id="${px}TestBtn" data-action="${px === 'devWiz' ? 'devWizardTest' : 'deviceDetailTest'}" data-with-el>
+                <button type="button" data-live class="btn btn-secondary btn-sm" id="${px}TestBtn" ${this._cfTestAttr(px)}>
                     <i aria-hidden="true" class="bi bi-activity"></i> ${t('devices.wizard.testConn', 'Test connection')}</button>
                 <button type="button" class="btn btn-secondary btn-sm" id="${px}MqttBrowseBtn" ${this._act('_cfMqttBrowse', [px], { el: true })}>
                     <i aria-hidden="true" class="bi bi-binoculars"></i> ${t('devices.wizard.browseTopics', 'Browse topics')}</button>
@@ -720,7 +1102,7 @@ Object.assign(JanitzaMonitor.prototype, {
                 // unchanged: the saved device is asked — its stored secrets,
                 // what its running input hears; never a second connection to a
                 // broker that allows few
-                r = await fetch(`/api/devices/${encodeURIComponent(id)}/test`, { method: 'POST' });
+                r = await window.DeviceStore.devWrite(id, 'POST', `/api/devices/${encodeURIComponent(id)}/test`);
             } else {
                 // edited or new: the connection a save would leave — the
                 // edited values (on a bridge: the bus picked, resolved by the

@@ -1,5 +1,5 @@
 # Multi-Bus Gateway — multi-protocol Modbus/HTTP/MQTT acquisition gateway.
-# Copyright (C) 2024-2026 Stefan Maldaianu <sm26449@diysolar.ro>
+# Copyright (C) 2024-2026 Stefan Maldaianu <stefan@multibus.dev>
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU Affero General Public License as published by
@@ -275,6 +275,9 @@ def validate_attributes_doc(raw: bytes) -> List[str]:
     mode = (doc.get('settings') or {}).get('location_publish')
     if mode is not None and mode not in PUBLISH_MODES:
         errors.append(f"attributes.yaml settings.location_publish: one of {', '.join(PUBLISH_MODES)}")
+    serials = (doc.get('settings') or {}).get('publish_serials')
+    if serials is not None and not isinstance(serials, bool):
+        errors.append("attributes.yaml settings.publish_serials: true or false")
     _cats('site', doc.get('site') or {}, 'site')
     for lv in ('installation', 'device'):
         held = doc.get(lv) or {}

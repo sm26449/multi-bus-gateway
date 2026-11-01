@@ -1,5 +1,5 @@
 # Multi-Bus Gateway — multi-protocol Modbus/HTTP/MQTT acquisition gateway.
-# Copyright (C) 2024-2026 Stefan Maldaianu <sm26449@diysolar.ro>  — AGPL-3.0-or-later
+# Copyright (C) 2024-2026 Stefan Maldaianu <stefan@multibus.dev>  — AGPL-3.0-or-later
 """What a device says is wrong becomes an alert: a template's alarm field
 that turns active (and stays so for its for_s) fires once, a new error code
 fires again, the clear is announced — and a webhook body can nest the alert

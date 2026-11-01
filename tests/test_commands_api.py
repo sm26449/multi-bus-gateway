@@ -1,5 +1,5 @@
 # Multi-Bus Gateway — multi-protocol Modbus/HTTP/MQTT acquisition gateway.
-# Copyright (C) 2024-2026 Stefan Maldaianu <sm26449@diysolar.ro>  — AGPL-3.0-or-later
+# Copyright (C) 2024-2026 Stefan Maldaianu <stefan@multibus.dev>  — AGPL-3.0-or-later
 """Commands from every face: API, group, HA slider, MQTT topic — one set of
 gates, one verification, one audit, one read-back. The recipe is the
 template's (`power_limit` on fronius_sunspec_inverter); nothing here knows a
@@ -80,6 +80,11 @@ class _Facade:
 
     def data_health(self, *a):
         return {'status': 'ok', 'last_success_ts': 1.0, 'connected': True, 'sources': {}}
+
+    def disconnect(self):
+        """An installation's save restarts its units (RP-13: without it the
+        save answered 500 here, a harness artefact)."""
+        self.connected = False
 
 
 class _Mqtt:
@@ -308,8 +313,10 @@ def test_the_ha_slider_and_the_mqtt_topic_go_through_the_same_command(tmp_path):
     # the command topics exist for the unit and its group
     assert 'pv/inverters/1/cmd/power_limit' in mq.topics and 'pv/inverters/cmd/power_limit' in mq.topics
     assert 'pv/inverters/1/cmd/restore' in mq.topics
+    # (an MQTT / HA command is handed to its device's lane and the handler
+    # returns at once, ADR-0018: each call below is followed by a drain)
     # a controller's command, legacy field names included
-    mq.topics['pv/inverters/1/cmd/power_limit']('{"limit_pct": 55, "revert_timeout": 120, "source": "ov"}')
+    mq.topics['pv/inverters/1/cmd/power_limit']('{"limit_pct": 55, "revert_timeout": 120, "source": "ov"}'); app.state.command_dispatch.drain()
     assert inv.writes[-1][1] == [5500, 0, 120, 0, 1]
     topic, payload, retain = [x for x in mq.sent if x[0].endswith('/cmd/result')][-1]
     assert topic == 'pv/inverters/1/cmd/result' and retain is False
@@ -321,23 +328,23 @@ def test_the_ha_slider_and_the_mqtt_topic_go_through_the_same_command(tmp_path):
     assert topic == 'pv/inverters/1/cmd/power_limit/state' and retain is True
     assert json.loads(payload)['params']['value'] == 55.0
     # the legacy collector's envelope (command, device_id) is tolerated: Node-RED's OV node speaks it
-    mq.topics['pv/inverters/1/cmd/power_limit']('{"command": "set_power_limit", "device_id": 1, "limit_pct": 65, "revert_timeout": 0, "ramp_time": 10, "source": "nodered-ov"}')
+    mq.topics['pv/inverters/1/cmd/power_limit']('{"command": "set_power_limit", "device_id": 1, "limit_pct": 65, "revert_timeout": 0, "ramp_time": 10, "source": "nodered-ov"}'); app.state.command_dispatch.drain()
     assert inv.writes[-1][1] == [6500, 0, 0, 10, 1]
-    mq.topics['pv/inverters/1/cmd/restore']('{"command": "restore_power_limit", "device_id": 1, "source": "nodered-ov"}')
+    mq.topics['pv/inverters/1/cmd/restore']('{"command": "restore_power_limit", "device_id": 1, "source": "nodered-ov"}'); app.state.command_dispatch.drain()
     assert inv.writes[-1][1] == [10000, 0, 0, 0, 0]
     # a bare number is the value
-    mq.topics['pv/inverters/1/cmd/power_limit']('70')
+    mq.topics['pv/inverters/1/cmd/power_limit']('70'); app.state.command_dispatch.drain()
     assert inv.writes[-1][1] == [7000, 0, 600, 0, 1]
     # restore (an alias: power_limit with its parameters filled in)
-    mq.topics['pv/inverters/1/cmd/restore']('')
+    mq.topics['pv/inverters/1/cmd/restore'](''); app.state.command_dispatch.drain()
     assert inv.writes[-1][1] == [10000, 0, 0, 0, 0]
     # the group topic reaches every unit of the group
-    mq.topics['pv/inverters/cmd/power_limit']('{"value": 90}')
+    mq.topics['pv/inverters/cmd/power_limit']('{"value": 90}'); app.state.command_dispatch.drain()
     assert inv.writes[-1][1] == [9000, 0, 600, 0, 1]
     # the HA number entity for power_limit_pct is the command, not a bare write
     from multibus.device_template import TemplateRegistry
     reg = next(r for r in TemplateRegistry().get('fronius_sunspec_inverter').registers if r.name == 'power_limit_pct')
-    app.state.mqtt_write_command('pv-u1', reg, '80')
+    app.state.mqtt_write_command('pv-u1', reg, '80'); app.state.command_dispatch.drain()
     assert inv.writes[-1][1] == [8000, 0, 600, 0, 1]
     # audited with the face
     vias = [x['detail']['via'] for x in _audit(tmp_path) if x.get('action') == 'command']
@@ -345,7 +352,7 @@ def test_the_ha_slider_and_the_mqtt_topic_go_through_the_same_command(tmp_path):
     # writes over MQTT off → the topic is ignored, nothing on the wire
     n = len(inv.writes)
     cfg.mqtt.allow_write_entities = False
-    mq.topics['pv/inverters/1/cmd/power_limit']('20')
+    mq.topics['pv/inverters/1/cmd/power_limit']('20'); app.state.command_dispatch.drain()
     assert len(inv.writes) == n
 
 
@@ -441,10 +448,10 @@ def test_an_anonymous_broker_gets_no_writes_over_mqtt(tmp_path):
     cfg, app, client = _app(tmp_path, {'pv-u1': inv}, mqtt=mq)
     cfg.mqtt.username = ""
     before = len(inv.writes)
-    mq.topics['pv/inverters/1/cmd/power_limit']('{"limit_pct": 55, "source": "ov"}')
+    mq.topics['pv/inverters/1/cmd/power_limit']('{"limit_pct": 55, "source": "ov"}'); app.state.command_dispatch.drain()
     assert len(inv.writes) == before                    # ignored, nothing written
     cfg.mqtt.username = "gw"
-    mq.topics['pv/inverters/1/cmd/power_limit']('{"limit_pct": 55, "source": "ov"}')
+    mq.topics['pv/inverters/1/cmd/power_limit']('{"limit_pct": 55, "source": "ov"}'); app.state.command_dispatch.drain()
     assert len(inv.writes) > before                     # authenticated broker: acted on
 
 
@@ -499,13 +506,13 @@ def test_the_ha_register_write_honours_the_device_write_lock(tmp_path, caplog):
                if r.name == 'power_limit_pct')
     dev.write_locked = True
     with caplog.at_level(logging.WARNING):
-        app.state.mqtt_write_command('pv-u1', reg, '60')
+        app.state.mqtt_write_command('pv-u1', reg, '60'); app.state.command_dispatch.drain()
     assert inv.writes == []
     assert any("write-locked" in r.getMessage() for r in caplog.records)
     caplog.clear()
     dev.write_locked = False
     with caplog.at_level(logging.WARNING):
-        app.state.mqtt_write_command('pv-u1', reg, '60')
+        app.state.mqtt_write_command('pv-u1', reg, '60'); app.state.command_dispatch.drain()
     # unlocked: the same request goes on to the command (WMaxLimPct travels with its enable)
     assert not any("write-locked" in r.getMessage() for r in caplog.records)
     assert inv.writes and inv.writes[-1][1][0] == 6000
@@ -597,7 +604,7 @@ def test_a_device_that_needs_a_breath_between_writes_gets_it(monkeypatch):
     from multibus.config import ModbusConfig
     slept = []
     clock = [100.0]
-    monkeypatch.setattr(mc.time, "sleep", lambda s: slept.append(round(s, 2)))
+    monkeypatch.setattr(mc, "_sleep", lambda s: slept.append(round(s, 2)))
     monkeypatch.setattr(mc.time, "monotonic", lambda: clock[0])
     conn = mc.ModbusConnection(ModbusConfig(host="192.0.2.77", port=502, unit_id=1))
 

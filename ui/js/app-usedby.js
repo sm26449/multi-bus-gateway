@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-// Copyright (C) 2024-2026 Stefan Maldaianu <sm26449@diysolar.ro>
+// Copyright (C) 2024-2026 Stefan Maldaianu <stefan@multibus.dev>
 //
 // used by — augments JanitzaMonitor.prototype
 //
@@ -293,13 +293,18 @@ Object.assign(JanitzaMonitor.prototype, {
 
     // a delete that asks the gateway what it would do first: refused → the
     // section says what uses it; allowed → the dialog names what goes with it.
-    // o: {kind, id, url?, host?, title, message, typed?, details?, confirmLabel?}
+    // o: {kind, id, url?, writeId?, host?, title, message, typed?, details?, confirmLabel?}
+    // A device's delete is a device write (ADR-0030): its tag is sent — for a
+    // component, the parent's (`writeId`), whose entry holds it
     async _ubDelete(o) {
         const t = (k, d, p) => this.t(k, d, p);
         const url = o.url || this._ubUrl(o.kind, o.id);
+        const del = (q = '') => (o.kind === 'device'
+            ? window.DeviceStore.devWrite(o.writeId || o.id, 'DELETE', url + q)
+            : this._ubRawDelete(o.kind, o.id, q));
         let r, d;
         try {
-            r = await fetch(`${url}?dry_run=true`, { method: 'DELETE' });
+            r = await del('?dry_run=true');
             d = await r.json().catch(() => ({}));
         } catch (e) { this._opError(t('common.delete', 'Delete'), e); return false; }
         if (r.status === 409 && d.detail?.dependents) { this._ubRefused(o, d.detail.dependents); return false; }
@@ -329,7 +334,7 @@ Object.assign(JanitzaMonitor.prototype, {
             confirmLabel: o.confirmLabel || t('common.delete', 'Delete'), danger: true,
             typed: o.typed || (comps.length ? o.id : null),
             submit: async () => {
-                const rr = await fetch(url, { method: 'DELETE' });
+                const rr = await del();
                 const dd = await rr.json().catch(() => ({}));
                 // something started using it after the check: said on the page
                 if (rr.status === 409 && dd.detail?.dependents) { raced = dd.detail.dependents; return null; }
@@ -340,6 +345,17 @@ Object.assign(JanitzaMonitor.prototype, {
         if (!ok) return false;
         if (raced) { this._ubRefused(o, raced); return false; }
         return true;
+    },
+
+    // an installation's or a template's delete / an installation's disable:
+    // not a device, no device tag (ADR-0030 covers device writes)
+    _ubRawDelete(kind, id, query = '') {
+        const base = kind === 'installation' ? '/api/endpoints/' : '/api/device-templates/';
+        return fetch(`${base}${encodeURIComponent(id)}${query}`, { method: 'DELETE' });
+    },
+    _ubRawPut(installationId, body) {
+        return fetch(`/api/endpoints/${encodeURIComponent(installationId)}`, {
+            method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
     },
 
     // a refused delete: the server's own list, where the user can act on it
@@ -414,8 +430,9 @@ Object.assign(JanitzaMonitor.prototype, {
             details: await this._ubDisableEffects(deps),
             confirmLabel: t('usedby.disable', 'Disable'),
             submit: async () => {
-                const r = await fetch(url, { method: 'PUT', headers: { 'Content-Type': 'application/json' },
-                                             body: JSON.stringify({ enabled: false }) });
+                const r = isInst
+                    ? await this._ubRawPut(id, { enabled: false })
+                    : await window.DeviceStore.devWrite(id, 'PUT', url, { enabled: false });
                 if (r.ok) return null;
                 return this._respError(r, await r.json().catch(() => ({})));
             },
@@ -446,7 +463,7 @@ Object.assign(JanitzaMonitor.prototype, {
             // a tab the account may not open is not opened for it either (by
             // role: a tab of another group is out of sight too)
             if (!btn || (this._dtabAllowed && !this._dtabAllowed(btn))) return;
-            this._switchDeviceTab(want);
+            this._switchDeviceTab(tab);                 // a tab that left: Setup, at its section
             if (want === 'calculated' && where.startsWith('calculated.')) {
                 this._ubSeek(`#deviceDetailView .calc-row[data-name="${CSS.escape(where.slice(11))}"]`);
             }

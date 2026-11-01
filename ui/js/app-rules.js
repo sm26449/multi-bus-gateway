@@ -1,5 +1,5 @@
 /* Multi-Bus Gateway — multi-protocol Modbus/HTTP/MQTT acquisition gateway.
- * Copyright (C) 2024-2026 Stefan Maldaianu <sm26449@diysolar.ro>
+ * Copyright (C) 2024-2026 Stefan Maldaianu <stefan@multibus.dev>
  * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 /* Rules — the declarative controller's page (docs/rules-design.md §6).
@@ -19,7 +19,7 @@ Object.assign(JanitzaMonitor.prototype, {
      *  API answers in words: sent, queued, success, cancelled …). */
     _ruleResult(r) {
         const known = ['sent', 'queued', 'success', 'rejected', 'cancelled', 'error', 'mismatch', 'unverified', 'timeout'];
-        return known.includes(r) ? t(`rules.result.${r}`, r) : r;
+        return known.includes(r) ? this.t(`rules.result.${r}`, r) : r;
     },
 
     async renderRulesPage() {
@@ -456,7 +456,7 @@ Object.assign(JanitzaMonitor.prototype, {
             document.getElementById('ruleModalBody').innerHTML = `<div class="empty-state" data-rule-empty style="padding:18px 6px;text-align:center;">
                 <i aria-hidden="true" class="bi bi-plug" style="font-size:28px;color:var(--text-secondary);"></i>
                 <p style="margin:10px 0 6px;"><b>${t('rules.emptyTitle', 'Nothing here offers a command yet')}</b></p>
-                <p class="field-hint" style="margin:0 0 12px;">${t('rules.emptyBody', 'A rule asks a device or a group for something through an enabled command. Enable one on a device\'s Commands tab (or an installation group\'s), then add the rule.')}</p>
+                <p class="field-hint" data-admin style="margin:0 0 12px;">${t('rules.emptyBody', 'A rule asks a device or a group for something through an enabled command. Enable one from the device\'s ⋯ → Commands & bindings… (or in an installation group\'s editor), then add the rule.')}</p>
                 <button type="button" class="btn btn-secondary btn-sm" ${this._act('_ruleGoDevices', [])}><i aria-hidden="true" class="bi bi-hdd-network"></i> ${t('rules.emptyGo', 'Go to Devices')}</button>
             </div>`;
             document.getElementById('ruleFeedback').textContent = '';

@@ -1,5 +1,5 @@
 # Multi-Bus Gateway — multi-protocol Modbus/HTTP/MQTT acquisition gateway.
-# Copyright (C) 2024-2026 Stefan Maldaianu <sm26449@diysolar.ro>  — AGPL-3.0-or-later
+# Copyright (C) 2024-2026 Stefan Maldaianu <stefan@multibus.dev>  — AGPL-3.0-or-later
 """A device's kind (device_kind.py): one derivation for lists, filters and
 attributes; an admin's override that never restarts the device and that no
 edit drops; a stored value nobody can read never stops a device; the device
@@ -272,8 +272,9 @@ def test_a_wrong_filter_is_said_at_its_parameter(tmp_path):
 def test_templates_carry_the_device_kind_and_are_filtered(tmp_path):
     _cfg, client = make_app(tmp_path)
     tpls = {t["id"]: t for t in client.get("/api/device-templates").json()["templates"]}
-    # the template's own `kind` stays what it was (the wizard groups by it)
-    assert tpls["samsung_mim_b19n"].get("kind", "") == ""
+    # every bundled template declares its kind since ADR-0027 (L2); the
+    # device kind derived from it is what it was
+    assert tpls["samsung_mim_b19n"]["kind"] == "heat_pump"
     assert tpls["samsung_mim_b19n"]["device_kind"] == "heat_pump"
     assert tpls["samsung_mim_b19n"]["device_kind_source"] == "template"
     assert "kind_source" not in tpls["samsung_mim_b19n"]           # it would read as the source of `kind`
@@ -304,16 +305,43 @@ FIX = pathlib.Path(__file__).parent / "fixtures"
 # meters: the meter-links lot; meter_options / meters_status: its derived values;
 # meter_options_own: the device's own thresholds (the device page sends them back)
 NEW_DEVICE_KEYS = {"kind", "kind_source", "meters", "meter_options", "meter_options_own",
-                   "meters_status", "running"}
-NEW_TEMPLATE_KEYS = {"device_kind", "device_kind_source", "used_by_count"}
+                   "meters_status", "running",
+                   # the read-only connection spec (ADR-0026 §1), additive;
+                   # the device type and its identity labels (ADR-0027)
+                   "connection_spec", "source_specs", "type", "type_label", "labels",
+                   # the connection's one-liner and the edit locks (ADR-0031 §5)
+                   "summary", "locks",
+                   # what each PATCH section takes for it (ADR-0032 §6)
+                   "edit_sections",
+                   # the registers its templates declare writable (ADR-0032 §3)
+                   "writable_registers",
+                   # its template declares components (L3.10 review m4)
+                   "components_declared"}
+NEW_TEMPLATE_KEYS = {"device_kind", "device_kind_source", "used_by_count", "types",
+                     # what connecting to it takes (ADR-0031 §5)
+                     "speaks", "listen_only", "transports", "default_unit_id", "setup", "identify",
+                     "ports", "line", "http_path", "master_hint"}
 # templates bundled since the golden (no device in it uses them)
-NEW_TEMPLATE_IDS = {"fronius_solar_api_meter"}
+NEW_TEMPLATE_IDS = {"fronius_solar_api_meter",
+                    # the bench inverter maps (lots C and D)
+                    "deye_hybrid_1p", "huawei_sun2000", "huawei_dtsu666_via_sun2000", "huawei_luna2000",
+                    # the Seplos V2 ASCII pack (lot A)
+                    "seplos_bms_v2",
+                    # the Pylontech CAN link (can-listen lot)
+                    "pylontech_can_inverter",
+                    # the Seplos V2 inter-pack tap (the master's 0x5A summary)
+                    "seplos_bms_v2_tap"}
 # values changed on purpose since the golden: three bundled Fronius files name
 # their maker `manufacturer`, now listed as their vendor (findability review M7)
 CHANGED_TEMPLATE_VALUES = {tid: {"vendor": "Fronius"} for tid in
                            ("fronius_solar_api_inverter", "fronius_solar_api_inverter_3p", "fronius_solar_api_site")}
 # Delta VFD-EL 0.4.0: its alarm reads a calculated igbt_hot (ALM-1)
 CHANGED_TEMPLATE_VALUES["delta_vfd_el"] = {"version": "0.4.0"}
+# ADR-0027 (L2): every bundled template declares its kind — the four that did
+# not now say what their device kind always was (generic maps: other)
+for _tid, _k in (("delta_vfd_el", "drive"), ("samsung_mim_b19n", "heat_pump"),
+                 ("tasmota_generic", "other"), ("mqtt_json_generic", "other")):
+    CHANGED_TEMPLATE_VALUES.setdefault(_tid, {})["kind"] = _k
 
 
 def _prod_app(tmp_path):
@@ -336,7 +364,10 @@ def test_the_attributes_and_their_meta_are_byte_identical_to_before(tmp_path):
     cfg, app, _client = _prod_app(tmp_path)
     att = app.state.attributes
     assert _norm(sorted([list(x) for x in att._devices()]), tmp_path) == golden["attributes"]
-    assert _norm({d.id: att.meta("device", d.id) for d in cfg.devices}, tmp_path) == golden["meta"]
+    # ADR-0027 adds the device's type to its meta, nothing else changes
+    meta = _norm({d.id: att.meta("device", d.id) for d in cfg.devices}, tmp_path)
+    assert all(m.pop("type") and m.pop("type_label") for m in meta.values())
+    assert meta == golden["meta"]
 
 
 @needs_tc
@@ -350,6 +381,11 @@ def test_the_lists_keep_every_value_they_had_and_add_only_what_is_named(tmp_path
         assert [x["id"] for x in now] == [x["id"] for x in golden[name]]
         for old, cur in zip(golden[name], now):
             assert set(cur) - set(old) <= new, (name, cur["id"], set(cur) - set(old))
+            # ADR-0029: the publishing view gains the InfluxDB heartbeat (additive)
+            for part in (cur.get("publishing") or {}).values():
+                influx = part.get("influxdb") if isinstance(part, dict) else None
+                if isinstance(influx, dict):
+                    influx.pop("heartbeat_interval", None)
             if name == "templates":
                 old = {**old, **CHANGED_TEMPLATE_VALUES.get(cur["id"], {})}
             assert {k: cur.get(k) for k in old} == old, (name, cur["id"])

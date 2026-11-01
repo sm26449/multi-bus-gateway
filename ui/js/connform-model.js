@@ -1,5 +1,5 @@
 /* Multi-Bus Gateway — multi-protocol Modbus/HTTP/MQTT acquisition gateway.
- * Copyright (C) 2024-2026 Stefan Maldaianu <sm26449@diysolar.ro>
+ * Copyright (C) 2024-2026 Stefan Maldaianu <stefan@multibus.dev>
  * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 // How a device is reached, as one model for every form that says it: Add
@@ -26,9 +26,17 @@
     // a serial device path is never a network host (the server refuses it
     // too — FINDINGS BANK-1020: an editor once wrote /dev/ttySEPLOS as a host)
     const SERIAL_PATH = /^(?:\/|\\\\\.\\|COM\d+$|tty[A-Za-z]*\d+$)/i;
-    const MODES = ['tcp', 'rtu', 'rtu-tcp', 'rtu_tap', 'http', 'mqtt', 'none'];
-    // a mode's class: Modbus variants share a register map; HTTP and MQTT read by path
-    const classOf = mode => (mode === 'http' || mode === 'mqtt' || mode === 'none') ? mode : 'modbus';
+    const MODES = ['tcp', 'rtu', 'rtu-tcp', 'rtu_tap', 'seplos_v2', 'http', 'mqtt', 'can', 'none'];
+    // a mode's class: Modbus variants share a register map; HTTP and MQTT read
+    // by path; a Seplos V2 bus has a map of its own (the driver's virtual map);
+    // a CAN link carries frames its template's signal rows decode
+    const classOf = mode => (['http', 'mqtt', 'none', 'seplos_v2', 'can'].includes(mode)) ? mode : 'modbus';
+    // a CAN link (protocol: can, listen-only): a carrier, the interface it listens on, the
+    // bitrate the bus runs at (set by the host, shown) and how long a quiet
+    // bus stays fresh. Listen-only: nothing here can make it transmit.
+    const CAN_CARRIERS = ['socketcan'];             // 'bridge' comes later (edge E7)
+    const CAN_DEFAULTS = { carrier: 'socketcan', channel: 'can0', bitrate: 500000, stale_after_s: 5 };
+    const CAN_CHANNEL = /^[A-Za-z0-9_.-]{1,15}$/;
     const isSerialPath = h => SERIAL_PATH.test(String(h || '').trim());
 
     // the wire protocol of a stored device → the form's mode and its option
@@ -37,6 +45,9 @@
         if (p === 'udp') return { mode: 'tcp', udp: true, framing: 'rtu' };
         if (p === 'ascii') return { mode: 'rtu', udp: false, framing: 'ascii' };
         if (p === 'ascii-tcp') return { mode: 'rtu-tcp', udp: false, framing: 'ascii' };
+        // Seplos V2: on a serial port here, or through a bridge's host:port
+        if (p === 'seplos_v2-tcp') return { mode: 'seplos_v2', udp: false, framing: 'rtu', net: true };
+        if (p === 'seplos_v2') return { mode: 'seplos_v2', udp: false, framing: 'rtu', net: false };
         return { mode: MODES.includes(p) ? p : 'tcp', udp: false, framing: 'rtu' };
     }
 
@@ -44,10 +55,12 @@
         row = row || {};
         const c = row.connection || {};
         const ser = row.serial || {};
-        const { mode, udp, framing } = modeOf(row.protocol || c.protocol);
+        const { mode, udp, framing, net } = modeOf(row.protocol || c.protocol);
         const bridged = !!row.bridge;
         return {
             mode, udp, framing,
+            // a Seplos V2 bus: reached over the network, and polled or listened to
+            net: !!net, bus_mode: c.mode === 'listen' ? 'listen' : 'poll',
             // RTU over the network at a typed address (no bridge record): kept
             // as the user's choice, so a redraw never moves it onto a bridge
             legacy: mode === 'rtu-tcp' && !bridged,
@@ -73,12 +86,20 @@
             // the device's own keepalive: an object, false (off), or absent (the template's)
             keepalive: c.keepalive === undefined ? undefined : c.keepalive,
             template_keepalive: c.template_keepalive || null,
+            // a CAN link's own fields (the defaults where a stored one says nothing)
+            carrier: c.carrier || CAN_DEFAULTS.carrier,
+            channel: c.channel || CAN_DEFAULTS.channel,
+            bitrate: c.bitrate ?? CAN_DEFAULTS.bitrate,
+            stale_after_s: mode === 'can' ? (c.stale_after_s ?? CAN_DEFAULTS.stale_after_s) : CAN_DEFAULTS.stale_after_s,
         };
     }
 
     function blank(prefill) {
         const M = model({ protocol: 'tcp', connection: { port: 502, unit_id: 1, timeout: 3 } });
         M.host = '';
+        // a new Seplos V2 bus has no mode until one is chosen: polling a bus a
+        // master pack already polls makes two masters (review SV2-R4)
+        M.bus_mode = '';
         if (prefill) {
             const p = Object.assign({}, prefill);
             if (p.protocol) Object.assign(M, modeOf(p.protocol), p.protocol === 'rtu-tcp' || p.protocol === 'rtu_tap' ? { mode: p.protocol } : {});
@@ -139,6 +160,7 @@
     function display(M) {
         return Object.assign({
             mode: M.mode, udp: !!M.udp, framing: M.framing || 'rtu',
+            sv_where: M.net ? 'net' : 'serial', bus_mode: M.bus_mode || '',
             via: M.bridge ? `${M.bridge}::${M.bridge_port ?? ''}` : '',
             bridge: M.bridge || '', bridge_port: M.bridge_port == null ? '' : String(M.bridge_port),
             host: String(M.host ?? ''), port: M.port == null ? '' : String(M.port),
@@ -151,6 +173,9 @@
             broker: String(M.broker ?? ''), mqtt_port: String(M.mqtt_port ?? 1883),
             topic: String(M.topic ?? ''), username: String(M.username ?? ''), password: '',
             tls: !!M.tls, tls_insecure: !!M.tls_insecure, vars: vars2text(M.vars),
+            carrier: String(M.carrier || CAN_DEFAULTS.carrier), channel: String(M.channel ?? ''),
+            bitrate: M.bitrate == null ? '' : String(M.bitrate),
+            stale_after_s: M.stale_after_s == null ? '' : String(M.stale_after_s),
         }, kaShown(M));
     }
 
@@ -172,6 +197,12 @@
         if (touched('mode')) out.mode = inputs.mode;
         if (touched('udp')) out.udp = !!inputs.udp;
         if (touched('framing')) out.framing = inputs.framing === 'ascii' ? 'ascii' : 'rtu';
+        if (touched('sv_where')) {
+            out.net = inputs.sv_where === 'net';
+            // a serial bridge's port is its own: Modbus's 502 is never a guess for it
+            if (out.net && !M.net && out.port === 502) out.port = null;
+        }
+        if (touched('bus_mode')) out.bus_mode = ['poll', 'listen'].includes(inputs.bus_mode) ? inputs.bus_mode : '';
         if (touched('via')) {
             const [b, p] = String(inputs.via || '').split('::');
             out.bridge = b || '';
@@ -179,11 +210,12 @@
         }
         if (touched('bridge')) { out.bridge = inputs.bridge || ''; if (!touched('bridge_port')) out.bridge_port = null; }
         if (touched('bridge_port')) out.bridge_port = intOrNull(inputs.bridge_port);
-        for (const k of ['host', 'serial_port', 'url', 'broker', 'topic', 'username', 'parity']) {
+        for (const k of ['host', 'serial_port', 'url', 'broker', 'topic', 'username', 'parity', 'carrier', 'channel']) {
             if (touched(k)) out[k] = String(inputs[k]).trim();
         }
         if (touched('password')) out.password = String(inputs.password);
-        for (const k of ['port', 'baudrate', 'stopbits', 'bytesize', 'mqtt_port']) if (touched(k)) out[k] = intOrNull(inputs[k]);
+        for (const k of ['port', 'baudrate', 'stopbits', 'bytesize', 'mqtt_port', 'bitrate']) if (touched(k)) out[k] = intOrNull(inputs[k]);
+        if (touched('stale_after_s')) out.stale_after_s = numOrNull(inputs.stale_after_s);
         if (touched('unit_id')) out.unit_id = intOrNull(inputs.unit_id);
         if (touched('timeout')) out.timeout = numOrNull(inputs.timeout);
         for (const k of ['tls', 'tls_insecure']) if (touched(k)) out[k] = !!inputs[k];
@@ -209,6 +241,7 @@
         if (M.mode === 'tcp') return M.udp ? 'udp' : 'tcp';
         if (M.mode === 'rtu') return M.framing === 'ascii' ? 'ascii' : 'rtu';
         if (M.mode === 'rtu-tcp') return M.framing === 'ascii' ? 'ascii-tcp' : 'rtu-tcp';
+        if (M.mode === 'seplos_v2') return M.net ? 'seplos_v2-tcp' : 'seplos_v2';
         return M.mode;
     }
     const line = M => ({ baudrate: M.baudrate, parity: M.parity, stopbits: M.stopbits, bytesize: M.bytesize });
@@ -218,6 +251,9 @@
         M = Object.assign({}, M, { bridge: bridgeOf(M) });
         switch (M.mode) {
         case 'none': return { protocol: 'none' };
+        case 'can':
+            return { protocol: 'can', carrier: M.carrier || CAN_DEFAULTS.carrier, channel: M.channel,
+                     bitrate: M.bitrate, stale_after_s: M.stale_after_s };
         case 'http': return { protocol: 'http', url: M.url };
         case 'mqtt': {
             const c = { protocol: 'mqtt', broker: M.broker, port: M.mqtt_port || 1883, topic: M.topic,
@@ -238,6 +274,14 @@
             return M.bridge
                 ? { protocol: 'rtu_tap', bridge: M.bridge, bridge_port: M.bridge_port, unit_id: M.unit_id }
                 : Object.assign({ protocol: 'rtu_tap', serial_port: M.serial_port }, line(M), { unit_id: M.unit_id });
+        case 'seplos_v2':
+            // never on a bridge record: its own serial port, or a bridge's host:port
+            // the mode only when chosen: the server refuses a new one without it
+            return M.net
+                ? Object.assign({ protocol: wireProto(M), host: M.host, port: M.port, unit_id: M.unit_id },
+                                M.bus_mode ? { mode: M.bus_mode } : {}, { timeout: M.timeout })
+                : Object.assign({ protocol: wireProto(M), serial_port: M.serial_port }, line(M),
+                                { unit_id: M.unit_id }, M.bus_mode ? { mode: M.bus_mode } : {}, { timeout: M.timeout });
         default:   // rtu, direct serial (RTU or ASCII framing)
             return Object.assign({ protocol: wireProto(M), serial_port: M.serial_port }, line(M),
                                  { unit_id: M.unit_id, timeout: M.timeout });
@@ -343,8 +387,27 @@
         t = t || ((k, d) => d);
         const e = {};
         const modbus = classOf(M.mode) === 'modbus';
+        const seplos = M.mode === 'seplos_v2';
         if (modbus && (M.unit_id === null || M.unit_id < 0 || M.unit_id > 255)) {
             e['connection.unit_id'] = t('devices.unitIdNeeded', 'Unit ID: a whole number 0–255 (most devices answer on 1).');
+        }
+        if (seplos) {
+            if (M.unit_id === null || M.unit_id < 0 || M.unit_id > 255) {
+                e['connection.unit_id'] = t('cf.packAddrNeeded', 'Pack address: a whole number 0–255 (the pack’s DIP switch).');
+            }
+            if (M.net) {
+                if (!String(M.host || '').trim()) e['connection.host'] = t('cf.hostNeeded', 'Say the address it is reached at.');
+                else if (isSerialPath(M.host)) e['connection.host'] = t('cf.svHostIsSerial', 'This is a serial port, not a network address — choose a serial port on this host.');
+                if (M.port === null || M.port < 1 || M.port > 65535) e['connection.port'] = t('cf.portRange', 'Port: 1–65535.');
+            } else if (!String(M.serial_port || '').trim()) {
+                e['connection.serial_port'] = t('cf.serialNeeded', 'Say the serial port (for example /dev/ttyUSB0).');
+            }
+            if (!M.bus_mode) {
+                e['connection.mode'] = t('cf.svModeNeeded', 'Choose how the gateway reads the bus: ask the packs, or only listen.');
+            }
+            if (M.bus_mode === 'poll' && (M.timeout === null || M.timeout < 1 || M.timeout > 30)) {
+                e['connection.timeout'] = t('cf.timeoutRange', 'Timeout: 1–30 seconds.');
+            }
         }
         const hostNeeded = (M.mode === 'tcp' || M.mode === 'rtu-tcp') && !M.bridge;
         if (hostNeeded) {
@@ -361,6 +424,7 @@
         if ((M.mode === 'tcp' || M.mode === 'rtu-tcp' || M.mode === 'rtu_tap') && M.bridge && M.bridge_port === null && M.mode !== 'tcp') {
             e['connection.bridge_port'] = t('cf.busNeeded', 'Choose the bus.');
         }
+        if (M.mode === 'can') Object.assign(e, canErrors(M, t));
         if (M.mode === 'http' && !/^https?:\/\/\S+/i.test(M.url || '')) e['connection.url'] = t('cf.urlNeeded', 'A URL starting with http:// or https://');
         if (M.mode === 'mqtt') {
             if (!String(M.broker || '').trim()) e['connection.broker'] = t('cf.brokerNeeded', 'Say the broker’s address.');
@@ -375,6 +439,24 @@
         return e;
     }
 
+    // a CAN link's fields, as the server judges them (can_client.connection_errors)
+    function canErrors(M, t) {
+        const e = {};
+        if (!CAN_CARRIERS.includes(M.carrier || CAN_DEFAULTS.carrier)) {
+            e['connection.carrier'] = t('cf.canCarrierNeeded', 'Only SocketCAN is available for now.');
+        }
+        if (!CAN_CHANNEL.test(String(M.channel || ''))) {
+            e['connection.channel'] = t('cf.canChannelNeeded', 'The CAN interface’s name, as the host shows it (can0, vcan0).');
+        }
+        if (M.bitrate == null || M.bitrate < 10000 || M.bitrate > 1000000) {
+            e['connection.bitrate'] = t('cf.canBitrateRange', 'Bitrate: 10000–1000000 bit/s (most batteries: 500000).');
+        }
+        if (M.stale_after_s == null || M.stale_after_s < 1 || M.stale_after_s > 3600 || !Number.isInteger(M.stale_after_s)) {
+            e['connection.stale_after_s'] = t('cf.canStaleRange', 'Stale after: a whole number of seconds, 1–3600.');
+        }
+        return e;
+    }
+
     // a server path → the field key the form shows it under, for M's mode
     function fieldOf(path, M) {
         if (path.startsWith('connection.vars')) return 'vars';
@@ -385,13 +467,15 @@
         if (k === 'port') return M.mode === 'mqtt' ? 'mqtt_port' : 'port';
         if (k === 'bridge' || k === 'bridge_port') return M.mode === 'rtu-tcp' ? k : 'via';
         if (k === 'protocol') return 'mode';
+        if (k === 'mode') return 'bus_mode';
         return ['host', 'unit_id', 'timeout', 'serial_port', 'baudrate', 'parity', 'stopbits', 'bytesize', 'url',
-                'broker', 'topic', 'username', 'password', 'tls', 'tls_insecure'].includes(k) ? k : null;
+                'broker', 'topic', 'username', 'password', 'tls', 'tls_insecure',
+                'carrier', 'channel', 'bitrate', 'stale_after_s'].includes(k) ? k : null;
     }
 
     const api = { MODES, classOf, modeOf, model, blank, display, apply, wire, wireProto, payload, dirty, changed,
                   testConnection, errors, fieldOf, isSerialPath, routeChanged, bridgeMoved, bridgeOf,
-                  text2vars, vars2text, pageFields, pagePayload };
+                  text2vars, vars2text, pageFields, pagePayload, CAN_CARRIERS, CAN_DEFAULTS };
     if (typeof module !== 'undefined' && module.exports) module.exports = api;
     else root.ConnformModel = api;
 })(typeof window !== 'undefined' ? window : globalThis);

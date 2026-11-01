@@ -1,5 +1,5 @@
 # Multi-Bus Gateway — multi-protocol Modbus/HTTP/MQTT acquisition gateway.
-# Copyright (C) 2024-2026 Stefan Maldaianu <sm26449@diysolar.ro>  — AGPL-3.0-or-later
+# Copyright (C) 2024-2026 Stefan Maldaianu <stefan@multibus.dev>  — AGPL-3.0-or-later
 """Bridges on the Devices page: the boxes a serial bus is reached through.
 
 A bridge lists its buses (ports) and the devices on each; its health is the
@@ -9,31 +9,41 @@ or, for our container, gives the exact command to start it on the host.
 """
 from __future__ import annotations
 
-import json
 import logging
 import secrets
 import threading
 import time
-import urllib.error
-import urllib.parse
-import urllib.request
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Body, HTTPException, Request
 
 from ..bridges import (FRAMING_PROTOCOL, TYPES, _crc16, _exchange, _mbap_ok,  # noqa: F401 — _crc16 is used by tests
                        _mbap_read, _rtu_ok, _rtu_read, public_view, validate_bridge)
-from .. import modbus_client
+from .. import bridge_diag, bridge_guard, modbus_client
+from .. import bridges as bridge_api
 from ..payload import flag
 from ._shared import secrets_visible
 
 logger = logging.getLogger(__name__)
+
+# keys the API adds to a bridge's port that are never the bridge's settings
+_PORT_VIEW_KEYS = frozenset({"devices", "guard", "busy", "tapped", "wire", "diag", "stats"})
 
 
 def build(ctx) -> APIRouter:
     r = APIRouter(tags=["bridges"])
     config, registry = ctx.config, ctx.registry
     _health_cache: Dict[str, Any] = {}
+    # line + transport health of every bus on our bridges, polled in the
+    # background and served from its cache (bridge_diag.py, ADR-0017)
+    diag = bridge_diag.BridgeDiag(
+        config, registry, alert_mgr=getattr(ctx, "alert_mgr", None),
+        publishers=lambda: (getattr(ctx, "mqtt_publisher", None),
+                            getattr(ctx, "influxdb_publisher", None)))
+    app = getattr(ctx, "app", None)
+    if app is not None:
+        app.state.bridge_diag = diag
+        diag.start()
 
     def _bridge(bid: str) -> Dict:
         b = config.get_raw_bridge(bid)
@@ -41,16 +51,8 @@ def build(ctx) -> APIRouter:
             raise HTTPException(status_code=404, detail="bridge not found")
         return b
 
-    def _control_url(b: Dict, path: str) -> str:
-        port = int(b.get("control_port") or TYPES.get(b.get("type"), {}).get("control_port", 7000))
-        return f"http://{b['host']}:{port}{path}"
-
-    def _api_get(b: Dict, path: str, timeout: float = 4) -> Dict:
-        req = urllib.request.Request(_control_url(b, path))
-        if b.get("token"):
-            req.add_header("Authorization", f"Bearer {b['token']}")
-        with urllib.request.urlopen(req, timeout=timeout) as resp:  # noqa: S310 — operator-configured LAN box
-            return json.loads(resp.read().decode() or "{}")
+    _control_url = bridge_api.control_url
+    _api_get = bridge_api.api_get
 
     def _device_health(dev_id: str) -> str:
         for d, c in registry:
@@ -73,9 +75,12 @@ def build(ctx) -> APIRouter:
         def run():
             try:
                 h = _api_get(b, "/health", timeout=3)
-                st = {"status": "online" if h.get("status") == "ok" else "degraded",
-                      "detail": h.get("reason") or "", "version": h.get("version", ""),
-                      "source": "bridge"}
+                warn = h.get("warnings")            # a stale device-rule slot (ADR-0016)
+                if isinstance(warn, int):
+                    warn = [f"{warn} warning(s) — see the bridge's log"]
+                st = {"status": "online" if h.get("status") == "ok" and not warn else "degraded",
+                      "detail": h.get("reason") or "; ".join(warn or []),
+                      "version": h.get("version", ""), "source": "bridge"}
             except Exception as e:  # noqa: BLE001
                 st = {"status": "offline", "detail": f"no answer from {b['host']}: {e}",
                       "source": "bridge"}
@@ -114,35 +119,19 @@ def build(ctx) -> APIRouter:
                 return None
         return None
 
-    BUSY_HIGH, BUSY_FULL = 0.70, 0.95
-
     def _bus_busy(devlist: List[Dict], polled: List) -> Optional[Dict]:
         """One value per bus: the wire time of its lane(s) over the last
         minute — taken once per lane, so N slaves never count the wire N
-        times. Over capacity is a state (turns given up, or ≥95 %), never a
-        percentage above 100."""
+        times (buses.load_view, the same words /api/buses serves)."""
+        from ..buses import load_view
         occ = None
         for d in polled:
             host = getattr(d.connection, "host", None)
             if host:
                 occ = modbus_client.bus_occupancy(host, int(d.connection.port))
                 break
-        if occ is None:
-            # no shared lane measured (yet): the devices' own wire shares
-            shares = [x["bus_share"] for x in devlist if x.get("bus_share") is not None]
-            if not shares:
-                return None
-            occ = {"share": min(1.0, sum(shares)), "busy_s": None, "window_s": None, "missed": 0}
-        share = occ["share"]
-        pct = int(round(100 * share))
-        over = occ.get("missed", 0) > 0 or share >= BUSY_FULL
-        return {"pct": pct,
-                "level": "full" if over else "high" if share >= BUSY_HIGH else "ok",
-                "over_capacity": over,
-                "busy_s": occ.get("busy_s"), "window_s": occ.get("window_s"),
-                "missed_turns": occ.get("missed", 0),
-                "devices": sum(1 for x in devlist if not x.get("tap")),
-                "capacity_left_pct": max(0, 100 - pct)}
+        return load_view(occ, [x.get("bus_share") for x in devlist],
+                         devices=sum(1 for x in devlist if not x.get("tap")))
 
     def _tap_wire(dev_id: str) -> Optional[Dict]:
         """What a tap hears on its bus: frames, CRC errors, the link."""
@@ -158,18 +147,49 @@ def build(ctx) -> APIRouter:
                         "error": bus.get("open_error", "")}
         return None
 
-    def _tapped(bridge_id: str, port: int) -> List[str]:
-        """The taps listening to this bus — nothing may be sent on it."""
-        return [d.id for d in config.bridge_devices(bridge_id)
-                if d.protocol == "rtu_tap" and int(d.connection.port) == int(port)]
+    def _bus(bridge_id: str, port: int) -> str:
+        host = str((config.get_raw_bridge(bridge_id) or {}).get("host", "") or "").strip().lower()
+        return f"{host}:{int(port)}"
+
+    def _listened(bus: str) -> List[str]:
+        """The enabled devices only listening on this bus (bus_claims.py,
+        ADR-0025): the one claim every transmitting path asks."""
+        from ..bus_claims import listeners
+        return listeners(config, bus, getattr(ctx, "template_registry", None))
+
+    def _other_protocol(bus: str) -> List[str]:
+        """Devices reading this bus in another protocol through the bridge's
+        host and port: a Seplos V2 bus, where a Modbus frame is noise to the packs."""
+        from ..bus_claims import bus_of
+        from ..config import VIRTUAL_MAP_OVER_TCP
+        return [d.id for d in config.devices
+                if d.protocol in VIRTUAL_MAP_OVER_TCP and bus_of(d.protocol, d.connection) == bus]
 
     def _refuse_if_tapped(bridge_id: str, port: int, what: str) -> None:
-        taps = _tapped(bridge_id, port)
+        from ..bus_claims import refusal_detail
+        bus = _bus(bridge_id, port)
+        taps = _listened(bus)
         if taps:
-            raise HTTPException(status_code=409, detail=(
-                f"{what} would transmit on a bus the gateway only listens to "
-                f"({', '.join(taps)}): another master owns it, and a question from "
-                f"here would collide with its traffic"))
+            raise HTTPException(status_code=409, detail=refusal_detail(what, bus, taps))
+        other = _other_protocol(bus)
+        if other:
+            raise HTTPException(status_code=409, detail={"errors": [
+                f"{what} would transmit on a bus read in another protocol ({', '.join(other)}): "
+                f"a Modbus question there is noise to its devices"]})
+
+    def _diag_brief(bridge_id: str, port: int) -> Optional[Dict]:
+        """The bus's diagnosis and the few numbers the card shows (the whole
+        story is GET /api/bridges/<id>/diagnostics)."""
+        v = diag.port_view(bridge_id, port)
+        if v is None:
+            return None
+        st = v.get("stats") or {}
+        return {"diagnosis": v["diagnosis"], "rates": v.get("rates") or {},
+                "client": (st.get("client") or {}).get("address") if st.get("client") else None,
+                "silent_s": st.get("silent_s"), "connects_10min": st.get("connects_10min"),
+                "line": st.get("line"), "line_note": st.get("line_note", ""),
+                "sampled_ts": v.get("sampled_ts"), "supported": v.get("supported"),
+                "error": v.get("error", "")}
 
     def _view(b: Dict, deep: bool = False) -> Dict:
         devs = config.bridge_devices(b["id"])
@@ -200,6 +220,8 @@ def build(ctx) -> APIRouter:
             taps = [x for x in devlist if x.get("tap")]
             return _tap_wire(taps[0]["id"]) if taps else None
         out["ports"] = [{**ports[p], "devices": sorted(on.get(p, []), key=lambda x: x["unit_id"]),
+                         "guard": bridge_guard.state(str(b.get("host", "")), p),
+                         "diag": _diag_brief(b["id"], p),
                          "busy": busy(p, on.get(p, [])),
                          "tapped": any(x.get("tap") for x in on.get(p, [])),
                          "wire": wire(on.get(p, []))}
@@ -207,6 +229,47 @@ def build(ctx) -> APIRouter:
         out["devices"] = len(devs)
         out["state"] = _status(b, devs)
         return out
+
+    # ── bus diagnostics (ADR-0017) ─────────────────────────────────────────
+    @r.get("/api/bridges/{bridge_id}/diagnostics")
+    def bridge_diagnostics(bridge_id: str):
+        """Every bus of one bridge: the bridge's line and transport numbers,
+        the gateway's own counters over the same window, the diagnosis, the
+        bridge's recent events. From the poller's cache — never a fetch."""
+        b = _bridge(bridge_id)
+        if TYPES.get(b.get("type"), {}).get("discovery") != "api":
+            raise HTTPException(status_code=422, detail={"errors": [
+                "this kind of bridge has no API to report its line health"]})
+        v = diag.bridge_view(bridge_id)
+        return v or {"fetched_ts": None, "error": "", "supported": None, "ports": {},
+                     "events": [], "poll_s": bridge_diag.POLL_S}
+
+    # ── the bus guard: a bus whose adapter moved is not read ────────────────
+    @r.get("/api/bridge-guard")
+    def guard_problems():
+        """Every bus the guard keeps off the wire now, with where its adapter
+        went (bridge_guard.py)."""
+        return {"problems": bridge_guard.problems()}
+
+    @r.post("/api/bridge-guard/follow")
+    def guard_follow(payload: Dict = Body(...)):
+        """Follow the adapters of one bridge: every bus whose adapter is now
+        on another port moves there, all at once (two swapped buses swap), and
+        its devices restart on the right bus."""
+        host = str(payload.get("host") or "")
+        moves = bridge_guard.moves(host)
+        if not moves:
+            raise HTTPException(status_code=409, detail={"errors": [
+                "nothing to follow: no bus of that bridge has its adapter on another port now"]})
+        try:
+            moved = config.follow_bus_adapters(host, moves)
+        except ValueError as e:
+            raise HTTPException(status_code=409, detail={"errors": [str(e)]})
+        bridge_guard.forget(host)
+        restart = getattr(ctx, "restart_devices", None)
+        if moved and restart:
+            restart(moved)
+        return {"moved": {str(k): v for k, v in moves.items()}, "devices": moved}
 
     # ── types ────────────────────────────────────────────────────────────────
     @r.get("/api/bridge-types")
@@ -298,9 +361,14 @@ def build(ctx) -> APIRouter:
             unit = int(payload.get("unit_id", 1))
         except (TypeError, ValueError) as e:
             raise HTTPException(status_code=422, detail={"errors": [str(e)]})
-        known = {str(b.get("host", "")): b["id"] for b in config.bridges}
-        found = discover(hosts, known=known, unit_id=unit)
-        return {"scanned": len(hosts), "found": found}
+        from ..bridges import lan_ports
+        known = {str(b.get("host", "")).strip().lower(): b["id"] for b in config.bridges}
+        # a host:port a device only listens to is not knocked on (ADR-0025)
+        skipped = [{"host": h, "port": p, "listeners": ids} for h in hosts if h.lower() not in known
+                   for p in lan_ports() for ids in [_listened(f"{h.lower()}:{p}")] if ids]
+        found = discover(hosts, known=known, unit_id=unit,
+                         skip={(s["host"].lower(), s["port"]) for s in skipped})
+        return {"scanned": len(hosts), "found": found, **({"skipped": skipped} if skipped else {})}
 
     @r.get("/api/bridges/{bridge_id}")
     def get_bridge(bridge_id: str):
@@ -309,16 +377,53 @@ def build(ctx) -> APIRouter:
     def _save(raw: Dict, existing: Optional[Dict]) -> Dict:
         raw = {k: v for k, v in raw.items() if k not in ("state", "devices", "has_token",
                                                         "type_name", "protocol")}
-        raw["ports"] = [{k: v for k, v in (p or {}).items() if k != "devices"}
+        # what _view adds to a port is the gateway's own runtime view, never
+        # the bridge's settings: the edit form sends the ports back as it got
+        # them, and these must not land in config.yaml (FINDINGS BR-E1b-1)
+        raw["ports"] = [{k: v for k, v in (p or {}).items() if k not in _PORT_VIEW_KEYS}
                         for p in (raw.get("ports") or [])]
         if existing and not raw.get("token") and existing.get("token"):
             raw["token"] = existing["token"]          # the form never sees it
+        if existing:
+            # which adapter each bus is (bridge_guard.py): the form never
+            # carries it, an edit must not drop it; a bus whose port is
+            # renumbered by hand is a different bus — re-learned, not carried
+            had = {int(p["port"]): p for p in existing.get("ports") or [] if p.get("port")}
+            for p in raw["ports"]:
+                try:
+                    n = int(p.get("port"))
+                except (TypeError, ValueError):
+                    continue
+                # the bus's adapter and its own alert thresholds: the form
+                # carries neither, an edit must not drop them
+                for k in ("adapter", "alerts"):
+                    if k not in p and n in had and had[n].get(k):
+                        p[k] = had[n][k]
+            if "alerts" not in raw and existing.get("alerts"):
+                raw["alerts"] = existing["alerts"]
         t = TYPES.get(raw.get("type"), {})
         if t.get("serial_config") == "api" and not raw.get("token"):
             raw["token"] = secrets.token_urlsafe(24)   # made here, shown once in the setup
         errs = validate_bridge(raw)
         if errs:
             raise HTTPException(status_code=422, detail={"errors": errs})
+        if existing and t.get("framing", "rtu") != "rtu" \
+                and TYPES.get(existing.get("type"), {}).get("framing", "rtu") == "rtu":
+            # a listened bus keeps its RTU framing (ADR-0025, ADD-7): its tap
+            # would hear nothing, and another master owns that bus
+            heard: Dict[str, int] = {}
+            for p in existing.get("ports") or []:
+                if p.get("port"):
+                    for did in _listened(_bus(existing["id"], p["port"])):
+                        heard.setdefault(did, int(p["port"]))
+            if heard:
+                one = len(heard) == 1
+                raise HTTPException(status_code=409, detail={"errors": [
+                    f"a {t.get('name', raw.get('type'))} frames {t.get('framing')}, not RTU — "
+                    f"{', '.join(f'{d} (:{p})' for d, p in heard.items())} only "
+                    f"{'listens' if one else 'listen'} on this bridge; disable or delete "
+                    f"{'it' if one else 'them'} first, or keep the type"],
+                    "listeners": list(heard)})
         # a bus renumbered in place (same row, new port) takes its devices
         # along; a bus that is gone while devices use it is refused
         moves: Dict[int, int] = {}
@@ -382,78 +487,104 @@ def build(ctx) -> APIRouter:
                 "is the control port open to the gateway, is the token right?"]})
         ports = []
         for a in data.get("adapters") or []:
-            if not a.get("tcp_port"):
-                continue
-            ports.append({"port": int(a["tcp_port"]), "key": a.get("stable_id") or "",
-                          "label": " ".join(x for x in (a.get("model"), a.get("serial")) if x) or a.get("dev", ""),
+            # every port the bridge lists, the ones it cannot serve too (a HAT
+            # channel the container may not open, a console): shown with the
+            # reason, never offered as a bus (no port)
+            served = bool(a.get("tcp_port")) and a.get("status", "ok") == "ok"
+            ports.append({"port": int(a["tcp_port"]) if served else None,
+                          "key": a.get("stable_id") or "",
+                          "label": a.get("label") or " ".join(
+                              x for x in (a.get("model"), a.get("serial")) if x) or a.get("dev", ""),
                           "dev": a.get("dev", ""),
+                          "kind": a.get("kind") or "usb",
+                          "status": a.get("status") or ("ok" if served else
+                                                        "excluded" if a.get("excluded") else "busy"),
+                          "reason": a.get("reason", ""), "fix": a.get("fix", ""),
                           "serial_params": a.get("serial_params") or {},
                           "serial_text": a.get("serial_text", ""),
-                          "available": a.get("available", True), "excluded": a.get("excluded", False)})
+                          "rs485": bool(a.get("rs485")),
+                          "needs_enable": bool(a.get("needs_enable")),
+                          "enabled": bool(a.get("enabled")),
+                          "available": served and a.get("available", True),
+                          "excluded": a.get("excluded", False),
+                          # line + transport health, as the bridge reports it now
+                          "stats": a.get("stats") if served else None,
+                          "diag": _diag_brief(b["id"], int(a["tcp_port"])) if served else None})
+        # a bus in use that has no adapter recorded yet learns it here (the
+        # bridge guard checks it from now on); a recorded one is never overwritten
+        used = {int(d.connection.port) for d in config.bridge_devices(b["id"])}
+        used |= {int(p["port"]) for p in b.get("ports") or [] if p.get("port")}
+        for p in ports:
+            if p["port"] in used and p["key"]:
+                try:
+                    config.record_bus_adapter(str(b.get("host", "")), p["port"], p["key"])
+                except Exception:  # noqa: BLE001 — a failed save is retried next scan
+                    logger.warning("could not record bus %s:%s", b.get("host"), p["port"], exc_info=True)
         return {"source": "bridge", "hostname": data.get("hostname", ""),
-                "version": data.get("version", ""), "ports": ports}
+                "version": data.get("version", ""), "ports": ports,
+                "warnings": data.get("warnings") or []}
 
-    @r.post("/api/bridges/{bridge_id}/ports/{key}/serial")
-    def set_port_serial(bridge_id: str, key: str, payload: Dict = Body(...)):
-        """Baud / parity / data / stop bits of one bus, set on our bridge."""
+    def _api_bridge(bridge_id: str) -> Dict:
         b = _bridge(bridge_id)
         if TYPES.get(b.get("type"), {}).get("serial_config") != "api":
             raise HTTPException(status_code=422, detail={"errors": [
                 "this kind of bridge is set up in its own web page — the gateway cannot change it"]})
-        body = json.dumps({k: payload.get(k) for k in ("baud", "parity", "databits", "stopbits")
-                           if payload.get(k) is not None}).encode()
-        req = urllib.request.Request(
-            _control_url(b, f"/adapters/{urllib.parse.quote(key, safe='')}/serial"),
-            data=body, method="POST", headers={"Content-Type": "application/json"})
-        if b.get("token"):
-            req.add_header("Authorization", f"Bearer {b['token']}")
+        return b
+
+    @r.post("/api/bridges/{bridge_id}/ports/{key}/serial")
+    def set_port_serial(bridge_id: str, key: str, payload: Dict = Body(...)):
+        """Baud / parity / data / stop bits of one bus, set on our bridge."""
+        b = _api_bridge(bridge_id)
+        fields = {k: payload.get(k) for k in ("baud", "parity", "databits", "stopbits")
+                  if payload.get(k) is not None}
+        if isinstance(payload.get("rs485"), bool):    # the bridge validates it too
+            if payload["rs485"]:
+                # RS-485 mode is for a board UART: a USB chip switches by
+                # itself, and most refuse it — ser2net could not open the port
+                try:
+                    kinds = {a.get("stable_id"): a.get("kind") for a in
+                             (_api_get(b, "/adapters").get("adapters") or [])}
+                except Exception as e:  # noqa: BLE001
+                    raise HTTPException(status_code=502, detail={"errors": [f"bridge unreachable: {e}"]})
+                if kinds.get(key) != "board":
+                    raise HTTPException(status_code=422, detail={"errors": [
+                        "RS-485 mode is only for a board UART (an RS-485 HAT channel); "
+                        "a USB adapter switches direction by itself"]})
+            fields["rs485"] = payload["rs485"]
+        return _post_to_bridge(b, key, "serial", fields)
+
+    @r.post("/api/bridges/{bridge_id}/ports/{key}/enable")
+    def enable_port(bridge_id: str, key: str, payload: Dict = Body(...)):
+        """Serve (or stop serving) one of the board's own UARTs on our bridge —
+        opt-in, since a program using it without a lock cannot be seen."""
+        b = _api_bridge(bridge_id)
+        if not isinstance(payload.get("enabled"), bool):
+            raise HTTPException(status_code=422, detail={"errors": ["enabled: true or false"]})
+        return _post_to_bridge(b, key, "enable", {"enabled": payload["enabled"]})
+
+    def _post_to_bridge(b: Dict, key: str, what: str, fields: Dict) -> Dict:
         try:
-            with urllib.request.urlopen(req, timeout=6) as resp:  # noqa: S310
-                return json.loads(resp.read().decode() or "{}")
-        except urllib.error.HTTPError as e:
-            raise HTTPException(status_code=e.code if e.code in (400, 401, 404, 422) else 502,
-                                detail={"errors": [e.read().decode(errors="replace")[:300]]})
-        except Exception as e:  # noqa: BLE001
-            raise HTTPException(status_code=502, detail={"errors": [f"bridge unreachable: {e}"]})
+            return bridge_api.api_post(b, key, what, fields)
+        except bridge_api.BridgeApiError as e:
+            raise HTTPException(status_code=e.status, detail={"errors": [e.text]})
 
     # ── scan a bus: which slaves answer, and what they probably are ──────────
     @r.post("/api/bridges/{bridge_id}/ports/{port}/scan")
-    def scan_bus(bridge_id: str, port: int, payload: Dict = Body(default={})):
-        """Start sweeping unit ids on one bus through its shared connection.
-        Poll GET /api/bus-scan/{job}. ``{from, to, timeout}`` (default 1-247,
-        0.3 s per unit — a full bus takes about a minute and a quarter)."""
-        from .. import bus_scan
-        from ..bridges import resolve_connection
+    def scan_bus(bridge_id: str, port: int, request: Request, payload: Dict = Body(default={})):
+        """Start sweeping unit ids on one bus: the generic bus scan
+        (``POST /api/bus-scan``, bus_scan.py) on this bridge port — through
+        the shared transport, reads only, refused on a listened bus.
+        ``{from, to, timeout, fc43, confirm_open}`` (default 1-247, 0.3 s per
+        unit). Poll GET /api/bus-scan/{job}."""
+        from .bus_scan import launch
         b = _bridge(bridge_id)
-        try:
-            u0 = max(1, int(payload.get("from", 1)))
-            u1 = min(247, int(payload.get("to", 247)))
-            tmo = min(2.0, max(0.1, float(payload.get("timeout", 0.3))))
-        except (TypeError, ValueError):
-            raise HTTPException(status_code=422, detail={"errors": ["from/to/timeout must be numbers"]})
-        if u1 < u0:
-            raise HTTPException(status_code=422, detail={"errors": ["from must not exceed to"]})
-        _refuse_if_tapped(b["id"], port, "A scan")
-        conn = resolve_connection({"bridge": b["id"], "bridge_port": port}, config.bridges)
-        known = {int(d.connection.unit_id): d.id for d in config.bridge_devices(b["id"])
-                 if int(d.connection.port) == int(port)}
-        tr = getattr(ctx, "template_registry", None)
-        tpls = [t for t in (tr.list() if tr else []) if getattr(t, "identify", None)]
-        job = bus_scan.start(conn, u0, u1, tmo, tpls, known)
-        return {"job": job, "total": u1 - u0 + 1}
-
-    @r.get("/api/bus-scan/{job}")
-    def bus_scan_status(job: str):
-        from .. import bus_scan
-        s = bus_scan.get(job)
-        if s is None:
-            raise HTTPException(status_code=404, detail="no such scan")
-        return s
-
-    @r.delete("/api/bus-scan/{job}")
-    def bus_scan_cancel(job: str):
-        from .. import bus_scan
-        return {"cancelled": bus_scan.cancel(job)}
+        body = dict(payload or {})
+        body.setdefault("from", 1)
+        body.setdefault("to", 247)
+        body.setdefault("timeout", 0.3)
+        job = launch(ctx, request, body, conn={"bridge": b["id"], "bridge_port": int(port)}, edited=set())
+        return {"job": job.id, "total": job.total, "transport": job.plan.transport,
+                "shared_with": job.plan.shared_with, **({"confirm_open": True} if job.plan.confirm_open else {})}
 
     @r.get("/api/bridges/{bridge_id}/setup")
     def bridge_setup(bridge_id: str, request: Request):
@@ -477,8 +608,10 @@ def build(ctx) -> APIRouter:
                 "  -v /dev:/dev:ro -v /etc/hostname:/etc/host-hostname:ro \\\n"
                 "  -v serial-bridge-data:/data \\\n"
                 "  --device-cgroup-rule='c 188:* rmw' --device-cgroup-rule='c 166:* rmw' \\\n"
+                "  --device-cgroup-rule='c 204:* rmw' \\\n"
                 "  --cap-drop ALL --cap-add CHOWN --cap-add DAC_OVERRIDE --cap-add FOWNER \\\n"
-                "  --cap-add SETUID --cap-add SETGID --security-opt no-new-privileges:true \\\n"
+                "  --cap-add SETUID --cap-add SETGID --cap-add SYS_PTRACE \\\n"
+                "  --security-opt no-new-privileges:true \\\n"
                 f"  -p {ctrl}:7000 -p 7001-7016:7001-7016 \\\n"
                 f"  {img}")
             out["compose"] = "serial-bridge/docker-compose.bridge.yml (set BRIDGE_TOKEN to the value above)"

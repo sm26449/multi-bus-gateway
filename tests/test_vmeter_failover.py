@@ -1,5 +1,5 @@
 # Multi-Bus Gateway — multi-protocol Modbus/HTTP/MQTT acquisition gateway.
-# Copyright (C) 2024-2026 Stefan Maldaianu <sm26449@diysolar.ro>  — AGPL-3.0-or-later
+# Copyright (C) 2024-2026 Stefan Maldaianu <stefan@multibus.dev>  — AGPL-3.0-or-later
 """Redundant-source failover: a virtual-meter row backed by an ordered list of
 sources serves the first FRESH one and auto-switches when it goes stale — the
 reliability guard for the ESS feed. All-stale still degrades through the row's

@@ -1,5 +1,5 @@
 /* Multi-Bus Gateway — multi-protocol Modbus/HTTP/MQTT acquisition gateway.
- * Copyright (C) 2024-2026 Stefan Maldaianu <sm26449@diysolar.ro>
+ * Copyright (C) 2024-2026 Stefan Maldaianu <stefan@multibus.dev>
  * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 // history domain — augments JanitzaMonitor.prototype
@@ -109,7 +109,10 @@ Object.assign(JanitzaMonitor.prototype, {
         list.innerHTML = `<span class="field-hint">${this.t('common.loading', 'Loading…')}</span>`;
         this.openModal('energyFieldsModal');
         try {
-            const r = await (await fetch('/api/energy/fields' + this._viewDeviceQS())).json();
+            const rsp = await fetch('/api/energy/fields' + this._viewDeviceQS());
+            // the selection's own revision, sent back on Save (ADR-0030)
+            this._efRev = { qs: this._viewDeviceQS(), tag: rsp.headers.get('ETag') };
+            const r = await rsp.json();
             const cands = r.candidates || [];
             if (!cands.length) {
                 this._efRows = [];
@@ -169,10 +172,11 @@ Object.assign(JanitzaMonitor.prototype, {
         const picked = (this._efRows || []).filter(r => r.checked)
             .map(r => ({ name: r.name, label: r.label, unit: r.unit, div: r.div }));
         try {
-            const r = await fetch('/api/energy/fields' + this._viewDeviceQS(), {
-                method: 'POST', headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ fields: picked }),
-            });
+            const qs = this._viewDeviceQS();
+            const headers = { 'Content-Type': 'application/json' };
+            if (this._efRev && this._efRev.qs === qs && this._efRev.tag) headers['If-Match'] = this._efRev.tag;
+            const r = await fetch('/api/energy/fields' + qs, { method: 'POST', headers, body: JSON.stringify({ fields: picked }) });
+            if (r.status === 412) throw new Error(this.t('energy.fieldsChanged', 'The Energy fields were changed elsewhere since this dialog opened. Nothing was saved: close it, open it again and apply your change again.'));
             if (!r.ok) {
                 const d = await r.json().catch(() => ({}));
                 throw new Error((d.detail?.errors || [d.detail || 'save failed']).join('; '));
@@ -313,7 +317,7 @@ Object.assign(JanitzaMonitor.prototype, {
             const items = cats.get(catName).filter(it =>
                 !this.histSearch || `${it.name} ${it.label || ''} ${it.unit || ''}`.toLowerCase().includes(this.histSearch));
             if (!items.length) continue;
-            const disp = catName.charAt(0).toUpperCase() + catName.slice(1);
+            const disp = this._catName(catName);
             html += `<div class="monitor-category expanded" data-category="${this._esc(catName)}">
                 <div class="monitor-category-header" role="button" tabindex="0" aria-expanded="true"><span class="arrow">&#9654;</span><span>${this._esc(disp)}</span><span style="margin-left:auto;color:var(--text-tertiary);">(${items.length})</span></div>
                 <div class="monitor-category-items">
@@ -431,6 +435,14 @@ Object.assign(JanitzaMonitor.prototype, {
         try { canvas.getContext('2d').clearRect(0, 0, canvas.width, canvas.height); } catch (e) {}
     },
 
+    // the chart's margins: tick values on the left, times below. With a
+    // shared unit, a band above the plot holds it — its baseline (unitY)
+    // well above the top tick value (drawn at mt + 3, 11 px text), so the
+    // two never touch
+    _histFrame(withUnit) {
+        return { ml: 58, mr: 14, mb: 26, mt: withUnit ? 28 : 12, unitY: 12 };
+    },
+
     _renderHistory(hoverX, opts = {}) {
         // Reusable: History page (defaults) or the dashboard value-history modal
         // (opts.canvas / opts.series / opts.legendId).
@@ -454,13 +466,15 @@ Object.assign(JanitzaMonitor.prototype, {
         if (t1 <= t0) t1 = t0 + 1;
         if (vlo === vhi) { vlo -= 1; vhi += 1; }
         const pad = (vhi - vlo) * 0.08; vlo -= pad; vhi += pad;
-        const ml = 58, mr = 14, mt = 12, mb = 26;
+        const units = new Set(series.map(s => s.unit || '').filter(Boolean));
+        const commonUnit = units.size === 1 ? [...units][0] : '';
+        // the unit sits ABOVE the top tick value, in a band of its own: the
+        // top grid line (and its value) start below it
+        const { ml, mr, mt, mb, unitY } = this._histFrame(!!commonUnit);
         const px = t => ml + (t - t0) / ((t1 - t0) || 1) * (W - ml - mr);
         const py = v => mt + (1 - (v - vlo) / ((vhi - vlo) || 1)) * (H - mt - mb);
         const css = getComputedStyle(document.body);
         const muted = (css.getPropertyValue('--text-muted') || 'var(--text-secondary)').trim() || 'var(--text-secondary)';
-        const units = new Set(series.map(s => s.unit || '').filter(Boolean));
-        const commonUnit = units.size === 1 ? [...units][0] : '';
         ctx.font = '11px system-ui, sans-serif';
         ctx.strokeStyle = 'rgba(128,128,128,0.18)'; ctx.lineWidth = 1; ctx.fillStyle = muted; ctx.textAlign = 'left';
         for (let i = 0; i <= 4; i++) {
@@ -469,13 +483,14 @@ Object.assign(JanitzaMonitor.prototype, {
             ctx.fillText(v.toFixed(1), 6, y + 3);
         }
         // unit label on the Y axis (meaningful because we only mix same-unit series)
-        if (commonUnit) { ctx.font = '600 11px system-ui, sans-serif'; ctx.fillText(commonUnit, 6, mt - 2); ctx.font = '11px system-ui, sans-serif'; }
-        ctx.textAlign = 'center';
+        if (commonUnit) { ctx.font = '600 11px system-ui, sans-serif'; ctx.fillText(commonUnit, 6, unitY); ctx.font = '11px system-ui, sans-serif'; }
         const span = t1 - t0;
         for (let i = 0; i <= 4; i++) {
             const t = t0 + span * i / 4, x = px(t), dt = new Date(t);
             const lbl = span > 2 * 864e5 ? dt.toLocaleDateString(this._loc()) : dt.toLocaleTimeString(this._loc(), { hour: '2-digit', minute: '2-digit' });
-            ctx.fillText(lbl, x, H - 8);
+            // the first and the last time stay inside the chart
+            ctx.textAlign = i === 0 ? 'left' : i === 4 ? 'right' : 'center';
+            ctx.fillText(lbl, i === 0 ? Math.max(x, 2) : i === 4 ? Math.min(x, W - 2) : x, H - 8);
         }
         ctx.textAlign = 'left';
         // min/max band only when a single register is shown

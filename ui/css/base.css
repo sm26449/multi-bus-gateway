@@ -1,5 +1,5 @@
 /* Multi-Bus Gateway — multi-protocol Modbus/HTTP/MQTT acquisition gateway.
- * Copyright (C) 2024-2026 Stefan Maldaianu <sm26449@diysolar.ro>
+ * Copyright (C) 2024-2026 Stefan Maldaianu <stefan@multibus.dev>
  * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 /* ============================================
@@ -956,6 +956,38 @@ input[type="time"].input {
 @keyframes slideIn {
     from { transform: translateX(100%); opacity: 0; }
     to { transform: translateX(0); opacity: 1; }
+}
+
+/* Undo in a delete's toast (ADR-0032 §8): the button, the seconds left, a bar */
+.toast-actions { margin-top: 8px; display: flex; gap: 8px; }
+.toast-undo-s {
+    display: inline-block; min-width: 1.6em; margin-left: 4px; padding: 0 4px;
+    border-radius: 8px; background: var(--bg-tertiary, rgba(127,127,127,.15));
+    font-variant-numeric: tabular-nums; font-size: 11px; text-align: center;
+}
+.toast-undo-bar { height: 2px; margin-top: 8px; background: var(--border); border-radius: 1px; overflow: hidden; }
+.toast-undo-bar span { display: block; height: 100%; width: 100%; background: var(--accent); transition: width .25s linear; }
+@media (prefers-reduced-motion: reduce) { .toast-undo-bar span { transition: none; } }
+@media (max-width: 600px) {
+    .toast-container { left: 16px; right: 16px; }
+    .toast { min-width: 0; max-width: none; }
+}
+
+/* the Restore dialog */
+.restore-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.restore-row {
+    display: flex; gap: 12px; align-items: flex-start; justify-content: space-between;
+    padding: 10px 12px; border: 1px solid var(--border); border-radius: var(--radius);
+}
+.restore-main { min-width: 0; flex: 1; overflow-wrap: anywhere; }
+.restore-acts { display: flex; gap: 6px; flex-shrink: 0; }
+.restore-problem { margin-top: 6px; padding: 6px 8px; border-left: 3px solid var(--warning); background: var(--bg-tertiary, transparent); font-size: 12px; }
+.restore-problem ul { margin: 4px 0; padding-left: 18px; }
+.restore-note { margin: 4px 0 0; }
+.restore-done { margin: 6px 0 0; color: var(--success-text); }
+.restore-acts [aria-disabled="true"] { opacity: .55; cursor: not-allowed; }
+@media (max-width: 600px) {
+    .restore-row { flex-direction: column; }
 }
 
 /* ==================== UTILITIES ==================== */

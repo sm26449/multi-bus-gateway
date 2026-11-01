@@ -19,7 +19,7 @@ maintained — please upgrade before reporting.
 **Do not open a public issue for a security problem.**
 
 - Preferred: open a private [GitHub Security Advisory](https://github.com/sm26449/multi-bus-gateway/security/advisories/new) ("Report a vulnerability").
-- Or email **sm26449@diysolar.ro** with `SECURITY` in the subject.
+- Or email **stefan@multibus.dev** with `SECURITY` in the subject.
 
 Please include: affected version/commit, a description, reproduction steps or a
 proof-of-concept, and the impact you observed. If you can, say whether the issue

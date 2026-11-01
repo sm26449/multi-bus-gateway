@@ -1,5 +1,5 @@
 # Multi-Bus Gateway — multi-protocol Modbus/HTTP/MQTT acquisition gateway.
-# Copyright (C) 2024-2026 Stefan Maldaianu <sm26449@diysolar.ro>
+# Copyright (C) 2024-2026 Stefan Maldaianu <stefan@multibus.dev>
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU Affero General Public License as published by
@@ -26,21 +26,28 @@ never a computation (a forecast).
 Each category says:
 - the levels it may sit on: the plant (site), an installation, a device;
 - the kinds of equipment it fits best (offered first, never enforced);
+- the kinds it is recommended for (``recommended_for``: what Add Device asks
+  for a type; the API never refuses a device that lacks it, ADR-0027);
 - whether it repeats (one row per PV orientation);
-- its fields: type, unit, limits, choices, required.
+- its fields: type, unit, limits, choices, required; ``private`` for a field
+  that is not published unless the settings say so (a serial number).
 
 Labels and hints live in the UI language files (``attr.<category>.<field>``);
 the English text here is the fallback.
 """
 from __future__ import annotations
 
+import datetime as _dt
 import math
+import re
 from typing import Any, Dict, List, Optional, Tuple
 
+from .device_kind import KINDS  # noqa: F401 — the one list of built-in kinds (ADR-0027)
+
 LEVELS = ('site', 'installation', 'device')
-# the vocabulary installation groups already use for their role
-KINDS = ('inverter', 'meter', 'battery', 'sensor', 'site', 'ups', 'charger')
 MAX_ROWS = 64
+LABEL_RE = re.compile(r'^[a-z0-9][a-z0-9_-]*$')
+DATE_RE = re.compile(r'^\d{4}-\d{2}-\d{2}$')
 
 
 def _num(lo, hi, unit='', required=False, label='', integer=False):
@@ -52,8 +59,17 @@ def _choice(values, required=False, label=''):
     return {'type': 'choice', 'choices': list(values), 'required': required, 'label': label}
 
 
-def _text(max_len=64, required=False, label=''):
-    return {'type': 'text', 'max_len': max_len, 'required': required, 'label': label}
+def _text(max_len=64, required=False, label='', multiline=False, private=False):
+    return {'type': 'text', 'max_len': max_len, 'required': required, 'label': label,
+            **({'multiline': True} if multiline else {}), **({'private': True} if private else {})}
+
+
+def _labels(max_items=16, max_len=32, label=''):
+    return {'type': 'labels', 'max_items': max_items, 'max_len': max_len, 'required': False, 'label': label}
+
+
+def _date(label=''):
+    return {'type': 'date', 'min': '1900-01-01', 'max': '2100-12-31', 'required': False, 'label': label}
 
 
 CATALOG: Dict[str, Dict[str, Any]] = {
@@ -72,6 +88,7 @@ CATALOG: Dict[str, Dict[str, Any]] = {
         'label': 'Grid connection',
         'levels': ('device',),
         'kinds': ('meter', 'site'),
+        'recommended_for': ('meter',),
         'repeatable': False,
         'fields': {
             'role': _choice(('connection_point', 'sub_meter', 'generation', 'load', 'storage'),
@@ -87,6 +104,7 @@ CATALOG: Dict[str, Dict[str, Any]] = {
         'label': 'PV input',
         'levels': ('device',),
         'kinds': ('inverter',),
+        'recommended_for': ('inverter',),
         'repeatable': True,
         'fields': {
             'mppt': _num(1, 32, '', True, 'MPPT input', integer=True),
@@ -104,6 +122,7 @@ CATALOG: Dict[str, Dict[str, Any]] = {
         'label': 'Battery',
         'levels': ('device', 'installation'),
         'kinds': ('battery',),
+        'recommended_for': ('battery',),
         'repeatable': False,
         'fields': {
             'usable_kwh': _num(0.01, 1000000, 'kWh', False, 'Usable energy'),
@@ -117,9 +136,31 @@ CATALOG: Dict[str, Dict[str, Any]] = {
         # an inverter's nameplate; a UPS's or a charger's output rating (its
         # load_pct, linked_meter.py) — in kW: a UPS sold in kVA is kVA × PF
         'kinds': ('inverter', 'ups', 'charger'),
+        'recommended_for': ('inverter', 'ups', 'charger'),
         'repeatable': False,
         'fields': {
             'rated_ac_kw': _num(0.01, 100000, 'kW', True, 'Rated AC power (nameplate; a UPS in kVA: kVA × power factor)'),
+        },
+    },
+    # what the equipment is to the people who look after it (ADR-0027): words,
+    # where it is mounted, labels to find it by, its nameplate
+    'identity': {
+        'label': 'Identity',
+        'levels': ('device', 'installation'),
+        'kinds': (),
+        'recommended_for': (),
+        'repeatable': False,
+        'fields': {
+            'description': _text(500, False, 'Description', multiline=True),
+            # where it is mounted ("garage, cabinet 2"); the coordinates are
+            # the `location` category
+            'location': _text(120, False, 'Where it is (e.g. garage, cabinet 2)'),
+            'labels': _labels(16, 32, 'Labels'),
+            'manufacturer': _text(64, False, 'Manufacturer'),
+            'model': _text(64, False, 'Model'),
+            'serial_number': _text(64, False, 'Serial number', private=True),
+            'firmware': _text(64, False, 'Firmware'),
+            'installed_on': _date('Installed on'),
         },
     },
 }
@@ -137,17 +178,48 @@ def catalog_view() -> Dict[str, Any]:
                            for cid, c in CATALOG.items()}}
 
 
+def recommended_for(kind: Optional[str]) -> List[str]:
+    """The categories Add Device asks for a built-in kind (never enforced)."""
+    return [c for c, spec in CATALOG.items() if kind and kind in spec.get('recommended_for', ())]
+
+
 def _check_field(cat: str, fid: str, spec: Dict, value: Any, where: str) -> Tuple[Any, Optional[str]]:
     t = spec['type']
     if t == 'text':
         if not isinstance(value, str) or not value.strip():
             return None, f"{where}.{fid}: text"
+        if spec.get('multiline'):
+            value = value.replace('\r\n', '\n').strip()
         if len(value) > spec['max_len']:
             return None, f"{where}.{fid}: at most {spec['max_len']} characters"
         from .text_check import topic_issue
-        issue = topic_issue(value, f"{where}.{fid}")    # invisible or look-alike characters
+        # invisible or look-alike characters (a line break only where it may be)
+        issue = topic_issue(value.replace('\n', ' ') if spec.get('multiline') else value, f"{where}.{fid}")
         if issue:
             return None, issue
+        return value, None
+    if t == 'labels':
+        if not isinstance(value, list):
+            return None, f"{where}.{fid}: a list of labels"
+        out: List[str] = []
+        for v in value:
+            if not isinstance(v, str) or not LABEL_RE.match(v) or len(v) > spec['max_len']:
+                return None, (f"{where}.{fid}: {str(v)[:40]!r} — a label is a-z 0-9 - _ "
+                              f"(lower case, at most {spec['max_len']} characters)")
+            if v not in out:
+                out.append(v)
+        if len(out) > spec['max_items']:
+            return None, f"{where}.{fid}: at most {spec['max_items']} labels"
+        return out, None
+    if t == 'date':
+        try:
+            if not isinstance(value, str) or not DATE_RE.match(value):
+                raise ValueError
+            _dt.date.fromisoformat(value)
+        except ValueError:
+            return None, f"{where}.{fid}: a date as YYYY-MM-DD"
+        if not (spec['min'] <= value <= spec['max']):
+            return None, f"{where}.{fid}: {spec['min']}…{spec['max']}"
         return value, None
     if t == 'choice':
         # the same value AND type: True is not the choice 1, 3.0 not 3
@@ -180,7 +252,7 @@ def _check_row(cat: str, row: Any, where: str, mppt_count: Optional[int]) -> Tup
         if fid not in fields:
             errors.append(f"{where}.{fid}: not an attribute of {cat}")
             continue
-        if value is None:
+        if value is None or (value == [] and fields[fid]['type'] == 'labels'):
             continue                          # left empty: not set
         v, err = _check_field(cat, fid, fields[fid], value, where)
         if err:
@@ -245,6 +317,29 @@ def fits(cat: str, kind: Optional[str]) -> bool:
 # ── coordinates are personal data (docs/attributes.md, privacy) ─────────────
 
 COORD_FIELDS = ('latitude_deg', 'longitude_deg', 'altitude_m')
+PRIVATE_FIELDS = tuple((c, f) for c, spec in CATALOG.items()
+                       for f, fs in spec['fields'].items() if fs.get('private'))
+
+
+def without_private(attrs: Dict[str, Any]) -> Dict[str, Any]:
+    """A place's attributes without the private fields (a serial number):
+    what is published unless the settings say otherwise."""
+    return without_fields(attrs, PRIVATE_FIELDS)
+
+
+def without_fields(attrs: Dict[str, Any], fields) -> Dict[str, Any]:
+    """A copy without the given (category, field) pairs; a category left
+    empty goes too."""
+    out = dict(attrs or {})
+    for c, f in fields:
+        node = out.get(c)
+        if isinstance(node, dict) and f in node:
+            node = {k: v for k, v in node.items() if k != f}
+            if node:
+                out[c] = node
+            else:
+                out.pop(c)
+    return out
 PUBLISH_MODES = ('off', 'coarse', 'exact')
 
 

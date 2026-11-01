@@ -1,0 +1,981 @@
+{
+  "device_template": {
+    "schema_version": 1,
+    "id": "huawei_sun2000",
+    "name": "Huawei SUN2000 inverter",
+    "vendor": "Huawei",
+    "model": "SUN2000 (KTL-L1 / KTL-M0/M1/M2 and similar)",
+    "kind": "inverter",
+    "version": "0.1.0",
+    "author": "Stefan Maldaianu",
+    "description": "Huawei SUN2000 string or hybrid inverter over Modbus TCP (SDongle or the inverter's WLAN) or Modbus RTU, read-only: identity 30000-30076 (model, serial, PN, firmware, strings, MPPTs, rated and maximum power), the State 1/2/3 and Alarm 1/2/3 bit fields at 32000-32010, PV1-PV8 voltage and current from 32016, the AC block 32064-32094 (input power, line and phase voltages and currents, active and reactive power, PF, frequency, efficiency, internal temperature, insulation, device status, fault code, startup/shutdown time) and the total (32106) and daily (32114) yield, served in Wh. Big-endian, high word first. The DTSU666 meter and the LUNA2000 battery behind the inverter have their own templates (huawei_dtsu666_via_sun2000, huawei_luna2000): add them as further devices on the same connection and unit ID, only where the site has them. PV5-PV8 are a separate read, so a model with four strings that refuses them does not lose PV1-PV4. Field notes: enable Modbus TCP on the SDongle in FusionSolar (Dongle parameters -> Modbus TCP -> Enable unrestricted); unit ID = the inverter's RS485 address (usually 1); the dongle serves ONE Modbus client only, so keep a single gateway connection and poll every 10-30 s; port 502 on the SDongle, 6607 on the inverter's own WLAN access point; Modbus RTU direct on the inverter's RS485 is 9600 8N1. The inverter is the master of its RS485 bus to the DTSU666 meter: never add a second master there, use the listen-only rtu_tap mode to watch it. SunSpec (40000) is a quick alternative without battery, meter or alarms.",
+    "source_document": "Huawei 'Solar Inverter Modbus Interface Definitions' (Huawei SUN2000 Modbus interface, register 30000-32114 tables, device status codes, State/Alarm bit fields); cross-read against wlcrs/huawei-solar-lib register definitions. Not yet checked on hardware.",
+    "protocol": {
+      "line": {"baudrate": 9600, "parity": "N", "bytesize": 8, "stopbits": 1},
+      "transports": [
+        "tcp",
+        "rtu"
+      ],
+      "byte_order": "big",
+      "default_unit_id": 1,
+      "default_register_type": "holding",
+      "max_registers_per_read": 64,
+      "connect_settle_s": 3
+    },
+    "poll_groups": {
+      "fast": {
+        "interval": 10,
+        "description": "PV1-PV4 and the AC block"
+      },
+      "pv_extra": {
+        "interval": 30,
+        "description": "PV5-PV8, a read of their own (absent on smaller models)"
+      },
+      "normal": {
+        "interval": 30,
+        "description": "state and alarm bit fields, status, fault, temperature, efficiency"
+      },
+      "energy": {
+        "interval": 60,
+        "description": "total and daily yield"
+      },
+      "static": {
+        "interval": 3600,
+        "description": "identity strings, strings/MPPT count, rated power"
+      }
+    },
+    "categories": {
+      "ac": {
+        "label": "AC measurements",
+        "order": 1
+      },
+      "pv": {
+        "label": "PV strings",
+        "order": 2
+      },
+      "energy": {
+        "label": "Energy",
+        "order": 3
+      },
+      "temperature": {
+        "label": "Temperatures",
+        "order": 4
+      },
+      "status": {
+        "label": "Status",
+        "order": 5
+      },
+      "alarms": {
+        "label": "Alarms",
+        "order": 6
+      },
+      "identity": {
+        "label": "Device identity",
+        "order": 7
+      }
+    },
+    "canonical": false,
+    "identify": {
+      "registers": [
+        {
+          "address": 30000,
+          "register_type": "holding",
+          "data_type": "uint32",
+          "equals": 1398099506
+        },
+        {
+          "address": 30002,
+          "register_type": "holding",
+          "data_type": "uint32",
+          "min": 808464384,
+          "max": 808464639
+        }
+      ]
+    },
+    "notes": [
+      {
+        "level": "warning",
+        "text": "Not yet checked on hardware: compare AC power, the PV strings and the yield with FusionSolar or the inverter app before relying on them. The alarm bit names and the status list follow Huawei's interface definitions.",
+        "fields": [
+          "alarm_1",
+          "alarm_2",
+          "alarm_3",
+          "vendor_state"
+        ]
+      },
+      {
+        "level": "warning",
+        "text": "The SDongle serves one Modbus TCP client. A second client (another gateway, Home Assistant) makes both drop out. Poll every 10-30 s; faster polling makes the dongle answer late or not at all."
+      },
+      {
+        "level": "info",
+        "text": "Setup: FusionSolar -> the SDongle -> Dongle parameters -> Modbus TCP -> Enable (unrestricted). Port 502 on the SDongle, 6607 on the inverter's own WLAN. Unit ID = the inverter's RS485 address, usually 1. RTU direct: 9600 8N1."
+      },
+      {
+        "level": "info",
+        "text": "If a read answers 'illegal data address' (a register this model does not have), set the device's max gap to 0 or list the address in its illegal registers: the other values keep reading."
+      },
+      {
+        "level": "info",
+        "text": "The inverter is the master of its RS485 bus to the DTSU666 meter. Never add a second master on that bus; watch it with the listen-only rtu_tap mode. SunSpec (40000) is a quicker alternative, without battery, meter or alarms."
+      }
+    ],
+    "registers": [
+      {
+        "address": 30000,
+        "name": "model",
+        "label": "Model",
+        "unit": "",
+        "data_type": "string:15",
+        "register_type": "holding",
+        "access": "RD",
+        "category": "identity",
+        "poll_group": "static",
+        "description": "30000. Model name, 15 registers (e.g. SUN2000-10KTL-M1). Source: Huawei 'Solar Inverter Modbus Interface Definitions', cross-read against wlcrs/huawei-solar-lib.",
+        "entity_category": "diagnostic"
+      },
+      {
+        "address": 30015,
+        "name": "serial",
+        "label": "Serial number",
+        "unit": "",
+        "data_type": "string:10",
+        "register_type": "holding",
+        "access": "RD",
+        "category": "identity",
+        "poll_group": "static",
+        "description": "30015. Serial number, 10 registers. Source: Huawei 'Solar Inverter Modbus Interface Definitions', cross-read against wlcrs/huawei-solar-lib.",
+        "entity_category": "diagnostic"
+      },
+      {
+        "address": 30025,
+        "name": "part_number",
+        "label": "Part number (PN)",
+        "unit": "",
+        "data_type": "string:10",
+        "register_type": "holding",
+        "access": "RD",
+        "category": "identity",
+        "poll_group": "static",
+        "description": "30025. Product number, 10 registers. Source: Huawei 'Solar Inverter Modbus Interface Definitions', cross-read against wlcrs/huawei-solar-lib.",
+        "entity_category": "diagnostic"
+      },
+      {
+        "address": 30035,
+        "name": "firmware_version",
+        "label": "Firmware version",
+        "unit": "",
+        "data_type": "string:15",
+        "register_type": "holding",
+        "access": "RD",
+        "category": "identity",
+        "poll_group": "static",
+        "description": "30035. Firmware version, 15 registers. Source: Huawei 'Solar Inverter Modbus Interface Definitions', cross-read against wlcrs/huawei-solar-lib.",
+        "entity_category": "diagnostic"
+      },
+      {
+        "address": 30050,
+        "name": "software_version",
+        "label": "Software version",
+        "unit": "",
+        "data_type": "string:15",
+        "register_type": "holding",
+        "access": "RD",
+        "category": "identity",
+        "poll_group": "static",
+        "description": "30050. Software version, 15 registers. Source: Huawei 'Solar Inverter Modbus Interface Definitions', cross-read against wlcrs/huawei-solar-lib.",
+        "entity_category": "diagnostic"
+      },
+      {
+        "address": 30070,
+        "name": "model_id",
+        "label": "Model ID",
+        "unit": "",
+        "data_type": "uint16",
+        "register_type": "holding",
+        "access": "RD",
+        "category": "identity",
+        "poll_group": "static",
+        "description": "30070. Model ID code. Source: Huawei 'Solar Inverter Modbus Interface Definitions', cross-read against wlcrs/huawei-solar-lib.",
+        "entity_category": "diagnostic"
+      },
+      {
+        "address": 30071,
+        "name": "pv_string_count",
+        "label": "Number of PV strings",
+        "unit": "",
+        "data_type": "uint16",
+        "register_type": "holding",
+        "access": "RD",
+        "category": "identity",
+        "poll_group": "static",
+        "description": "30071. Number of PV strings the model has. Source: Huawei 'Solar Inverter Modbus Interface Definitions', cross-read against wlcrs/huawei-solar-lib.",
+        "entity_category": "diagnostic"
+      },
+      {
+        "address": 30072,
+        "name": "mppt_modules",
+        "label": "Number of MPP trackers",
+        "unit": "",
+        "data_type": "uint16",
+        "register_type": "holding",
+        "access": "RD",
+        "category": "identity",
+        "poll_group": "static",
+        "description": "30072. Number of MPP trackers. Source: Huawei 'Solar Inverter Modbus Interface Definitions', cross-read against wlcrs/huawei-solar-lib.",
+        "entity_category": "diagnostic"
+      },
+      {
+        "address": 30073,
+        "name": "rated_power",
+        "label": "Rated power",
+        "unit": "W",
+        "data_type": "uint32",
+        "register_type": "holding",
+        "access": "RD",
+        "category": "identity",
+        "poll_group": "static",
+        "description": "30073. Rated power (Pn), W. Source: Huawei 'Solar Inverter Modbus Interface Definitions', cross-read against wlcrs/huawei-solar-lib.",
+        "entity_category": "diagnostic"
+      },
+      {
+        "address": 30075,
+        "name": "max_active_power",
+        "label": "Maximum active power",
+        "unit": "W",
+        "data_type": "uint32",
+        "register_type": "holding",
+        "access": "RD",
+        "category": "identity",
+        "poll_group": "static",
+        "description": "30075. Maximum active power (Pmax), W. Source: Huawei 'Solar Inverter Modbus Interface Definitions', cross-read against wlcrs/huawei-solar-lib.",
+        "entity_category": "diagnostic"
+      },
+      {
+        "address": 32000,
+        "name": "state_1",
+        "label": "State 1",
+        "unit": "",
+        "data_type": "uint16",
+        "register_type": "holding",
+        "access": "RD",
+        "category": "status",
+        "poll_group": "normal",
+        "description": "32000. State 1 bit field. Source: Huawei 'Solar Inverter Modbus Interface Definitions', cross-read against wlcrs/huawei-solar-lib.",
+        "bits": {
+          "0": "Standby",
+          "1": "Grid-connected",
+          "2": "Grid-connected normally",
+          "3": "Derating (power rationing)",
+          "4": "Derating (internal causes)",
+          "5": "Normal stop",
+          "6": "Stop due to faults",
+          "7": "Stop due to power rationing",
+          "8": "Shutdown",
+          "9": "Spot check"
+        }
+      },
+      {
+        "address": 32002,
+        "name": "state_2",
+        "label": "State 2",
+        "unit": "",
+        "data_type": "uint16",
+        "register_type": "holding",
+        "access": "RD",
+        "category": "status",
+        "poll_group": "normal",
+        "description": "32002. State 2 bit field: bit 0 locking (set = unlocked), bit 1 PV connected, bit 2 DSP data collection. Source: Huawei 'Solar Inverter Modbus Interface Definitions', cross-read against wlcrs/huawei-solar-lib.",
+        "bits": {
+          "0": "Unlocked",
+          "1": "PV connected",
+          "2": "DSP data collection"
+        }
+      },
+      {
+        "address": 32003,
+        "name": "state_3",
+        "label": "State 3",
+        "unit": "",
+        "data_type": "uint32",
+        "register_type": "holding",
+        "access": "RD",
+        "category": "status",
+        "poll_group": "normal",
+        "description": "32003. State 3 bit field (two registers): bit 0 off-grid, bit 1 off-grid switch enabled. Source: Huawei 'Solar Inverter Modbus Interface Definitions', cross-read against wlcrs/huawei-solar-lib.",
+        "bits": {
+          "0": "Off-grid",
+          "1": "Off-grid switch enabled"
+        }
+      },
+      {
+        "address": 32008,
+        "name": "alarm_1",
+        "label": "Alarm 1",
+        "unit": "",
+        "data_type": "uint16",
+        "register_type": "holding",
+        "access": "RD",
+        "category": "alarms",
+        "poll_group": "normal",
+        "description": "32008. Alarm 1 bit field (alarm IDs in brackets). Source: Huawei 'Solar Inverter Modbus Interface Definitions', cross-read against wlcrs/huawei-solar-lib.",
+        "bits": {
+          "0": "High string input voltage (2001)",
+          "1": "DC arc fault (2002)",
+          "2": "String reverse connection (2011)",
+          "3": "String current backfeed (2012)",
+          "4": "Abnormal string power (2013)",
+          "5": "AFCI self-check fail (2021)",
+          "6": "Phase wire short-circuited to PE (2031)",
+          "7": "Grid loss (2032)",
+          "8": "Grid undervoltage (2033)",
+          "9": "Grid overvoltage (2034)",
+          "10": "Grid voltage imbalance (2035)",
+          "11": "Grid overfrequency (2036)",
+          "12": "Grid underfrequency (2037)",
+          "13": "Unstable grid frequency (2038)",
+          "14": "Output overcurrent (2039)",
+          "15": "Output DC component overhigh (2040)"
+        }
+      },
+      {
+        "address": 32009,
+        "name": "alarm_2",
+        "label": "Alarm 2",
+        "unit": "",
+        "data_type": "uint16",
+        "register_type": "holding",
+        "access": "RD",
+        "category": "alarms",
+        "poll_group": "normal",
+        "description": "32009. Alarm 2 bit field (alarm IDs in brackets). Source: Huawei 'Solar Inverter Modbus Interface Definitions', cross-read against wlcrs/huawei-solar-lib.",
+        "bits": {
+          "0": "Abnormal residual current (2051)",
+          "1": "Abnormal grounding (2061)",
+          "2": "Low insulation resistance (2062)",
+          "3": "Overtemperature (2063)",
+          "4": "Device fault (2064)",
+          "5": "Upgrade failed or version mismatch (2065)",
+          "6": "License expired (2066)",
+          "7": "Faulty monitoring unit (61440)",
+          "8": "Faulty power collector (2067)",
+          "9": "Battery abnormal (2068)",
+          "10": "Active islanding (2070)",
+          "11": "Passive islanding (2071)",
+          "12": "Transient AC overvoltage (2072)",
+          "13": "Peripheral port short circuit (2075)",
+          "14": "Churn output overload (2077)",
+          "15": "Abnormal PV module configuration (2080)"
+        }
+      },
+      {
+        "address": 32010,
+        "name": "alarm_3",
+        "label": "Alarm 3",
+        "unit": "",
+        "data_type": "uint16",
+        "register_type": "holding",
+        "access": "RD",
+        "category": "alarms",
+        "poll_group": "normal",
+        "description": "32010. Alarm 3 bit field (alarm IDs in brackets). Source: Huawei 'Solar Inverter Modbus Interface Definitions', cross-read against wlcrs/huawei-solar-lib.",
+        "bits": {
+          "0": "Optimizer fault (2081)",
+          "1": "Built-in PID operation abnormal (2085)",
+          "2": "High input string voltage to ground (2014)",
+          "3": "External fan abnormal (2086)",
+          "4": "Battery reverse connection (2069)",
+          "5": "On-grid/off-grid controller abnormal (2082)",
+          "6": "PV string loss (2015)",
+          "7": "Internal fan abnormal (2087)",
+          "8": "DC protection unit abnormal (2088)",
+          "9": "EL unit abnormal (2089)",
+          "10": "Active adjustment instruction abnormal (2090)",
+          "11": "Reactive adjustment instruction abnormal (2091)",
+          "12": "CT wiring abnormal (2092)",
+          "13": "DC arc fault, clear manually (2003)",
+          "14": "DC switch abnormal (2093)",
+          "15": "Battery allowed discharge capacity low (2094)"
+        }
+      },
+      {
+        "address": 32016,
+        "name": "voltage_dc_mppt1",
+        "label": "PV1 voltage",
+        "unit": "V",
+        "data_type": "int16",
+        "register_type": "holding",
+        "access": "RD",
+        "category": "pv",
+        "poll_group": "fast",
+        "scale": 10,
+        "description": "32016. PV1 input voltage, 0.1 V. A string the model does not have reads 0 (or illegal address). Source: Huawei 'Solar Inverter Modbus Interface Definitions', cross-read against wlcrs/huawei-solar-lib."
+      },
+      {
+        "address": 32017,
+        "name": "current_dc_mppt1",
+        "label": "PV1 current",
+        "unit": "A",
+        "data_type": "int16",
+        "register_type": "holding",
+        "access": "RD",
+        "category": "pv",
+        "poll_group": "fast",
+        "scale": 100,
+        "description": "32017. PV1 input current, 0.01 A. Source: Huawei 'Solar Inverter Modbus Interface Definitions', cross-read against wlcrs/huawei-solar-lib."
+      },
+      {
+        "address": 32018,
+        "name": "voltage_dc_mppt2",
+        "label": "PV2 voltage",
+        "unit": "V",
+        "data_type": "int16",
+        "register_type": "holding",
+        "access": "RD",
+        "category": "pv",
+        "poll_group": "fast",
+        "scale": 10,
+        "description": "32018. PV2 input voltage, 0.1 V. A string the model does not have reads 0 (or illegal address). Source: Huawei 'Solar Inverter Modbus Interface Definitions', cross-read against wlcrs/huawei-solar-lib."
+      },
+      {
+        "address": 32019,
+        "name": "current_dc_mppt2",
+        "label": "PV2 current",
+        "unit": "A",
+        "data_type": "int16",
+        "register_type": "holding",
+        "access": "RD",
+        "category": "pv",
+        "poll_group": "fast",
+        "scale": 100,
+        "description": "32019. PV2 input current, 0.01 A. Source: Huawei 'Solar Inverter Modbus Interface Definitions', cross-read against wlcrs/huawei-solar-lib."
+      },
+      {
+        "address": 32020,
+        "name": "voltage_dc_mppt3",
+        "label": "PV3 voltage",
+        "unit": "V",
+        "data_type": "int16",
+        "register_type": "holding",
+        "access": "RD",
+        "category": "pv",
+        "poll_group": "fast",
+        "scale": 10,
+        "description": "32020. PV3 input voltage, 0.1 V. A string the model does not have reads 0 (or illegal address). Source: Huawei 'Solar Inverter Modbus Interface Definitions', cross-read against wlcrs/huawei-solar-lib."
+      },
+      {
+        "address": 32021,
+        "name": "current_dc_mppt3",
+        "label": "PV3 current",
+        "unit": "A",
+        "data_type": "int16",
+        "register_type": "holding",
+        "access": "RD",
+        "category": "pv",
+        "poll_group": "fast",
+        "scale": 100,
+        "description": "32021. PV3 input current, 0.01 A. Source: Huawei 'Solar Inverter Modbus Interface Definitions', cross-read against wlcrs/huawei-solar-lib."
+      },
+      {
+        "address": 32022,
+        "name": "voltage_dc_mppt4",
+        "label": "PV4 voltage",
+        "unit": "V",
+        "data_type": "int16",
+        "register_type": "holding",
+        "access": "RD",
+        "category": "pv",
+        "poll_group": "fast",
+        "scale": 10,
+        "description": "32022. PV4 input voltage, 0.1 V. A string the model does not have reads 0 (or illegal address). Source: Huawei 'Solar Inverter Modbus Interface Definitions', cross-read against wlcrs/huawei-solar-lib."
+      },
+      {
+        "address": 32023,
+        "name": "current_dc_mppt4",
+        "label": "PV4 current",
+        "unit": "A",
+        "data_type": "int16",
+        "register_type": "holding",
+        "access": "RD",
+        "category": "pv",
+        "poll_group": "fast",
+        "scale": 100,
+        "description": "32023. PV4 input current, 0.01 A. Source: Huawei 'Solar Inverter Modbus Interface Definitions', cross-read against wlcrs/huawei-solar-lib."
+      },
+      {
+        "address": 32024,
+        "name": "voltage_dc_mppt5",
+        "label": "PV5 voltage",
+        "unit": "V",
+        "data_type": "int16",
+        "register_type": "holding",
+        "access": "RD",
+        "category": "pv",
+        "poll_group": "pv_extra",
+        "scale": 10,
+        "description": "32024. PV5 input voltage, 0.1 V. A string the model does not have reads 0 (or illegal address). Source: Huawei 'Solar Inverter Modbus Interface Definitions', cross-read against wlcrs/huawei-solar-lib."
+      },
+      {
+        "address": 32025,
+        "name": "current_dc_mppt5",
+        "label": "PV5 current",
+        "unit": "A",
+        "data_type": "int16",
+        "register_type": "holding",
+        "access": "RD",
+        "category": "pv",
+        "poll_group": "pv_extra",
+        "scale": 100,
+        "description": "32025. PV5 input current, 0.01 A. Source: Huawei 'Solar Inverter Modbus Interface Definitions', cross-read against wlcrs/huawei-solar-lib."
+      },
+      {
+        "address": 32026,
+        "name": "voltage_dc_mppt6",
+        "label": "PV6 voltage",
+        "unit": "V",
+        "data_type": "int16",
+        "register_type": "holding",
+        "access": "RD",
+        "category": "pv",
+        "poll_group": "pv_extra",
+        "scale": 10,
+        "description": "32026. PV6 input voltage, 0.1 V. A string the model does not have reads 0 (or illegal address). Source: Huawei 'Solar Inverter Modbus Interface Definitions', cross-read against wlcrs/huawei-solar-lib."
+      },
+      {
+        "address": 32027,
+        "name": "current_dc_mppt6",
+        "label": "PV6 current",
+        "unit": "A",
+        "data_type": "int16",
+        "register_type": "holding",
+        "access": "RD",
+        "category": "pv",
+        "poll_group": "pv_extra",
+        "scale": 100,
+        "description": "32027. PV6 input current, 0.01 A. Source: Huawei 'Solar Inverter Modbus Interface Definitions', cross-read against wlcrs/huawei-solar-lib."
+      },
+      {
+        "address": 32028,
+        "name": "voltage_dc_mppt7",
+        "label": "PV7 voltage",
+        "unit": "V",
+        "data_type": "int16",
+        "register_type": "holding",
+        "access": "RD",
+        "category": "pv",
+        "poll_group": "pv_extra",
+        "scale": 10,
+        "description": "32028. PV7 input voltage, 0.1 V. A string the model does not have reads 0 (or illegal address). Source: Huawei 'Solar Inverter Modbus Interface Definitions', cross-read against wlcrs/huawei-solar-lib."
+      },
+      {
+        "address": 32029,
+        "name": "current_dc_mppt7",
+        "label": "PV7 current",
+        "unit": "A",
+        "data_type": "int16",
+        "register_type": "holding",
+        "access": "RD",
+        "category": "pv",
+        "poll_group": "pv_extra",
+        "scale": 100,
+        "description": "32029. PV7 input current, 0.01 A. Source: Huawei 'Solar Inverter Modbus Interface Definitions', cross-read against wlcrs/huawei-solar-lib."
+      },
+      {
+        "address": 32030,
+        "name": "voltage_dc_mppt8",
+        "label": "PV8 voltage",
+        "unit": "V",
+        "data_type": "int16",
+        "register_type": "holding",
+        "access": "RD",
+        "category": "pv",
+        "poll_group": "pv_extra",
+        "scale": 10,
+        "description": "32030. PV8 input voltage, 0.1 V. A string the model does not have reads 0 (or illegal address). Source: Huawei 'Solar Inverter Modbus Interface Definitions', cross-read against wlcrs/huawei-solar-lib."
+      },
+      {
+        "address": 32031,
+        "name": "current_dc_mppt8",
+        "label": "PV8 current",
+        "unit": "A",
+        "data_type": "int16",
+        "register_type": "holding",
+        "access": "RD",
+        "category": "pv",
+        "poll_group": "pv_extra",
+        "scale": 100,
+        "description": "32031. PV8 input current, 0.01 A. Source: Huawei 'Solar Inverter Modbus Interface Definitions', cross-read against wlcrs/huawei-solar-lib."
+      },
+      {
+        "address": 32064,
+        "name": "power_dc",
+        "label": "Input power",
+        "unit": "W",
+        "data_type": "int32",
+        "register_type": "holding",
+        "access": "RD",
+        "category": "ac",
+        "poll_group": "fast",
+        "description": "32064. Total DC input power, W. Source: Huawei 'Solar Inverter Modbus Interface Definitions', cross-read against wlcrs/huawei-solar-lib."
+      },
+      {
+        "address": 32066,
+        "name": "voltage_l1_l2",
+        "label": "Line voltage A-B",
+        "unit": "V",
+        "data_type": "uint16",
+        "register_type": "holding",
+        "access": "RD",
+        "category": "ac",
+        "poll_group": "fast",
+        "scale": 10,
+        "description": "32066. Line voltage A-B, 0.1 V. Source: Huawei 'Solar Inverter Modbus Interface Definitions', cross-read against wlcrs/huawei-solar-lib."
+      },
+      {
+        "address": 32067,
+        "name": "voltage_l2_l3",
+        "label": "Line voltage B-C",
+        "unit": "V",
+        "data_type": "uint16",
+        "register_type": "holding",
+        "access": "RD",
+        "category": "ac",
+        "poll_group": "fast",
+        "scale": 10,
+        "description": "32067. Line voltage B-C, 0.1 V. Source: Huawei 'Solar Inverter Modbus Interface Definitions', cross-read against wlcrs/huawei-solar-lib."
+      },
+      {
+        "address": 32068,
+        "name": "voltage_l3_l1",
+        "label": "Line voltage C-A",
+        "unit": "V",
+        "data_type": "uint16",
+        "register_type": "holding",
+        "access": "RD",
+        "category": "ac",
+        "poll_group": "fast",
+        "scale": 10,
+        "description": "32068. Line voltage C-A, 0.1 V. Source: Huawei 'Solar Inverter Modbus Interface Definitions', cross-read against wlcrs/huawei-solar-lib."
+      },
+      {
+        "address": 32069,
+        "name": "voltage_l1_n",
+        "label": "Phase A voltage",
+        "unit": "V",
+        "data_type": "uint16",
+        "register_type": "holding",
+        "access": "RD",
+        "category": "ac",
+        "poll_group": "fast",
+        "scale": 10,
+        "description": "32069. Phase A voltage, 0.1 V (the only phase on a single-phase model). Source: Huawei 'Solar Inverter Modbus Interface Definitions', cross-read against wlcrs/huawei-solar-lib."
+      },
+      {
+        "address": 32070,
+        "name": "voltage_l2_n",
+        "label": "Phase B voltage",
+        "unit": "V",
+        "data_type": "uint16",
+        "register_type": "holding",
+        "access": "RD",
+        "category": "ac",
+        "poll_group": "fast",
+        "scale": 10,
+        "description": "32070. Phase B voltage, 0.1 V. Source: Huawei 'Solar Inverter Modbus Interface Definitions', cross-read against wlcrs/huawei-solar-lib."
+      },
+      {
+        "address": 32071,
+        "name": "voltage_l3_n",
+        "label": "Phase C voltage",
+        "unit": "V",
+        "data_type": "uint16",
+        "register_type": "holding",
+        "access": "RD",
+        "category": "ac",
+        "poll_group": "fast",
+        "scale": 10,
+        "description": "32071. Phase C voltage, 0.1 V. Source: Huawei 'Solar Inverter Modbus Interface Definitions', cross-read against wlcrs/huawei-solar-lib."
+      },
+      {
+        "address": 32072,
+        "name": "current_l1",
+        "label": "Phase A current",
+        "unit": "A",
+        "data_type": "int32",
+        "register_type": "holding",
+        "access": "RD",
+        "category": "ac",
+        "poll_group": "fast",
+        "scale": 1000,
+        "description": "32072. Phase A current, 0.001 A. Source: Huawei 'Solar Inverter Modbus Interface Definitions', cross-read against wlcrs/huawei-solar-lib."
+      },
+      {
+        "address": 32074,
+        "name": "current_l2",
+        "label": "Phase B current",
+        "unit": "A",
+        "data_type": "int32",
+        "register_type": "holding",
+        "access": "RD",
+        "category": "ac",
+        "poll_group": "fast",
+        "scale": 1000,
+        "description": "32074. Phase B current, 0.001 A. Source: Huawei 'Solar Inverter Modbus Interface Definitions', cross-read against wlcrs/huawei-solar-lib."
+      },
+      {
+        "address": 32076,
+        "name": "current_l3",
+        "label": "Phase C current",
+        "unit": "A",
+        "data_type": "int32",
+        "register_type": "holding",
+        "access": "RD",
+        "category": "ac",
+        "poll_group": "fast",
+        "scale": 1000,
+        "description": "32076. Phase C current, 0.001 A. Source: Huawei 'Solar Inverter Modbus Interface Definitions', cross-read against wlcrs/huawei-solar-lib."
+      },
+      {
+        "address": 32078,
+        "name": "power_active_peak_today",
+        "label": "Peak active power today",
+        "unit": "W",
+        "data_type": "int32",
+        "register_type": "holding",
+        "access": "RD",
+        "category": "ac",
+        "poll_group": "normal",
+        "description": "32078. Peak active power of the current day, W. Source: Huawei 'Solar Inverter Modbus Interface Definitions', cross-read against wlcrs/huawei-solar-lib."
+      },
+      {
+        "address": 32080,
+        "name": "power_active_total",
+        "label": "Active power",
+        "unit": "W",
+        "data_type": "int32",
+        "register_type": "holding",
+        "access": "RD",
+        "category": "ac",
+        "poll_group": "fast",
+        "description": "32080. Active power, W (+ = the inverter delivers AC, as every inverter in the gateway). Source: Huawei 'Solar Inverter Modbus Interface Definitions', cross-read against wlcrs/huawei-solar-lib."
+      },
+      {
+        "address": 32082,
+        "name": "power_reactive_total",
+        "label": "Reactive power",
+        "unit": "var",
+        "data_type": "int32",
+        "register_type": "holding",
+        "access": "RD",
+        "category": "ac",
+        "poll_group": "fast",
+        "description": "32082. Reactive power, var, sign as Huawei reports it. Source: Huawei 'Solar Inverter Modbus Interface Definitions', cross-read against wlcrs/huawei-solar-lib."
+      },
+      {
+        "address": 32084,
+        "name": "power_factor_total",
+        "label": "Power factor",
+        "unit": "",
+        "data_type": "int16",
+        "register_type": "holding",
+        "access": "RD",
+        "category": "ac",
+        "poll_group": "fast",
+        "scale": 1000,
+        "description": "32084. Power factor, 0.001. Source: Huawei 'Solar Inverter Modbus Interface Definitions', cross-read against wlcrs/huawei-solar-lib."
+      },
+      {
+        "address": 32085,
+        "name": "frequency",
+        "label": "Grid frequency",
+        "unit": "Hz",
+        "data_type": "uint16",
+        "register_type": "holding",
+        "access": "RD",
+        "category": "ac",
+        "poll_group": "fast",
+        "scale": 100,
+        "description": "32085. Grid frequency, 0.01 Hz. Source: Huawei 'Solar Inverter Modbus Interface Definitions', cross-read against wlcrs/huawei-solar-lib."
+      },
+      {
+        "address": 32086,
+        "name": "efficiency",
+        "label": "Efficiency",
+        "unit": "%",
+        "data_type": "uint16",
+        "register_type": "holding",
+        "access": "RD",
+        "category": "ac",
+        "poll_group": "normal",
+        "scale": 100,
+        "description": "32086. Inverter efficiency, 0.01 %. Source: Huawei 'Solar Inverter Modbus Interface Definitions', cross-read against wlcrs/huawei-solar-lib."
+      },
+      {
+        "address": 32087,
+        "name": "temperature_cabinet",
+        "label": "Internal temperature",
+        "unit": "°C",
+        "data_type": "int16",
+        "register_type": "holding",
+        "access": "RD",
+        "category": "temperature",
+        "poll_group": "normal",
+        "scale": 10,
+        "description": "32087. Internal temperature, 0.1 °C. Source: Huawei 'Solar Inverter Modbus Interface Definitions', cross-read against wlcrs/huawei-solar-lib."
+      },
+      {
+        "address": 32088,
+        "name": "insulation_resistance",
+        "label": "Insulation resistance",
+        "unit": "MΩ",
+        "data_type": "uint16",
+        "register_type": "holding",
+        "access": "RD",
+        "category": "status",
+        "poll_group": "normal",
+        "scale": 1000,
+        "description": "32088. Insulation resistance, 0.001 MOhm. Source: Huawei 'Solar Inverter Modbus Interface Definitions', cross-read against wlcrs/huawei-solar-lib."
+      },
+      {
+        "address": 32089,
+        "name": "vendor_state",
+        "label": "Device status code",
+        "unit": "",
+        "data_type": "uint16",
+        "register_type": "holding",
+        "access": "RD",
+        "category": "status",
+        "poll_group": "normal",
+        "description": "32089. Device status code (0x0200 on-grid, 0x0300 shutdown: fault, …); decoded to words in status_text. Source: Huawei 'Solar Inverter Modbus Interface Definitions', cross-read against wlcrs/huawei-solar-lib."
+      },
+      {
+        "address": 32090,
+        "name": "fault_code",
+        "label": "Fault code",
+        "unit": "",
+        "data_type": "uint16",
+        "register_type": "holding",
+        "access": "RD",
+        "category": "status",
+        "poll_group": "normal",
+        "description": "32090. Fault code, 0 = none. Source: Huawei 'Solar Inverter Modbus Interface Definitions', cross-read against wlcrs/huawei-solar-lib."
+      },
+      {
+        "address": 32091,
+        "name": "startup_time",
+        "label": "Startup time",
+        "unit": "",
+        "data_type": "uint32",
+        "register_type": "holding",
+        "access": "RD",
+        "category": "status",
+        "poll_group": "normal",
+        "description": "32091. Last startup time, epoch seconds (inverter local time). Source: Huawei 'Solar Inverter Modbus Interface Definitions', cross-read against wlcrs/huawei-solar-lib.",
+        "entity_category": "diagnostic"
+      },
+      {
+        "address": 32093,
+        "name": "shutdown_time",
+        "label": "Shutdown time",
+        "unit": "",
+        "data_type": "uint32",
+        "register_type": "holding",
+        "access": "RD",
+        "category": "status",
+        "poll_group": "normal",
+        "description": "32093. Last shutdown time, epoch seconds (inverter local time). Source: Huawei 'Solar Inverter Modbus Interface Definitions', cross-read against wlcrs/huawei-solar-lib.",
+        "entity_category": "diagnostic"
+      },
+      {
+        "address": 32106,
+        "name": "energy_active_generated",
+        "label": "Total yield",
+        "unit": "Wh",
+        "data_type": "uint32",
+        "register_type": "holding",
+        "access": "RD",
+        "category": "energy",
+        "poll_group": "energy",
+        "scale": 0.1,
+        "description": "32106. Accumulated energy yield, 0.01 kWh, served in Wh (scale 0.1 = raw x 10). Source: Huawei 'Solar Inverter Modbus Interface Definitions', cross-read against wlcrs/huawei-solar-lib.",
+        "monotonic": true
+      },
+      {
+        "address": 32114,
+        "name": "energy_today",
+        "label": "Daily yield",
+        "unit": "Wh",
+        "data_type": "uint32",
+        "register_type": "holding",
+        "access": "RD",
+        "category": "energy",
+        "poll_group": "energy",
+        "scale": 0.1,
+        "description": "32114. Energy yield of the current day, 0.01 kWh, served in Wh. Source: Huawei 'Solar Inverter Modbus Interface Definitions', cross-read against wlcrs/huawei-solar-lib.",
+        "daily": true
+      }
+    ],
+    "calculated": [
+      {
+        "name": "status_text",
+        "label": "Device status",
+        "expr": "vendor_state",
+        "poll_group": "normal",
+        "topic": "status/text",
+        "influxdb": false,
+        "category": "status",
+        "enum": {
+          "0": "Standby: initializing",
+          "1": "Standby: detecting insulation resistance",
+          "2": "Standby: detecting irradiation",
+          "3": "Standby: grid detecting",
+          "256": "Starting",
+          "512": "On-grid",
+          "513": "Grid connection: power limited",
+          "514": "Grid connection: self-derating",
+          "515": "Off-grid running",
+          "768": "Shutdown: fault",
+          "769": "Shutdown: command",
+          "770": "Shutdown: OVGR",
+          "771": "Shutdown: communication disconnected",
+          "772": "Shutdown: power limited",
+          "773": "Shutdown: manual startup required",
+          "774": "Shutdown: DC switches disconnected",
+          "775": "Shutdown: rapid cutoff",
+          "776": "Shutdown: input underpowered",
+          "1025": "Grid scheduling: cosphi-P curve",
+          "1026": "Grid scheduling: Q-U curve",
+          "1027": "Grid scheduling: PF-U curve",
+          "1028": "Grid scheduling: dry contact",
+          "1029": "Grid scheduling: Q-P curve",
+          "1280": "Spot-check ready",
+          "1281": "Spot-checking",
+          "1536": "Inspecting",
+          "1792": "AFCI self check",
+          "2048": "I-V scanning",
+          "2304": "DC input detection",
+          "2560": "Running: off-grid charging",
+          "40960": "Standby: no irradiation"
+        }
+      },
+      {
+        "name": "status_alarm",
+        "label": "Alarm",
+        "expr": "1 if (vendor_state == 768 or fault_code > 0) else 0",
+        "poll_group": "normal",
+        "topic": "status/alarm",
+        "measurement": "status",
+        "category": "status"
+      },
+      {
+        "name": "status_active",
+        "label": "Feeding the grid",
+        "expr": "1 if (vendor_state == 512 or vendor_state == 513 or vendor_state == 514 or vendor_state == 515) else 0",
+        "poll_group": "normal",
+        "topic": "status/active",
+        "measurement": "status",
+        "category": "status"
+      }
+    ]
+  }
+}

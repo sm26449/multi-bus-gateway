@@ -1,5 +1,5 @@
 # Multi-Bus Gateway — multi-protocol Modbus/HTTP/MQTT acquisition gateway.
-# Copyright (C) 2024-2026 Stefan Maldaianu <sm26449@diysolar.ro>
+# Copyright (C) 2024-2026 Stefan Maldaianu <stefan@multibus.dev>
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU Affero General Public License as published by
@@ -561,6 +561,29 @@ class HttpClient:
         status = "ok" if (self.connected and not stale) else ("down" if stale else "degraded")
         return {"status": status, "stale": stale, "staleness_age_s": round(age, 1)}
 
+    def decode_document(self, doc: Any) -> List[Dict[str, Any]]:
+        """Each register as one fetch decodes it, through the shared
+        correction pipeline the poller uses: {name, label, unit, path, group,
+        raw (what the path held), value (None: not resolved, not a number, a
+        declared sentinel)}. What the read preview shows (ADR-0031 §5)."""
+        out = []
+        for reg in self.registers:
+            path = getattr(reg, 'json_path', '') or ''
+            raw = resolve_json_path(doc, path) if path else None
+            num = _coerce_numeric(raw)
+            val = None
+            if num is not None:
+                try:
+                    val = apply_corrections(num, reg)
+                except Exception:  # noqa: BLE001 — a decode bug never fails the test read
+                    val = None
+            out.append({'name': reg.name, 'label': getattr(reg, 'label', '') or reg.name,
+                        'unit': getattr(reg, 'unit', '') or '', 'path': path,
+                        'group': getattr(reg, 'poll_group', '') or '',
+                        'raw': raw if isinstance(raw, (int, float, str, bool)) or raw is None else str(raw)[:80],
+                        'value': val})
+        return out
+
     def test_read(self) -> Dict:
         """One-shot fetch for the device 'Test connection' button.
 
@@ -580,7 +603,8 @@ class HttpClient:
                 if hits == 0 and self.registers and attempt + 1 < attempts:
                     time.sleep(0.6)   # likely contention — give the source a beat
                     continue
-                return {"ok": True, "message": f"HTTP OK — {hits}/{len(self.registers)} paths resolved"}
+                return {"ok": True, "message": f"HTTP OK — {hits}/{len(self.registers)} paths resolved",
+                        "values": self.decode_document(doc)}
             except Exception as e:  # noqa: BLE001
                 last_err = e
                 if attempt + 1 < attempts:

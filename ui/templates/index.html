@@ -1,6 +1,6 @@
 <!DOCTYPE html>
 <!-- Multi-Bus Gateway — multi-protocol Modbus/HTTP/MQTT acquisition gateway.
-     Copyright (C) 2024-2026 Stefan Maldaianu <sm26449@diysolar.ro>
+     Copyright (C) 2024-2026 Stefan Maldaianu <stefan@multibus.dev>
      SPDX-License-Identifier: AGPL-3.0-or-later -->
 <html lang="en">
 <head>
@@ -193,7 +193,7 @@
                         <div class="panel-header" style="flex-wrap:wrap;gap:6px;">
                             <h3 data-i18n="mon.availableValues">Available Values</h3>
                             <select id="monViewDevice" class="input input-sm view-device-sel" aria-label="Device" data-i18n-aria="a11y.device" data-i18n-title="devices.selector" title="Device" style="display:none;"></select>
-                            <input type="text" id="monitorSearch" class="input input-sm" data-i18n-placeholder="ph.search" placeholder="Search...">
+                            <input type="text" id="monitorSearch" class="input input-sm" data-i18n-placeholder="ph.search" placeholder="Search..." aria-label="Search…" data-i18n-aria="ph.search">
                         </div>
                         <div class="monitor-categories" id="monitorCategories" tabindex="0">
                             <!-- Populated by JavaScript -->
@@ -266,7 +266,7 @@
                     <div class="monitor-panel monitor-sidebar">
                         <div class="panel-header">
                             <h3 data-i18n="history.registers">Measurements</h3>
-                            <input type="text" id="histSearch" class="input input-sm" placeholder="Search…" data-i18n-placeholder="common.search">
+                            <input type="text" id="histSearch" class="input input-sm" placeholder="Search…" data-i18n-placeholder="common.search" aria-label="Search…" data-i18n-aria="common.search">
                         </div>
                         <div class="monitor-categories" id="histRegList" tabindex="0"></div>
                         <div class="panel-hint"><i aria-hidden="true" class="bi bi-info-circle"></i> <span data-i18n="history.clickHint">Click to add / remove a measurement</span></div>
@@ -421,25 +421,20 @@
                         <h2><button class="btn btn-ghost btn-sm" data-action="closeDeviceRegisters" aria-label="Back" data-i18n-aria="common.back"><i aria-hidden="true" class="bi bi-arrow-left"></i></button>
                             <i aria-hidden="true" class="bi bi-list-check"></i> <span id="deviceRegistersTitle" data-i18n="registers.configured">Measurements</span></h2>
                         <div class="header-actions">
-                            <!-- import / export / raw / write live behind one menu: five
-                                 rarely-used buttons in a row taught nothing -->
-                            <div class="reg-menu">
-                                <button class="btn btn-ghost btn-sm" id="regMenuBtn" aria-haspopup="menu" aria-expanded="false" aria-controls="regMenu" data-action="toggleRegMenu">
-                                    <i aria-hidden="true" class="bi bi-three-dots"></i> <span data-i18n="registers.more">More</span></button>
-                                <div id="regMenu" role="menu" hidden>
-                                    <button role="menuitem" class="btn btn-ghost btn-sm" data-action="_regMenuPick" data-args='["openCsvImport"]' data-i18n-title="tip.importCsv" title="Import a register map from a CSV (vendor/community list) and assign it to this device">
-                                        <i aria-hidden="true" class="bi bi-filetype-csv"></i> <span data-i18n="registers.importCsv">Import CSV</span></button>
-                                    <button role="menuitem" class="btn btn-ghost btn-sm" data-action="_regMenuPick" data-args='["uploadDeviceMap"]' data-i18n-title="tip.upload" title="Upload a measurement map (device template) and assign it to this device">
-                                        <i aria-hidden="true" class="bi bi-upload"></i> <span data-i18n="registers.uploadMap">Upload map</span></button>
-                                    <button role="menuitem" class="btn btn-ghost btn-sm" data-action="_regMenuPick" data-args='["downloadRegisterMap"]' data-i18n-title="tip.downloadMap" title="Download this device's full measurement map (JSON)">
-                                        <i aria-hidden="true" class="bi bi-download"></i> <span data-i18n="registers.downloadMap">Download map</span></button>
-                                    <button role="menuitem" class="btn btn-ghost btn-sm" id="rawConfigBtn">
-                                        <i aria-hidden="true" class="bi bi-code-slash"></i> <span data-i18n="config.rawJson">Raw JSON</span></button>
-                                    <button data-live role="menuitem" class="btn btn-ghost btn-sm" id="writeRegBtn" data-action="_regMenuPick" data-args='["openWriteModal"]' data-i18n-title="tip.write" title="Write a value to this device (Modbus FC5/FC6/FC16)">
-                                        <i aria-hidden="true" class="bi bi-pencil-square"></i> <span data-i18n="write.button">Write</span></button>
-                                </div>
+                            <!-- the map's tools, in its editor (ADR-0032 §4): no menu inside
+                                 a tab; Download map is also the ⋯ menu's (Data), for every
+                                 role; a value is written from ⋯ → Write a value… -->
+                            <div class="reg-tools ddv-edit-only" role="group" aria-label="Map" data-i18n-aria="registers.mapTools">
+                                <button class="btn btn-ghost btn-sm ddv-edit-only" data-admin data-action="openCsvImport" data-i18n-title="tip.importCsv" title="Import a register map from a CSV (vendor/community list) and assign it to this device">
+                                    <i aria-hidden="true" class="bi bi-filetype-csv"></i> <span data-i18n="registers.importCsv">Import CSV</span></button>
+                                <button class="btn btn-ghost btn-sm ddv-edit-only" data-admin data-action="uploadDeviceMap" data-i18n-title="tip.upload" title="Upload a measurement map (device template) and assign it to this device">
+                                    <i aria-hidden="true" class="bi bi-upload"></i> <span data-i18n="registers.uploadMap">Upload map</span></button>
+                                <button class="btn btn-ghost btn-sm ddv-edit-only" data-action="downloadRegisterMap" data-i18n-title="tip.downloadMap" title="Download this device's full measurement map (JSON)">
+                                    <i aria-hidden="true" class="bi bi-download"></i> <span data-i18n="registers.downloadMap">Download map</span></button>
+                                <button class="btn btn-ghost btn-sm ddv-edit-only" data-admin id="rawConfigBtn">
+                                    <i aria-hidden="true" class="bi bi-code-slash"></i> <span data-i18n="config.rawJson">Raw JSON</span></button>
                             </div>
-                            <button class="btn btn-primary btn-sm" id="saveRegistersBtn">
+                            <button class="btn btn-primary btn-sm ddv-edit-only" data-admin id="saveRegistersBtn">
                                 <i aria-hidden="true" class="bi bi-check-lg"></i> <span data-i18n="common.save">Save</span>
                             </button>
                         </div>
@@ -452,7 +447,7 @@
                     <!-- Selected (what is read) first; the whole catalog second -->
                     <div class="config-main-tabs" id="deviceRegTabs">
                         <button class="config-main-tab active" data-regtab="selected"><i aria-hidden="true" class="bi bi-list-check"></i> <span data-i18n="registers.selectedTab">Selected</span> <span class="count" id="regTabSelCount"></span></button>
-                        <button class="config-main-tab" data-regtab="available"><i aria-hidden="true" class="bi bi-list-ul"></i> <span data-i18n="registers.available">All available</span> <span class="count" id="regTabAllCount"></span></button>
+                        <button class="config-main-tab ddv-edit-only" data-regtab="available"><i aria-hidden="true" class="bi bi-list-ul"></i> <span data-i18n="registers.available">All available</span> <span class="count" id="regTabAllCount"></span></button>
                     </div>
 
                     <!-- All available: the full catalog for this source, ticked in place -->
@@ -490,7 +485,7 @@
                     <!-- Selected: the registers actually polled + routed -->
                     <div class="reg-pane" data-regpane="selected">
                         <div class="config-toolbar">
-                            <input type="text" id="configSearch" class="input" data-i18n-placeholder="ph.searchSelected" placeholder="Search selected...">
+                            <input type="text" id="configSearch" class="input" data-i18n-placeholder="ph.searchSelected" placeholder="Search selected..." aria-label="Search selected..." data-i18n-aria="ph.searchSelected">
                             <div class="config-tabs" id="configTabs"></div>
                         </div>
                         <div class="selected-registers-list" id="selectedRegistersList"></div>
@@ -602,6 +597,7 @@
                     <button class="config-main-tab active" data-cfgtab="mqtt"><i aria-hidden="true" class="bi bi-broadcast"></i> MQTT</button>
                     <button class="config-main-tab" data-cfgtab="influxdb"><i aria-hidden="true" class="bi bi-database"></i> InfluxDB</button>
                     <button class="config-main-tab" data-cfgtab="opcua"><i aria-hidden="true" class="bi bi-diagram-3"></i> OPC UA</button>
+                    <button class="config-main-tab" data-cfgtab="modbus"><i aria-hidden="true" class="bi bi-hdd-network"></i> Modbus</button>
                     <button class="config-main-tab" data-cfgtab="backup"><i aria-hidden="true" class="bi bi-archive"></i> <span data-i18n="backup.title">Backup &amp; Restore</span></button>
                     <button class="config-main-tab" data-cfgtab="security"><i aria-hidden="true" class="bi bi-shield-lock"></i> <span data-i18n="security.title">Security</span></button>
                     <button class="config-main-tab" data-cfgtab="alerts"><i aria-hidden="true" class="bi bi-bell"></i> <span data-i18n="alerts.title">Alerts</span></button>
@@ -668,6 +664,35 @@
                                     <button data-admin class="btn btn-primary btn-sm" data-action="saveGeneralConfig" data-with-el>
                                         <i aria-hidden="true" class="bi bi-check-lg"></i> <span data-i18n="common.save">Save</span></button>
                                     <span class="save-feedback" id="generalSaveFeedback"></span>
+                                </div>
+                            </div>
+                        </div>
+                        <!-- How new devices are named (ADR-0026) -->
+                        <div class="settings-card devices-card">
+                            <div class="settings-card-header">
+                                <h3><i aria-hidden="true" class="bi bi-fingerprint"></i> <span data-i18n="identity.title">Gateway identity</span></h3>
+                            </div>
+                            <div class="settings-card-body">
+                                <div class="form-row">
+                                    <div class="form-group flex-2">
+                                        <label class="form-label" for="cfgGatewayId" data-i18n="identity.gatewayId">Gateway id</label>
+                                        <input type="text" id="cfgGatewayId" class="input" placeholder="mbg-a1b2c3" autocomplete="off" aria-describedby="cfgGatewayIdHint">
+                                        <span class="field-hint" id="cfgGatewayIdHint" data-i18n="identity.gatewayIdHint">Lowercase letters, digits and - (2-32). It names devices created afterwards — topic, bucket and Home Assistant id. A device that exists keeps all three.</span>
+                                    </div>
+                                    <div class="form-group flex-2">
+                                        <label class="form-label" for="cfgIdentityScope" data-i18n="identity.scope">How new devices are named</label>
+                                        <select id="cfgIdentityScope" class="input" aria-describedby="cfgIdentityScopeHint">
+                                            <option value="gateway" data-i18n="identity.scopeGateway">Per gateway — mbg/&lt;gateway&gt;/devices/&lt;device&gt;</option>
+                                            <option value="legacy" data-i18n="identity.scopeLegacy">As before — mbg/devices/&lt;device&gt;</option>
+                                        </select>
+                                        <span class="field-hint" id="cfgIdentityScopeHint" data-i18n="identity.scopeHint">Changing it affects only devices created afterwards: existing devices keep their topics, buckets and Home Assistant entities.</span>
+                                    </div>
+                                </div>
+                                <p class="field-hint" id="cfgIdentityExample" role="status"><span data-i18n="identity.exampleLead">A device created now — topic and bucket:</span> <code id="cfgIdentityExTopic"></code> · <code id="cfgIdentityExBucket"></code></p>
+                                <div class="header-actions" style="gap:8px;margin-top:6px;">
+                                    <button data-admin class="btn btn-primary btn-sm" data-action="saveIdentityConfig" data-with-el>
+                                        <i aria-hidden="true" class="bi bi-check-lg"></i> <span data-i18n="common.save">Save</span></button>
+                                    <span class="save-feedback" id="identitySaveFeedback"></span>
                                 </div>
                             </div>
                         </div>
@@ -760,7 +785,7 @@
                                     <div class="form-group flex-2">
                                         <label class="form-label" data-i18n="mqtt.defaultTopic" for="cfgMqttDefaultTopic">Default topic prefix for new devices</label>
                                         <input type="text" id="cfgMqttDefaultTopic" class="input" placeholder="meters/{device}">
-                                        <span class="field-hint" data-i18n="mqtt.defaultTopicHint">{device} = the device id. Each device's own prefix is set in the device.</span>
+                                        <span class="field-hint" data-i18n="mqtt.defaultTopicHint">{device} = the device id, {gateway} = the gateway id. Empty: the default of how new devices are named (Settings → General). Each device's own prefix is set in the device.</span>
                                     </div>
                                     <div class="form-group">
                                         <label class="form-label" data-i18n="mqtt.publishMode" for="cfgMqttPublishMode">Publish Mode</label>
@@ -790,9 +815,9 @@
                                     <h4 data-i18n="ha.discovery">Home Assistant Discovery</h4>
                                     <div class="form-row">
                                         <div class="form-group flex-2">
-                                            <label class="form-label" data-i18n="mqtt.ha.prefix">Discovery Prefix (broker-wide)</label>
+                                            <label class="form-label" for="cfgMqttHaPrefix" data-i18n="mqtt.ha.prefix">Discovery Prefix (broker-wide)</label>
                                             <input type="text" id="cfgMqttHaPrefix" class="input" placeholder="homeassistant">
-                                            <span class="field-hint" data-i18n="mqtt.ha.perDeviceHint">Enable discovery per device in the device's Data routing.</span>
+                                            <span class="field-hint" data-i18n="mqtt.ha.perDeviceHint">Per-device discovery is enabled on each device (its ⋯ → Outputs…).</span>
                                         </div>
                                     </div>
                                     <!-- kept hidden: device #1's discovery flag + name (edited in its device detail) -->
@@ -868,7 +893,7 @@
                                     <div class="form-group">
                                         <label class="form-label" data-i18n="influx.defaultBucket" for="cfgInfluxDefaultBucket">Default bucket for new devices</label>
                                         <input type="text" id="cfgInfluxDefaultBucket" class="input" placeholder="{device}">
-                                        <span class="field-hint" data-i18n="influx.defaultBucketHint">{device} = the device id. Each device's own bucket is set in the device.</span>
+                                        <span class="field-hint" data-i18n="influx.defaultBucketHint">{device} = the device id, {gateway} = the gateway id. Empty: the default of how new devices are named (Settings → General). Each device's own bucket is set in the device.</span>
                                     </div>
                                 </div>
                                 <!-- device #1's bucket (janitza) is edited in its device detail -->
@@ -884,6 +909,13 @@
                                             <option value="changed" data-i18n="mqtt.onChange">On Change</option>
                                             <option value="all" data-i18n="lbl.all">All</option>
                                         </select>
+                                    </div>
+                                </div>
+                                <div class="form-row">
+                                    <div class="form-group">
+                                        <label class="form-label" data-i18n="influx.heartbeat" for="cfgInfluxHeartbeat">Rewrite an unchanged value every (s)</label>
+                                        <input type="number" id="cfgInfluxHeartbeat" class="input" min="0" max="86400" step="1" aria-describedby="cfgInfluxHeartbeatHint">
+                                        <span class="field-hint" id="cfgInfluxHeartbeatHint" data-i18n="influx.heartbeatHint">In “On change” mode, a value that has not changed is written again once this long has passed, so charts and “last value” panels always have a recent point. Shorter means more points, longer means emptier panels. 0 = off. A blank field keeps the stored value.</span>
                                     </div>
                                 </div>
                             </div>
@@ -903,6 +935,33 @@
                             <div class="settings-card-body">
                                 <p class="modules-note"><i aria-hidden="true" class="bi bi-info-circle"></i> <span data-i18n="modules.note">Modules are separate services installed beside this gateway, each from its own image. They are not part of the open-source Multi-Bus Gateway. You sign in to them with this gateway's login.</span></p>
                                 <div id="modulesList" class="modules-list"></div>
+                            </div>
+                        </div>
+                </div>
+                <!-- ── Modbus tab: gateway-wide Modbus settings (a device's connection lives on the device) ── -->
+                <div class="config-tab-content cfg-panel" data-cfgpanel="modbus" style="display:none;">
+                        <div class="settings-card">
+                            <div class="settings-card-header">
+                                <h3><i aria-hidden="true" class="bi bi-eye"></i> <span data-i18n="preview.budget.title">Read preview budget</span></h3>
+                            </div>
+                            <div class="settings-card-body">
+                                <p class="field-hint" style="margin-top:0;" data-i18n="preview.budget.intro">A preview reads a device before it is saved (Add device → Check) or on its page (Preview): reads only (function codes 3 and 4), through the bus's shared connection. These limits keep it from loading a bus that other devices use.</p>
+                                <div class="form-row">
+                                    <div class="form-group">
+                                        <label class="form-label" for="cfgPreviewMaxRequests" data-i18n="preview.budget.requests">Reads per preview</label>
+                                        <input type="number" id="cfgPreviewMaxRequests" class="input" min="1" max="20" step="1" placeholder="4" aria-describedby="cfgPreviewMaxRequestsHint">
+                                        <span class="field-hint" id="cfgPreviewMaxRequestsHint" data-i18n="preview.budget.requestsHint">At most this many read requests per preview, 1–20. Default 4.</span>
+                                    </div>
+                                    <div class="form-group">
+                                        <label class="form-label" for="cfgPreviewListen" data-i18n="preview.budget.listen">Listen for (s)</label>
+                                        <input type="number" id="cfgPreviewListen" class="input" min="1" max="60" step="1" placeholder="10" aria-describedby="cfgPreviewListenHint">
+                                        <span class="field-hint" id="cfgPreviewListenHint" data-i18n="preview.budget.listenHint">On a bus another master polls, the preview only listens, never transmits: for this many seconds, 1–60. Default 10.</span>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="settings-card-footer">
+                                <span class="save-feedback" id="previewBudgetFeedback" role="status" aria-live="polite"></span>
+                                <button class="btn btn-primary btn-sm" data-admin data-action="savePreviewBudget"><i aria-hidden="true" class="bi bi-check-lg"></i> <span data-i18n="common.save">Save</span></button>
                             </div>
                         </div>
                 </div>
@@ -978,9 +1037,9 @@
                       <div class="st-card sec-form">
                         <p class="field-hint" data-i18n="security.intro" style="margin-bottom:12px;">Optional, off by default (this appliance is meant for a trusted LAN). Turn these on when it must be reachable from a wider network.</p>
                         <div class="settings-subsection">
-                                    <h4 data-i18n="security.allowlist.title">IP allowlist</h4>
+                                    <h4 id="cfgAllowlistTitle" data-i18n="security.allowlist.title">IP allowlist</h4>
                                     <p class="field-hint" data-i18n="security.allowlist.hint">Only these IPs/subnets may reach the UI/API. One per line (e.g. 192.168.1.0/24). Empty = open. Loopback is always allowed.</p>
-                                    <textarea id="cfgAllowlist" class="input" rows="3" style="font-family:monospace;" placeholder="192.168.1.0/24&#10;10.0.0.5"></textarea>
+                                    <textarea id="cfgAllowlist" aria-labelledby="cfgAllowlistTitle" class="input" rows="3" style="font-family:monospace;" placeholder="192.168.1.0/24&#10;10.0.0.5"></textarea>
                                     <p class="field-hint" id="allowlistYourIp" style="margin-top:4px;"></p>
                                 </div>
 
@@ -1006,9 +1065,9 @@
                                 </div>
 
                                 <div class="settings-subsection">
-                                    <h4 data-i18n="security.canonical.title">Canonical address</h4>
+                                    <h4 id="cfgCanonicalTitle" data-i18n="security.canonical.title">Canonical address</h4>
                                     <p class="field-hint" data-i18n-html="security.canonical.hint">When set, the browser is steered here by default (so TLS + passkeys are used). The local IP stays reachable — append <code>?local</code> to the address to bypass the redirect (e.g. if DNS/proxy is down). Empty = no redirect.</p>
-                                    <input type="text" id="cfgCanonicalUrl" class="input" placeholder="https://gateway.example.lan">
+                                    <input type="text" id="cfgCanonicalUrl" aria-labelledby="cfgCanonicalTitle" class="input" placeholder="https://gateway.example.lan">
                                 </div>
 
                                 <div class="settings-subsection">
@@ -1219,6 +1278,13 @@
                                     <label class="checkbox-label"><input type="checkbox" id="cfgAlertSigBuffer"> <span data-i18n="alerts.sigBuffer">InfluxDB buffer backlog</span></label>
                                     <label class="checkbox-label"><input type="checkbox" id="cfgAlertSigAlarm"> <span data-i18n="alerts.sigAlarm">Device alarms (declared by its template)</span></label>
                                     <label class="checkbox-label"><input type="checkbox" id="cfgAlertSigThreshold"> <span data-i18n="alerts.sigThreshold">Value thresholds (warning / danger)</span></label>
+                                    <label class="checkbox-label"><input type="checkbox" id="cfgAlertSigBridge"> <span data-i18n="alerts.sigBridge">Serial bus health (line errors, silent bus, reconnects)</span></label>
+                                </div>
+                                <div class="form-row" style="margin-top:8px;" role="group" aria-labelledby="cfgAlertBridgeLead">
+                                    <p class="field-hint" id="cfgAlertBridgeLead" data-i18n="alerts.bridgeLead" style="flex-basis:100%;margin:0;">Limits for every bus on our serial bridges; a bridge or one of its buses may set its own (alerts: in config.yaml).</p>
+                                    <div class="form-group"><label class="form-label" data-i18n="alerts.bridgeLine" for="cfgAlertBridgeLine">Line errors per minute</label><input type="number" id="cfgAlertBridgeLine" class="input" min="0.1" step="0.1" placeholder="10"></div>
+                                    <div class="form-group"><label class="form-label" data-i18n="alerts.bridgeSilent" for="cfgAlertBridgeSilent">Bus silent for (s)</label><input type="number" id="cfgAlertBridgeSilent" class="input" min="1" placeholder="120"></div>
+                                    <div class="form-group"><label class="form-label" data-i18n="alerts.bridgeReconnects" for="cfgAlertBridgeReconnects">Reconnects per 10 min</label><input type="number" id="cfgAlertBridgeReconnects" class="input" min="1" placeholder="6"></div>
                                 </div>
                                 <div class="form-row" style="margin-top:8px;">
                                     <div class="form-group"><label class="form-label" data-i18n="alerts.minInterval" for="cfgAlertMinInterval">Min interval (s)</label><input type="number" id="cfgAlertMinInterval" class="input" min="1" placeholder="300"></div>
@@ -1585,6 +1651,37 @@
         </div>
     </div>
 
+    <!-- Edit device (ADR-0031 §4): one modal in sections — Model ·
+         Connection · Polling · Identity · Outputs — and one Save. Its frame is
+         drawn by ui/js/device-shell.js, its sections by app-device-edit.js -->
+    <div class="modal dev-edit-modal" id="devEditModal">
+        <div class="modal-content dev-shell" id="devEditContent"></div>
+    </div>
+
+    <!-- Add Device (ADR-0031 §2): one modal in steps — What is it ·
+         Connection · Check · Name & save. Its frame is drawn by
+         ui/js/device-shell.js (steps mode), its steps by app-add-device.js
+         over adddev-model.js; every way in opens it (openDeviceWizard) -->
+    <div class="modal add-dev-modal" id="addDeviceModal">
+        <div class="modal-content dev-shell" id="addDeviceContent"></div>
+    </div>
+
+    <!-- The device page's read preview (ADR-0031 §3/§4, app-preview.js):
+         reads only, its answer drawn as Add's Check step draws it -->
+    <div class="modal" id="previewModal" data-no-dirty-guard>
+        <div class="modal-content modal-lg">
+            <div class="modal-header">
+                <h3 id="previewModalTitle" tabindex="-1"><i aria-hidden="true" class="bi bi-eye"></i> <span data-i18n="pv.title">Preview</span></h3>
+                <button class="modal-close" aria-label="Close" data-i18n-aria="common.close" data-action="closeModal" data-args='["previewModal"]'>&times;</button>
+            </div>
+            <div class="modal-body"><div id="previewModalBody"></div></div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary btn-sm" id="previewModalAgain"><i aria-hidden="true" class="bi bi-arrow-repeat"></i> <span data-i18n="pv.again">Run again</span></button>
+                <button type="button" class="btn btn-primary btn-sm" data-action="closeModal" data-args='["previewModal"]'><span data-i18n="common.close">Close</span></button>
+            </div>
+        </div>
+    </div>
+
     <!-- The API key, asked from inside a request (app-dialogs.js _askApiKey) -->
     <div class="modal" id="appKeyDialog">
         <div class="modal-content app-dialog">
@@ -1648,7 +1745,7 @@
                 <div class="form-group">
                     <div class="form-label"><label for="csvText"><span id="csvTextLabel">CSV</span></label>
                         <a href="#" id="csvExampleLink" data-action="downloadCsvExample" style="font-weight:400;font-size:12px;margin-left:8px;" data-i18n="csv.example">download example</a>
-                        · <label for="csvFile" id="csvPickLabel" style="display:inline;cursor:pointer;color:var(--primary,#2563eb);font-size:12px;" data-i18n="csv.pickFile">open a .csv file</label>
+                        · <label for="csvFile" id="csvPickLabel" style="display:inline;cursor:pointer;color:var(--accent-text);font-size:12px;" data-i18n="csv.pickFile">open a .csv file</label>
                         <input type="file" id="csvFile" accept=".csv,text/csv" style="display:none;">
                     </div>
                     <textarea id="csvText" class="input" rows="8" style="font-family:monospace;font-size:12px;" placeholder="address,name,label,unit,type,scale&#10;0x0000,V_L1,Voltage L1-N,V,float,1"></textarea>
@@ -1687,6 +1784,7 @@
                 <button class="modal-close" aria-label="Close" data-i18n-aria="common.close" data-action="closeModal" data-args='["writeModal"]'>&times;</button>
             </div>
             <div class="modal-body">
+                <p class="write-device" id="writeModalDevice"></p>
                 <div class="settings-card" style="border-left:3px solid #c0392b;padding:8px 12px;margin-bottom:12px;color:var(--danger-text,#c0392b);font-size:12.5px;">
                     <i aria-hidden="true" class="bi bi-exclamation-triangle"></i> <span data-i18n="write.warn">This writes to real hardware and cannot be undone. Double-check the address and value.</span>
                 </div>
@@ -2008,7 +2106,7 @@
             </div>
             <div class="modal-body">
                 <p class="hint-text" data-i18n="config.rawHint">Edit the JSON configuration directly. Be careful with syntax.</p>
-                <textarea id="rawConfigEditor" class="code-editor" spellcheck="false"></textarea>
+                <textarea id="rawConfigEditor" class="code-editor" spellcheck="false" aria-label="Raw Configuration" data-i18n-aria="config.rawTitle" aria-describedby="editorStatus"></textarea>
                 <div class="editor-status" id="editorStatus"></div>
             </div>
             <div class="modal-footer">
@@ -2129,11 +2227,28 @@
                 <button class="modal-close" aria-label="Close" data-i18n-aria="common.close" data-action="dismissFirstRun">&times;</button>
             </div>
             <div class="modal-body">
-                <p data-i18n="firstrun.body">No data yet. Open your device in Devices, set its address (IP / port) in its Connection tab, then Save.</p>
+                <p data-i18n="firstrun.body">No data yet. Add your first device (Devices → Add Device); if it is already there, set its address from its ⋯ → Edit connection…, then Save.</p>
             </div>
             <div class="modal-footer">
                 <button class="btn btn-ghost" data-action="dismissFirstRun" data-i18n="firstrun.later">Later</button>
                 <button class="btn btn-primary" data-action="firstRunOpenSettings" data-i18n="firstrun.openSettings">Set up device</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Deleted devices: restore… (ADR-0032 §8; app-restore.js) -->
+    <div class="modal" id="restoreModal">
+        <div class="modal-content modal-lg">
+            <div class="modal-header">
+                <h3 id="restoreModalTitle"><i aria-hidden="true" class="bi bi-arrow-counterclockwise"></i> <span data-i18n="devices.restorable">Deleted devices (restorable)</span></h3>
+                <button class="modal-close" aria-label="Close" data-i18n-aria="common.close" data-action="closeModal" data-args='["restoreModal"]'>&times;</button>
+            </div>
+            <div class="modal-body">
+                <p class="field-hint" data-i18n="restore.lead">Settings kept when these were deleted. Restore rebuilds the device as it was, except that it comes back write-locked with its command bindings off; one that cannot come back says why. Forget drops them for good.</p>
+                <div id="restoreList"></div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-ghost" data-action="closeModal" data-args='["restoreModal"]' data-i18n="common.close">Close</button>
             </div>
         </div>
     </div>
@@ -2180,30 +2295,6 @@
                     <i aria-hidden="true" class="bi bi-arrow-left"></i> <span data-i18n="common.back">Back</span></button>
                 <button class="btn btn-primary btn-sm" id="plantWizNext" data-action="plantWizardNext">
                     <span id="plantWizNextLabel" data-i18n="common.next">Next</span> <i aria-hidden="true" class="bi bi-arrow-right"></i></button>
-            </div>
-        </div>
-    </div>
-
-    <div class="modal" id="deviceWizardModal">
-        <div class="modal-content modal-lg">
-            <div class="modal-header">
-                <h3><i aria-hidden="true" class="bi bi-cpu"></i> <span id="devWizTitle" data-i18n="devices.wizard.titleAdd">Add Device</span></h3>
-                <button class="modal-close" aria-label="Close" data-i18n-aria="common.close" data-action="closeModal" data-args='["deviceWizardModal"]'>&times;</button>
-            </div>
-            <div class="modal-body">
-                <div class="wizard-steps" id="devWizSteps" aria-label="Wizard progress" data-i18n-aria="a11y.wizardProgress">
-                    <div class="wizard-step active" data-step="1"><span class="wizard-step-num">1</span><span data-i18n="devices.wizard.step1">Connection</span></div>
-                    <div class="wizard-step" data-step="2"><span class="wizard-step-num">2</span><span data-i18n="devices.wizard.step2">Template</span></div>
-                    <div class="wizard-step" data-step="3"><span class="wizard-step-num">3</span><span data-i18n="devices.wizard.step3">Data routing</span></div>
-                </div>
-                <div id="devWizBody"></div>
-            </div>
-            <div class="modal-footer">
-                <span class="save-feedback" id="devWizFeedback"></span>
-                <button class="btn btn-secondary btn-sm" id="devWizBack" data-action="devWizardBack">
-                    <i aria-hidden="true" class="bi bi-arrow-left"></i> <span data-i18n="common.back">Back</span></button>
-                <button class="btn btn-primary btn-sm" id="devWizNext" data-action="devWizardNext">
-                    <span id="devWizNextLabel" data-i18n="common.next">Next</span> <i aria-hidden="true" class="bi bi-arrow-right"></i></button>
             </div>
         </div>
     </div>
@@ -2296,7 +2387,7 @@
                 <p class="field-hint" style="margin-top:0;" data-i18n="rules.import.intro">Paste a rules file exported from a gateway (Rules → Export) or written by hand. Each rule is checked against THIS installation first — its target device and command must exist here. Imported rules always arrive in shadow: they decide and say so, but write nothing until you arm them.</p>
                 <p class="field-hint" style="margin-top:-6px;"><a href="https://github.com/sm26449/multi-bus-gateway/blob/main/docs/rules.md#3-recipes" target="_blank" rel="noopener" data-i18n="rules.import.recipes">Recipes to start from</a></p>
                 <div class="form-group">
-                    <div class="form-label"><label for="rulesImportText">YAML</label> · <label for="rulesImportFile" style="display:inline;cursor:pointer;color:var(--primary,#2563eb);font-size:12px;" data-i18n="rules.import.open">open a .yaml file</label>
+                    <div class="form-label"><label for="rulesImportText">YAML</label> · <label for="rulesImportFile" style="display:inline;cursor:pointer;color:var(--accent-text);font-size:12px;" data-i18n="rules.import.open">open a .yaml file</label>
                         <input type="file" id="rulesImportFile" accept=".yaml,.yml,text/yaml" style="display:none;"></div>
                     <textarea id="rulesImportText" class="input" rows="10" spellcheck="false" style="font-family:var(--font-mono,monospace);font-size:12px;" placeholder="rules:&#10;  - id: ov-u1&#10;    kind: stepped&#10;    ..."></textarea>
                 </div>
@@ -2387,8 +2478,11 @@
          (instantiates). All augment JanitzaMonitor.prototype. ?v= is rewritten
          from each file's mtime at serve time. -->
     <script src="/static/js/app-core.js?v=0"></script>
+    <script src="/static/js/device-store.js?v=0"></script>
     <script src="/static/js/app-dialogs.js?v=0"></script>
     <script src="/static/js/app-usedby.js?v=0"></script>
+    <script src="/static/js/lock-text.js?v=0"></script>
+    <script src="/static/js/app-restore.js?v=0"></script>
     <script src="/static/js/app-auth.js?v=0"></script>
     <script src="/static/js/app-dashboard.js?v=0"></script>
     <script src="/static/js/app-fleet.js?v=0"></script>
@@ -2406,21 +2500,36 @@
     <script src="/static/js/app-powerquality.js?v=0"></script>
     <script src="/static/js/app-monitor.js?v=0"></script>
     <script src="/static/js/connform-model.js?v=0"></script>
+    <script src="/static/js/conn-step-model.js?v=0"></script>
+    <script src="/static/js/device-view-model.js?v=0"></script>
+    <script src="/static/js/device-shell.js?v=0"></script>
+    <script src="/static/js/bridge-ports.js?v=0"></script>
+    <script src="/static/js/serial-ports.js?v=0"></script>
+    <script src="/static/js/bridge-diag.js?v=0"></script>
     <script src="/static/js/app-connform.js?v=0"></script>
+    <script src="/static/js/conn-step.js?v=0"></script>
     <script src="/static/js/app-devices.js?v=0"></script>
+    <script src="/static/js/app-device-view.js?v=0"></script>
+    <script src="/static/js/app-device-edit.js?v=0"></script>
     <script src="/static/js/app-components.js?v=0"></script>
+    <script src="/static/js/cmd-binding-model.js?v=0"></script>
+    <script src="/static/js/app-cmdbinding.js?v=0"></script>
     <script src="/static/js/app-outputs.js?v=0"></script>
     <script src="/static/js/app-endpoints.js?v=0"></script>
     <script src="/static/js/app-template-update.js?v=0"></script>
     <script src="/static/js/app-bridges.js?v=0"></script>
     <script src="/static/js/app-plant-wizard.js?v=0"></script>
     <script src="/static/js/app-calculated.js?v=0"></script>
-    <script src="/static/js/app-wizard.js?v=0"></script>
     <script src="/static/js/app-settings.js?v=0"></script>
     <script src="/static/js/app-diagnostics.js?v=0"></script>
     <script src="/static/js/app-find.js?v=0"></script>
+    <script src="/static/js/app-types.js?v=0"></script>
     <script src="/static/js/app-pickers.js?v=0"></script>
     <script src="/static/js/app-meters.js?v=0"></script>
+    <script src="/static/js/adddev-model.js?v=0"></script>
+    <script src="/static/js/app-preview.js?v=0"></script>
+    <script src="/static/js/app-add-device.js?v=0"></script>
+    <script src="/static/js/app-add-many.js?v=0"></script>
     <script src="/static/js/app-router.js?v=0"></script>
     <script src="/static/js/app-boot.js?v=0"></script>
     <datalist id="identityColors">

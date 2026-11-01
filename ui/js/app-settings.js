@@ -1,5 +1,5 @@
 /* Multi-Bus Gateway — multi-protocol Modbus/HTTP/MQTT acquisition gateway.
- * Copyright (C) 2024-2026 Stefan Maldaianu <sm26449@diysolar.ro>
+ * Copyright (C) 2024-2026 Stefan Maldaianu <stefan@multibus.dev>
  * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 // settings domain — augments JanitzaMonitor.prototype
@@ -68,11 +68,14 @@ Object.assign(JanitzaMonitor.prototype, {
     async loadSettingsConfig() {
         try {
             // Load all configs in parallel
-            const [modbusRes, mqttRes, influxRes, envRes] = await Promise.all([
+            const [modbusRes, mqttRes, influxRes, envRes, identity] = await Promise.all([
                 fetch('/api/config/modbus'),
                 fetch('/api/config/mqtt'),
                 fetch('/api/config/influxdb'),
-                fetch('/api/config/env-overrides')
+                fetch('/api/config/env-overrides'),
+                // how new devices are named (ADR-0026) — an older backend has
+                // no such endpoint: null, and the fields show the pattern
+                fetch('/api/config/identity').then(r => (r.ok ? r.json() : null)).catch(() => null),
             ]);
 
             const modbus = await modbusRes.json();
@@ -98,6 +101,11 @@ Object.assign(JanitzaMonitor.prototype, {
             setVal('cfgModbusTimeout', modbus.timeout || 3);
             setVal('cfgModbusRetryAttempts', modbus.retry_attempts || 3);
             setVal('cfgModbusRetryDelay', modbus.retry_delay || 1.0);
+            // the read preview's budget (Settings → Modbus): its own section
+            fetch('/api/config/preview').then(r => (r.ok ? r.json() : null)).catch(() => null).then(pv => {
+                setVal('cfgPreviewMaxRequests', pv?.max_requests ?? 4);
+                setVal('cfgPreviewListen', pv?.listen_s ?? 10);
+            });
 
             // MQTT fields (global broker connection)
             setChk('cfgMqttEnabled', mqtt.enabled);
@@ -129,6 +137,8 @@ Object.assign(JanitzaMonitor.prototype, {
             setVal('cfgInfluxDefaultBucket', influx.default_bucket_pattern || '{device}');
             setVal('cfgInfluxWriteInterval', influx.write_interval || 5);
             setVal('cfgInfluxPublishMode', influx.publish_mode || 'changed');
+            // the stored value, 0 included — never a blank that means "built in" (ADR-0029)
+            setVal('cfgInfluxHeartbeat', influx.heartbeat_interval ?? '');
 
             // General settings (report timezone) — separate endpoint, tolerant
             // of failure (an old backend without it must not break the page).
@@ -157,6 +167,16 @@ Object.assign(JanitzaMonitor.prototype, {
                 if (conv && !conv._wired) { conv._wired = true; conv.addEventListener('change', updWrap); }
                 updWrap();
             }).catch(() => {});
+
+            // How new devices are named (gateway id + scope, ADR-0026). The
+            // default-pattern fields take their value from the same answer, in
+            // the same pass: never the effective pattern first and the chosen
+            // one a request later — a Save in between sent the wrong one (QA-R1-01)
+            // (an odd answer there never keeps the env-override warnings and
+            // the rest of the page from being drawn)
+            if (identity) {
+                try { this._identityApply(identity); } catch (e) { console.warn('identity settings not shown:', e); }
+            }
 
             // Show ENV override warnings
             this.showEnvOverrides(envOverrides);
@@ -445,6 +465,11 @@ Object.assign(JanitzaMonitor.prototype, {
             v('cfgAlertSigBuffer').checked = sig.buffer !== false;
             v('cfgAlertSigAlarm').checked = sig.alarm !== false;
             v('cfgAlertSigThreshold').checked = sig.threshold === true;
+            v('cfgAlertSigBridge').checked = sig.bridge === true;
+            const bt = a.bridge || {};
+            v('cfgAlertBridgeLine').value = bt.line_errors_per_min ?? 10;
+            v('cfgAlertBridgeSilent').value = bt.silent_s ?? 120;
+            v('cfgAlertBridgeReconnects').value = bt.reconnects_per_10min ?? 6;
             const out = document.getElementById('alertTestResult'); if (out) out.innerHTML = '';
         } catch (e) { console.error('alerts load failed:', e); }
     },
@@ -472,6 +497,12 @@ Object.assign(JanitzaMonitor.prototype, {
                     device: v('cfgAlertSigDevice').checked, sink: v('cfgAlertSigSink').checked,
                     latency: v('cfgAlertSigLatency').checked, buffer: v('cfgAlertSigBuffer').checked,
                     alarm: v('cfgAlertSigAlarm').checked, threshold: v('cfgAlertSigThreshold').checked,
+                    bridge: v('cfgAlertSigBridge').checked,
+                },
+                bridge: {
+                    line_errors_per_min: parseFloat(v('cfgAlertBridgeLine').value) || 10,
+                    silent_s: parseFloat(v('cfgAlertBridgeSilent').value) || 120,
+                    reconnects_per_10min: parseFloat(v('cfgAlertBridgeReconnects').value) || 6,
                 },
             };
             const r = await fetch('/api/config/alerts', {
@@ -589,6 +620,35 @@ Object.assign(JanitzaMonitor.prototype, {
         } catch (e) { fb.textContent = e.message; }
     },
 
+    // Settings → Modbus: the read preview's budget, alone (the primary's
+    // connection fields are the device's, never sent from here)
+    async savePreviewBudget() {
+        const g = id => document.getElementById(id);
+        const fb = g('previewBudgetFeedback');
+        const req = Number(g('cfgPreviewMaxRequests').value);
+        const lis = Number(g('cfgPreviewListen').value);
+        const ok = (n, lo, hi) => Number.isInteger(n) && n >= lo && n <= hi;
+        if (!ok(req, 1, 20) || !ok(lis, 1, 60)) {
+            fb.textContent = this.t('preview.budget.range', 'Reads per preview: a whole number 1–20; listen: a whole number of seconds 1–60.');
+            fb.className = 'save-feedback err';
+            return;
+        }
+        fb.textContent = '…';
+        fb.className = 'save-feedback';
+        try {
+            const r = await fetch('/api/config/preview', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ max_requests: req, listen_s: lis }) });
+            const d = await r.json().catch(() => ({}));
+            if (!r.ok) throw new Error(Array.isArray(d.detail) ? d.detail.map(x => x.msg || x).join(' · ')
+                : (d.detail?.errors || [d.detail || r.statusText]).join(' · '));
+            fb.textContent = '✓ ' + this.t('settings.saved', 'Saved & applied');
+            fb.className = 'save-feedback ok';
+        } catch (e) {
+            fb.textContent = e.message;
+            fb.className = 'save-feedback err';
+        }
+    },
+
     setupSettingsListeners() {
         // The enable toggles only show/hide the section body. Nothing is persisted
         // until the section's explicit "Save & Apply" button is pressed — a single,
@@ -622,7 +682,8 @@ Object.assign(JanitzaMonitor.prototype, {
             enabled: chk('cfgMqttEnabled'), broker: val('cfgMqttBroker'),
             port: parseInt(val('cfgMqttPort')) || 1883, username: val('cfgMqttUsername'),
             password: val('cfgMqttPassword') || undefined,
-            default_topic_pattern: val('cfgMqttDefaultTopic') || 'mbg/devices/{device}',
+            // empty = the identity scope's default (Settings → General)
+            default_topic_pattern: val('cfgMqttDefaultTopic').trim(),
             publish_mode: val('cfgMqttPublishMode'), qos: parseInt(val('cfgMqttQos')) || 0,
             retain: chk('cfgMqttRetain', true), ha_discovery_enabled: chk('cfgMqttHaEnabled', true),
             ha_discovery_prefix: val('cfgMqttHaPrefix'), ha_device_name: val('cfgMqttHaDeviceName'),
@@ -634,9 +695,11 @@ Object.assign(JanitzaMonitor.prototype, {
             enabled: chk('cfgInfluxEnabled'), url: val('cfgInfluxUrl'),
             token: val('cfgInfluxToken') || undefined, org: val('cfgInfluxOrg'),
             bucket: val('cfgInfluxBucket'),
-            default_bucket_pattern: val('cfgInfluxDefaultBucket') || '{device}',
+            default_bucket_pattern: val('cfgInfluxDefaultBucket').trim(),
             write_interval: parseInt(val('cfgInfluxWriteInterval')) || 5,
             publish_mode: val('cfgInfluxPublishMode'),
+            // blank = keep the stored value; anything but whole seconds 0..86400 is refused
+            heartbeat_interval: val('cfgInfluxHeartbeat').trim() === '' ? undefined : Number(val('cfgInfluxHeartbeat')),
         }];
     },
 
@@ -650,13 +713,18 @@ Object.assign(JanitzaMonitor.prototype, {
         if (fb) { fb.textContent = ''; fb.className = 'save-feedback'; }
         try {
             const r = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-            if (!r.ok) throw new Error('HTTP ' + r.status);
+            if (!r.ok) {
+                // a refused field says why (POST /api/config/modbus: 422 with detail.fields / detail.errors)
+                const d = await r.json().catch(() => ({}));
+                throw new Error(Object.values(d.detail?.fields || {})[0] || (d.detail?.errors || [])[0]
+                    || (typeof d.detail === 'string' ? d.detail : '') || ('HTTP ' + r.status));
+            }
             await fetch('/api/config/apply', { method: 'POST' });
             if (fb) { fb.textContent = '✓ ' + this.t('settings.saved', 'Saved & applied'); fb.className = 'save-feedback ok'; setTimeout(() => { if (fb.classList.contains('ok')) fb.textContent = ''; }, 4000); }
             // Refresh connection state after the reconnect.
             await this.loadStatus();
         } catch (e) {
-            if (fb) { fb.textContent = this.t('settings.saveFailed', 'Save failed'); fb.className = 'save-feedback err'; }
+            if (fb) { fb.textContent = `${this.t('settings.saveFailed', 'Save failed')}${e.message ? `: ${e.message}` : ''}`; fb.className = 'save-feedback err'; }
         } finally {
             if (btn) { btn.disabled = false; btn.innerHTML = orig; }
         }
@@ -696,9 +764,74 @@ Object.assign(JanitzaMonitor.prototype, {
         }
     },
 
+    // How new devices are named: this gateway's id and the identity scope —
+    // the card and the default-pattern fields, from one answer
+    // (loadSettingsConfig fetches it with the MQTT and InfluxDB settings)
+    _identityApply(g) {
+        const id = document.getElementById('cfgGatewayId');
+        const sc = document.getElementById('cfgIdentityScope');
+        if (id) id.value = g.gateway_id || '';
+        if (sc) sc.value = g.identity_scope || 'legacy';
+        this._identityShowExample(g);
+        this._identityPatterns(g);
+    },
+
+    // the default patterns (MQTT / InfluxDB tabs): a pattern chosen is shown
+    // as such; none chosen is an empty field whose placeholder is the scope's
+    _identityPatterns(g) {
+        const own = (g.defaults || {})[g.identity_scope] || {};
+        const set = (elId, chosen, dflt) => {
+            const e = document.getElementById(elId);
+            if (!e || chosen === undefined) return;
+            e.value = chosen || '';
+            if (dflt) e.placeholder = dflt;
+        };
+        set('cfgMqttDefaultTopic', (g.explicit || {}).topic, own.topic);
+        set('cfgInfluxDefaultBucket', (g.explicit || {}).bucket, own.bucket);
+    },
+
+    _identityShowExample(g) {
+        // the words are the page's (data-i18n, a language switch redraws
+        // them); the values are the gateway's
+        const tp = document.getElementById('cfgIdentityExTopic');
+        const bk = document.getElementById('cfgIdentityExBucket');
+        if (!tp || !bk || !g || !g.example) return;
+        tp.textContent = g.example.topic_prefix;
+        bk.textContent = g.example.bucket;
+    },
+
+    async saveIdentityConfig(btn) {
+        const fb = document.getElementById('identitySaveFeedback');
+        const orig = btn ? btn.innerHTML : '';
+        if (btn) { btn.disabled = true; btn.innerHTML = '<i aria-hidden="true" class="bi bi-arrow-repeat spin"></i>'; }
+        if (fb) { fb.textContent = ''; fb.className = 'save-feedback'; }
+        try {
+            const body = { gateway_id: (document.getElementById('cfgGatewayId')?.value || '').trim(),
+                           identity_scope: document.getElementById('cfgIdentityScope')?.value || 'legacy' };
+            const r = await fetch('/api/config/identity', {
+                method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+            const d = await r.json().catch(() => ({}));
+            if (!r.ok) throw new Error(Object.values(d.detail?.fields || {})[0] || (d.detail?.errors || [])[0] || ('HTTP ' + r.status));
+            this._identityShowExample(d);
+            this._identityPatterns(d);
+            // the MQTT and InfluxDB tabs were loaded under the old identity:
+            // read again, so a later Save there sends what is now in effect
+            await this.loadSettingsConfig();
+            if (fb) { fb.textContent = '✓ ' + this.t('settings.saved', 'Saved & applied'); fb.className = 'save-feedback ok'; setTimeout(() => { if (fb.classList.contains('ok')) fb.textContent = ''; }, 4000); }
+        } catch (e) {
+            if (fb) { fb.textContent = e.message || this.t('settings.saveFailed', 'Save failed'); fb.className = 'save-feedback err'; }
+        } finally {
+            if (btn) { btn.disabled = false; btn.innerHTML = orig; }
+        }
+    },
+
     // ============ Raw Config Modal ============
 
-    openRawConfigModal() {
+    async openRawConfigModal() {
+        // the stored rows, never a full editor's staged ones (asked about first)
+        if (this._regToolsLeave && !await this._regToolsLeave()) return;
+        // the rows shown are the register editor's, as they are now: so is the tag
+        this._rawSel = this._regSel ? { ...this._regSel } : null;
         const modal = document.getElementById('rawConfigModal');
         const editor = document.getElementById('rawConfigEditor');
 
@@ -786,11 +919,7 @@ Object.assign(JanitzaMonitor.prototype, {
         try {
             const parsed = JSON.parse(document.getElementById('rawConfigEditor').value);
 
-            const response = await fetch('/api/registers/selected' + this._regDeviceQS(), {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(parsed)
-            });
+            const response = await this._selSave(this._rawSel, this._regDeviceQS(), parsed);
 
             if (!response.ok) {
                 throw new Error('Save failed');

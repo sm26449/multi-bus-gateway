@@ -1,5 +1,5 @@
 # Multi-Bus Gateway — multi-protocol Modbus/HTTP/MQTT acquisition gateway.
-# Copyright (C) 2024-2026 Stefan Maldaianu <sm26449@diysolar.ro>
+# Copyright (C) 2024-2026 Stefan Maldaianu <stefan@multibus.dev>
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU Affero General Public License as published by
@@ -19,8 +19,8 @@
 Two read-only probes to find devices without knowing their address up front:
   * scan_tcp   — sweep a private CIDR on a port (default 502) for hosts that
                  answer a Modbus read.
-  * sweep_units — sweep unit/slave IDs on one endpoint (TCP host or RTU serial
-                 line) for the ones that respond.
+  (the unit sweep on one bus is the generic bus scan, bus_scan.py: it runs
+  on the bus's shared transport — L3-F1)
 
 A "response" is a connect PLUS any Modbus reply to a holding-register read —
 including an exception reply (e.g. illegal address), which still proves the peer
@@ -70,7 +70,6 @@ def lan_host_error(host: str, allow_nonlan: bool = False):
     return None
 
 MAX_HOSTS = 256          # cap a scan at a /24 so it stays quick and bounded
-MAX_UNITS = 247          # Modbus unit-id range is 1..247
 
 
 def hosts_from_cidr(cidr: str, allow_nonlan: bool = False, max_hosts: int = MAX_HOSTS):
@@ -144,46 +143,6 @@ def scan_tcp(hosts, port=502, unit_id=1, timeout=0.5, workers=64):
                 results.append(r)
     results.sort(key=lambda r: ipaddress.ip_address(r["host"]))
     return results
-
-
-def sweep_units_tcp(host: str, port: int, unit_start: int, unit_end: int, timeout: float):
-    """Reuse one TCP connection to sweep unit ids; return the responding ones."""
-    from pymodbus.client import ModbusTcpClient
-    found = []
-    c = ModbusTcpClient(host=host, port=int(port), timeout=timeout)
-    try:
-        if not c.connect():
-            return found
-        for uid in range(max(1, unit_start), min(MAX_UNITS, unit_end) + 1):
-            if _probe(c, uid):
-                found.append(uid)
-    finally:
-        try:
-            c.close()
-        except Exception:  # noqa: BLE001
-            pass
-    return found
-
-
-def sweep_units_rtu(serial_port: str, unit_start: int, unit_end: int, timeout: float,
-                    baudrate=9600, parity='N', stopbits=1, bytesize=8):
-    """Sweep unit ids on a serial (RTU) line. Needs the adapter present."""
-    from pymodbus.client import ModbusSerialClient
-    found = []
-    c = ModbusSerialClient(port=serial_port, baudrate=int(baudrate), parity=parity,
-                           stopbits=int(stopbits), bytesize=int(bytesize), timeout=timeout)
-    try:
-        if not c.connect():
-            return found
-        for uid in range(max(1, unit_start), min(MAX_UNITS, unit_end) + 1):
-            if _probe(c, uid):
-                found.append(uid)
-    finally:
-        try:
-            c.close()
-        except Exception:  # noqa: BLE001
-            pass
-    return found
 
 
 # ── SunSpec model walk ──────────────────────────────────────────────────────

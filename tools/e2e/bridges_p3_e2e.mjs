@@ -1,5 +1,5 @@
 // Multi-Bus Gateway — multi-protocol Modbus/HTTP/MQTT acquisition gateway.
-// Copyright (C) 2024-2026 Stefan Maldaianu <sm26449@diysolar.ro>  — AGPL-3.0-or-later
+// Copyright (C) 2024-2026 Stefan Maldaianu <stefan@multibus.dev>  — AGPL-3.0-or-later
 //
 // Bridges, phase 3, as a user meets it: finding bridges on the LAN, listening
 // to a bus another master polls THROUGH a bridge, and the per-bus tools (the
@@ -11,6 +11,7 @@
 // converter on 4196 and a Modbus TCP gateway on 8899 (ports the bridge kinds
 // declare for LAN discovery), and a bus with a foreign master on 14296.
 import { chromium } from 'playwright';
+import { openAdd, pickModel, answer, fill, next, waitCheck, create } from './lib/add-device.mjs';
 import { execFileSync } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -149,28 +150,31 @@ try {
   check('bridge for the bus with a foreign master (API)',
     (await post('/api/bridges', { id: BR.m, name: 'E2E master bus', type: 'rtu_transparent', host: '127.0.0.1',
                                   ports: [{ port: P.m, label: 'BMS bus' }] })).status === 200);
+  // (L3.9: Add Device — the model, RS-485, where the bus is, Listen-only)
   await goDevices();
-  await page.locator('button[data-action="openDeviceWizard"]:visible').first().click();
-  await page.waitForSelector('#deviceWizardModal.active');
-  await page.click('#deviceWizardModal label:has(input[name="devWizProto"][value="rtu"])');
-  await page.click('#deviceWizardModal label:has(input[name="devWizRtuMode"][value="rtu_tap"])');
-  await page.waitForSelector('#devWizTapWhere');
-  const opts = await page.locator('#devWizTapWhere option').allInnerTexts();
-  check('Listen only offers "where the bus is": this host, or a transparent bridge\'s bus',
-    /serial port on this host/i.test(opts[0]) && opts.some(o => o.includes(`:${P.m}`)), opts.join(' | '));
-  await page.selectOption('#devWizTapWhere', `${BR.m}::${P.m}`);
-  await page.waitForSelector('#devWizSerial', { state: 'hidden' });
-  check('…choosing a bridge hides the serial port and line settings (they are the bus\'s)',
-    !(await page.isVisible('#devWizBaud')) && await page.isVisible('#devWizUnitR'));
-  await page.fill('#devWizUnitR', '1');
-  await page.click('#devWizNext');
-  await page.click(`.tpl-pick[data-tpl="${TPL}"]`);
-  await page.click('#devWizNext');
-  await page.fill('#devWizId', DEV.tap1);
-  await page.fill('#devWizName', 'E2E tap 1');
-  if (!(await page.isChecked('#devWizEnabled'))) await page.click('label:has(#devWizEnabled)');
-  await page.click('#devWizNext');
-  await page.waitForSelector('#deviceWizardModal', { state: 'hidden' });
+  await openAdd(page);
+  await pickModel(page, TPL, TPL);
+  await answer(page, 'PortKind', 'serial');
+  const reaches = await page.$$eval('[name="csAddReach"]', els => els.map(e => e.value));
+  check('"Where the bus is": a port on this host, or a bridge\'s bus', reaches.includes('here') && reaches.includes('bridge'), reaches.join(' | '));
+  await answer(page, 'Reach', 'bridge');
+  const opts = await page.locator('#csAddBus option').allInnerTexts();
+  check('…the bridges\' buses are listed', opts.some(o => o.includes(`:${P.m}`)), opts.join(' | '));
+  await page.selectOption('#csAddBus', `${BR.m}::${P.m}`);
+  await page.waitForTimeout(400);
+  await answer(page, 'Role', 'listen');
+  check('…on a bridge the line is the box\'s: no serial port, no line fields',
+    !(await page.isVisible('#csAddBaud')) && !(await page.isVisible('#csAddSerial')) && await page.isVisible('#csAddUnit'));
+  await fill(page, 'Unit', 1);
+  await next(page);                                    // → Check
+  await waitCheck(page, 30000);
+  await next(page);                                    // → Name & save
+  await page.fill('#adId', DEV.tap1);
+  await page.locator('#adId').dispatchEvent('input');
+  if (!(await page.isChecked('#adEnabled'))) await page.click('label:has(#adEnabled)');
+  await create(page, { name: 'E2E tap 1' });
+  await page.click('#adResDone');
+  await page.waitForSelector('#addDeviceModal', { state: 'hidden' });
   let v = await waitValues(DEV.tap1, [1111, 2222]);
   check('the tap hears unit 1 through the bridge: 1111 / 2222', v.reg_a === 1111 && v.reg_b === 2222, JSON.stringify(v));
   const dev = (await api('/api/devices')).body.devices.find(d => d.id === DEV.tap1) || {};

@@ -1,5 +1,5 @@
 /* Multi-Bus Gateway — multi-protocol Modbus/HTTP/MQTT acquisition gateway.
- * Copyright (C) 2024-2026 Stefan Maldaianu <sm26449@diysolar.ro>
+ * Copyright (C) 2024-2026 Stefan Maldaianu <stefan@multibus.dev>
  * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 // router — augments JanitzaMonitor.prototype
@@ -126,6 +126,10 @@ Object.assign(JanitzaMonitor.prototype, {
             if (!h.hasAttribute('tabindex')) h.setAttribute('tabindex', '-1');
             h.focus({ preventScroll: true });
         }
+        // a link to a place inside the device page (Setup, at a section)
+        // ends there, not on the page's title
+        const inner = focus && this._ddvFocusTarget ? this._ddvFocusTarget() : null;
+        if (inner) inner.focus({ preventScroll: true });
     },
 
     // a link that names nothing: said plainly, with the way back
@@ -155,6 +159,24 @@ Object.assign(JanitzaMonitor.prototype, {
     async _routeApply({ initial = false } = {}) {
         const r = this._routeParse(location.hash);
         if (!r || location.hash === this._routeLast) return;
+        // the Edit device dialog holds unsaved edits: asked first (Back, a
+        // link, a typed address); "Keep editing" puts the address back
+        // — or a full editor holds staged edits, or an editor of the page
+        // typed ones (one leave guard: _ddvLeave, review of L3.11b M1)
+        if (this._ddvLeave && (this._devEdit?.open || (this._ddvFullDirty && this._ddvFullDirty())
+                               || (this._ddvEditing && this._ddvEditDirty && this._ddvEditDirty()))) {
+            // one question per move (a hash change fires popstate and hashchange)
+            if (this._routeAsking) return;
+            const was = this._routeLast, going = location.hash;
+            this._routeAsking = true;
+            let leave;
+            try { leave = await this._ddvLeave(); } finally { this._routeAsking = false; }
+            if (!leave) {
+                if (location.hash === going && was) { try { history.pushState(null, '', was); } catch (e) { /* */ } }
+                return;
+            }
+            if (location.hash !== going) return;      // moved on meanwhile
+        }
         this._routeLast = location.hash;
         const [first, id, tab] = r.parts;
         const state = history.state || {};
@@ -167,10 +189,12 @@ Object.assign(JanitzaMonitor.prototype, {
                 const ok = same || await this.openDeviceDetail(id);
                 if (ok === false) this._routeMissing('device', id);
                 else {
-                    // `edit` is the earlier name of `connection`; a group's
+                    // a tab that left (connection, outputs, attributes,
+                    // meters, `edit`) opens Setup at its section; a group's
                     // name opens its tab; a tab this account may not open —
                     // by role, not by sight — lands on the Overview
                     let want = tab || 'overview';
+                    const section = (this._DTAB_SECTION || {})[want] || '';
                     want = (this._DTAB_ALIAS || {})[want] || want;
                     if ((this._DGROUPS || []).includes(want) && this._dgroupTab) want = this._dgroupTab(want);
                     // a tab this page does not have is said, not silently swapped
@@ -180,7 +204,10 @@ Object.assign(JanitzaMonitor.prototype, {
                         want = 'overview';
                     }
                     const btn = document.querySelector(`#deviceWsTabs [data-dtab="${CSS.escape(want)}"]`);
-                    if (this._switchDeviceTab) this._switchDeviceTab(btn && this._dtabAllowed(btn) ? want : 'overview');
+                    if (this._switchDeviceTab) {
+                        this._switchDeviceTab(btn && this._dtabAllowed(btn) ? want : 'overview',
+                                              section && want === 'setup' ? { section, focusSection: true } : {});
+                    }
                 }
             } else if (first === 'installations' && id && this.openEndpointDetail) {
                 const ok = await this.openEndpointDetail(id);

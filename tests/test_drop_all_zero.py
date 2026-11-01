@@ -1,5 +1,5 @@
 # Multi-Bus Gateway — multi-protocol Modbus/HTTP/MQTT acquisition gateway.
-# Copyright (C) 2024-2026 Stefan Maldaianu <sm26449@diysolar.ro>  — AGPL-3.0-or-later
+# Copyright (C) 2024-2026 Stefan Maldaianu <stefan@multibus.dev>  — AGPL-3.0-or-later
 """Data-readiness gate: an all-zero frame (a sleepy inverter answering a read)
 is dropped so 0 V/0 W never reads as real data. Off by default; needs >=2
 numeric values all exactly zero."""

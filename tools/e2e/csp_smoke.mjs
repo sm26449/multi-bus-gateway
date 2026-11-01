@@ -50,12 +50,13 @@ for (const pg of ['dashboard', 'devices', 'templates', 'rules', 'vmeters', 'stat
 
 // ---- 3. modals through data-action (open + close by delegated closeModal) --
 await page.click('[data-page="devices"]'); await page.waitForTimeout(500);
-for (const [btn, modal] of [['openPlantWizard', 'plantWizardModal'], ['openDeviceWizard', 'deviceWizardModal']]) {
+for (const [btn, modal] of [['openPlantWizard', 'plantWizardModal'], ['openDeviceWizard', 'addDeviceModal']]) {
     await page.locator(`[data-action="${btn}"]`).first().click();
     await page.waitForTimeout(400);
     const open = await page.evaluate(id => document.getElementById(id)?.classList.contains('active'), modal);
     check(`data-action ${btn} opens #${modal}`, !!open);
-    await page.locator(`#${modal} [data-action="closeModal"]`).first().click();
+    // Add Device's ✕ is its own (device-shell.js); the others are delegated
+    await page.locator(`#${modal} [data-action="closeModal"], #${modal} .modal-close`).first().click();
     await page.waitForTimeout(300);
     const closed = await page.evaluate(id => !document.getElementById(id)?.classList.contains('active'), modal);
     check(`delegated closeModal closes #${modal}`, closed);
@@ -90,6 +91,9 @@ await page.waitForTimeout(200);
 await page.click('[data-page="config"]'); await page.waitForTimeout(500);
 const secTab = page.locator('[data-cfgtab="security"]');
 if (await secTab.count()) { await secTab.first().click(); await page.waitForTimeout(400); }
+// the audit log is its own panel inside Security (secTab-audit)
+const auditTab = page.locator('#secTab-audit');
+if (await auditTab.count()) { await auditTab.first().click(); await page.waitForTimeout(400); }
 const auditInput = page.locator('#auditFilter');
 if (await auditInput.count() && await auditInput.first().isVisible()) {
     requests.length = 0;

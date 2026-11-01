@@ -15,7 +15,7 @@ series) and the feature modules named per section. Configuration keys are in
 | Writer | Bucket | Knob |
 |---|---|---|
 | primary device | `influxdb.bucket` (default `multibus`) | Config → InfluxDB |
-| every other device | `devices[].influxdb.bucket`; seeded for a **new** device from `influxdb.default_bucket_pattern` (`{device}` = device id, default → the device id itself) | fixed once persisted |
+| every other device | `devices[].influxdb.bucket`; seeded for a **new** device from `influxdb.default_bucket_pattern` (`{device}` = device id, `{gateway}` = `gateway.id`). Without a pattern the `identity_scope` decides: `<gateway.id>-<device id>` under `gateway` (a fresh install), the device id itself under `legacy` (every install before 3.97) | fixed once persisted; changing the scope or the id names new devices only |
 | endpoint units | `endpoints[].influxdb.bucket` with `${unit_id}` / `${device_id}` / `${endpoint_id}` substituted per unit | |
 | endpoint aggregates | the same key with every placeholder resolved to the **endpoint id**; no key → a bucket named after the endpoint id (never the global default) | `endpoints[].aggregates` |
 | rule events | the target unit's bucket | |
@@ -82,12 +82,15 @@ dashboard filters by tag, never by bucket layout.
 |---|---|---|
 | minimum interval | a given (device, address) is written at most once per `write_interval` seconds, whichever poll group read it | `influxdb.write_interval` (5) |
 | change detection | in `changed` mode an unchanged value (exact equality on the raw value) is skipped | `influxdb.publish_mode` (`changed` / `all`) |
+| heartbeat | in `changed` mode an unchanged value is written again once it has not been written for `heartbeat_interval` seconds (monotonic clock, per device and address); `write_interval` stays the minimum gap; `0` = off. The point is an ordinary one — same measurement, tags and fields, the reading's own timestamp — written on the next reading after the interval: there is no timer, so a device that stops reading stops writing | `influxdb.heartbeat_interval` (600, written into config.yaml on first load; Settings → InfluxDB); per device `devices[].influxdb.heartbeat_interval`, per installation `endpoints[].influxdb.heartbeat_interval` (absent = the gateway's) |
 | batching | the client batches 100 points or 10 s (2 s jitter), retries a failed batch with backoff up to 5 min, then hands it to the replay buffer | fixed |
 | delivery truth | `/api/status` reports `writes_confirmed` / `last_confirm_age_s` (server acknowledgement) next to `writes_total` (enqueue); `auth_failed` flags 401/403/404 | |
 
-Consequences for queries: a steady reading produces **no points** until it
-changes; a series with one point per hour is a still meter, not an outage.
-Use `last()` / `fill(usePrevious: true)` rather than `count()` to judge
+Consequences for queries: a steady reading produces one point per
+`heartbeat_interval` (10 min by default) until it changes, or **no points**
+with the heartbeat off (`0`); a sparse series is a still meter, not an
+outage. A dashboard window can start up to one heartbeat before its first
+point. Use `last()` / `fill(usePrevious: true)` rather than `count()` to judge
 liveness, and never `mean()` over a raw window assuming even sampling.
 
 ### Held samples are not written
@@ -140,11 +143,27 @@ unit's bucket**, on every state/want change and every command the rule sends
 | fields | `reason` (string, ≤200 chars, always), `signal` (float, the evaluated signal), `want_value` (float, the commanded parameter), `actual` (float, the read-back), `result_reason` (string, when the command failed) |
 | timestamp | the decision time, ns |
 
+## `bridge_port` — health of a bus behind our serial bridge
+
+Written by `multibus/bridge_diag.py` into the default bucket, every 30 s for
+every served bus of every bridge of kind `mbg_serial_bridge` (active gateway
+only, only while the bridge answers, and never for a bridge older than
+diagnostics).
+
+| Part | Value |
+|---|---|
+| measurement | `bridge_port` |
+| tags | `bridge` (bridge id), `port` (its TCP port), `adapter` (the adapter's stable id) |
+| fields | `diagnosis` (string, the code listed in [mqtt-contract.md](mqtt-contract.md#bus-health--gwbridgesbridgeporthealth)); `line_frame`, `line_parity`, `line_overrun`, `line_brk`, `line_buf_overrun`, `line_rx`, `line_tx` (int, cumulative kernel counters — absent when the adapter does not keep them); rates over the last 5 minutes (float): `line_errors_per_min`, `<counter>_per_min`, `bytes_from_device_per_min`, `bytes_to_device_per_min`, `mbg_timeouts_per_min`, `mbg_connection_per_min`, `mbg_ok_per_min`, `window_s`; `connects_10min`, `silent_s` (float); `client_connected` (0/1) |
+| timestamp | the poll time |
+
 ## `endpoint` and aggregated measurements
 
 `multibus/endpoint_aggregator.py` writes an endpoint's combined values every
 10 s (on change only in `changed` mode; no `write_interval` gate) into the
-endpoint's bucket:
+endpoint's bucket. An unchanged total is written again once it has been quiet
+for the installation's `influxdb.heartbeat_interval` (else the gateway's), so
+a total that stays at 0 W all night still has a recent point:
 
 | Part | Value |
 |---|---|
@@ -159,8 +178,9 @@ point per cycle (on change, or every cycle with `mode: every`) into its
 `bucket` (empty = the endpoint's), measurement and static tags exactly as
 configured — no `device`/`aggregate` tags are added — with one field per
 mapping `name ← total × scale`. A total absent this cycle is left out of the
-point. The production battery bank uses one to keep writing the retired
-collector's `seplos_pack` shape (26 fields, energy in kWh, no tags).
+point. Outputs follow the same heartbeat as the totals. Typical use: keep
+writing the measurement a retired collector wrote, so existing dashboards
+keep working.
 
 **Static unit tags** (`influxdb.tags` on a device or an endpoint, `${unit_id}`
 substituted per unit) ride on every point the units write, raw and

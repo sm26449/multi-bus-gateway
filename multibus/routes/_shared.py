@@ -1,5 +1,5 @@
 # Multi-Bus Gateway — multi-protocol Modbus/HTTP/MQTT acquisition gateway.
-# Copyright (C) 2024-2026 Stefan Maldaianu <sm26449@diysolar.ro>
+# Copyright (C) 2024-2026 Stefan Maldaianu <stefan@multibus.dev>
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU Affero General Public License as published by
@@ -48,7 +48,11 @@ def device_influx(config, device: str):
     the query to the PRIMARY's bucket with no filter, so a typo answered with
     somebody else's data instead of saying it did not know the device.
     """
-    if not device or device == config.primary_device.id:
+    if not device and not config.primary_id:
+        # no device named and no primary (ADR-0024): the default bucket with no
+        # device filter would answer with every device's series mixed
+        raise ValueError("no device given, and this gateway has no primary device")
+    if not device or device == config.primary_id:
         return None, None
     dev = config.get_device(device)
     if dev is not None:

@@ -1,5 +1,5 @@
 # Multi-Bus Gateway — multi-protocol Modbus/HTTP/MQTT acquisition gateway.
-# Copyright (C) 2024-2026 Stefan Maldaianu <sm26449@diysolar.ro>
+# Copyright (C) 2024-2026 Stefan Maldaianu <stefan@multibus.dev>
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU Affero General Public License as published by
@@ -125,3 +125,58 @@ def test_fleet_hero_ignores_text_values_gracefully(tmp_path):
     d = client.get("/api/fleet").json()["devices"][0]
     assert d["alarms"] == {"danger": 0, "warning": 0}
     assert d["hero"][0]["value"] == "Standby"
+
+
+@needs_tc
+def test_a_device_measured_by_meters_shows_their_values_on_its_row(tmp_path, monkeypatch):
+    """UI-G1: a UPS with no connection of its own reads no registers — its
+    row showed nothing. It shows what its meters give it (in, out,
+    efficiency), the same values its own page reads from /api/values."""
+    from tests.test_meter_lifecycle import _live_app
+    _app, client, report, _published, _mqtt, _cfg = _live_app(tmp_path, monkeypatch)
+
+    def ups_row():
+        return next(d for d in client.get("/api/fleet").json()["devices"] if d["id"] == "ups")
+
+    # before its meters report: the names keep their places, with no value
+    row = ups_row()
+    assert [h["name"] for h in row["hero"]] == ["power_in", "power_out", "efficiency_pct"]
+    assert all(h["meters"] is True and h["value"] is None for h in row["hero"])
+
+    report(pin=1000.0, pout=920.0)
+    row = ups_row()
+    hero = {h["name"]: h for h in row["hero"]}
+    assert hero["power_in"]["value"] == 1000.0 and hero["power_out"]["value"] == 920.0
+    assert hero["efficiency_pct"]["value"] == pytest.approx(92.0)
+    assert hero["power_in"]["unit"] == "W" and hero["efficiency_pct"]["unit"] == "%"
+    # a live update finds them by the key the websocket carries
+    assert all(h["key"] is not None for h in row["hero"])
+    # the device page's source says the same
+    page = {v["name"]: v["value"] for v in
+            client.get("/api/values?device=ups").json()["values"].values()}
+    for n, h in hero.items():
+        assert page[n] == h["value"]
+
+
+def test_fleet_names_follow_the_links():
+    """A supply meter gives power and energy; an input/output pair gives in,
+    out and efficiency; no link, or half a pair, gives nothing."""
+    from multibus.linked_meter import fleet_names
+    pair = [{"role": "input", "device": "a", "power": "p"},
+            {"role": "output", "device": "b", "power": "p"}]
+    assert fleet_names(pair) == ["power_in", "power_out", "efficiency_pct"]
+    assert fleet_names([{"role": "consumption", "device": "a", "power": "p", "energy": "e"}]) \
+        == ["power_electric", "energy_electric"]
+    assert fleet_names([{"role": "consumption", "device": "a", "energy": "e"}]) == ["energy_electric"]
+    assert fleet_names([]) == []
+    assert fleet_names(pair[:1]) == []
+
+
+@needs_tc
+def test_a_device_with_its_own_dashboard_values_keeps_them(tmp_path, monkeypatch):
+    """The meters fill a row only when the device shows nothing of its own."""
+    from tests.test_meter_lifecycle import _live_app
+    _app, client, report, *_ = _live_app(tmp_path, monkeypatch)
+    report()
+    hp = next(d for d in client.get("/api/fleet").json()["devices"] if d["id"] == "hp")
+    assert hp["hero"] and not any(h.get("meters") for h in hp["hero"])

@@ -2,6 +2,7 @@
   "device_template": {
     "schema_version": 1,
     "id": "tasmota_generic",
+    "kind": "other",
     "name": "Tasmota device (relays, energy, Wi-Fi)",
     "vendor": "Tasmota",
     "model": "any Tasmota device",

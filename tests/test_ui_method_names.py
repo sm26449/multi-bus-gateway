@@ -1,5 +1,5 @@
 # Multi-Bus Gateway — multi-protocol Modbus/HTTP/MQTT acquisition gateway.
-# Copyright (C) 2024-2026 Stefan Maldaianu <sm26449@diysolar.ro>  — AGPL-3.0-or-later
+# Copyright (C) 2024-2026 Stefan Maldaianu <stefan@multibus.dev>  — AGPL-3.0-or-later
 """Every ui/js/app-*.js file adds methods to one prototype (Object.assign);
 a name defined twice is silently overridden by whichever file loads last.
 It happened twice: copyText (a device's Copy button copied nothing) and

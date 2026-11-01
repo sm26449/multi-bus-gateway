@@ -1,5 +1,5 @@
 # Multi-Bus Gateway — multi-protocol Modbus/HTTP/MQTT acquisition gateway.
-# Copyright (C) 2024-2026 Stefan Maldaianu <sm26449@diysolar.ro>
+# Copyright (C) 2024-2026 Stefan Maldaianu <stefan@multibus.dev>
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU Affero General Public License as published by
@@ -27,7 +27,24 @@ from fastapi import APIRouter
 from fastapi.responses import JSONResponse
 
 from ..device_registry import client_health
+from ..linked_meter import fleet_names
+from ..meter_links import links_of
 from ..threshold_engine import gate_open
+
+
+def _drift_held(rt) -> list:
+    """The rules (rule:device) whose drift the channel's pace holds longer
+    than DRIFT_HELD_WARN_S now — a channel written faster than its pace by
+    someone else starves a rule's reassert (ADR-0022)."""
+    if rt is None:
+        return []
+    from ..rules import DRIFT_HELD_WARN_S
+    out = []
+    for (rid, dev), st in list((getattr(rt, 'states', None) or {}).items()):
+        held = getattr(st, 'drift_held_s', None)
+        if held is not None and held >= DRIFT_HELD_WARN_S:
+            out.append(f"{rid}:{dev}")
+    return sorted(out)
 
 
 def build(ctx) -> APIRouter:
@@ -71,6 +88,14 @@ def build(ctx) -> APIRouter:
             "websocket_clients": len(ws_manager.active_connections),
             "last_update": last_update['timestamp'],
             "config": ctx.config.config_status() if hasattr(ctx.config, "config_status") else {"healthy": True},
+            # rules whose drift the channel's pace has held longer than
+            # DRIFT_HELD_WARN_S now (ADR-0022, starvation said)
+            "rules_drift_held": _drift_held(getattr(ctx.app.state, 'rules_runtime', None)),
+            # what a write needs before a form is typed (ADR-0032 §3): the
+            # master switch, and a credential to attribute it (a login or an
+            # API key) — the device menus say why a write cannot run
+            "writes": {"enabled": bool(ctx.config.security.allow_writes),
+                       "credential": bool(ctx.auth_state.enabled or ctx.api_key)},
         }
         if registry:
             out["devices"] = []
@@ -110,6 +135,10 @@ def build(ctx) -> APIRouter:
                         # degraded — the status page must not contradict it
                         "health": client_health(client),
                     })
+                    from ..can_client import stats_summary as _can_summary
+                    _cs = _can_summary(stats)
+                    if _cs:
+                        entry["can"] = _cs      # a CAN device: frames, unknown ids, listen-only
                     # the time in the state the page shows (health), not in
                     # the raw data_health word underneath it
                     entry["up_since_s"] = _up_since_s(
@@ -152,6 +181,13 @@ def build(ctx) -> APIRouter:
                     "power_active_total": agg.get("power_active_total"),
                     "aggregates_enabled": bool(p.get("aggregates", True)),
                 })
+        # a wire whose oldest waiting command is older than half its max_age_s:
+        # commands there are about to expire unwritten (ADR-0018, D14)
+        disp = getattr(ctx.app.state, 'command_dispatch', None)
+        if disp is not None:
+            out["command_lanes"] = [
+                {"lane": k, **v} for k, v in disp.lanes().items()
+                if v.get("pending") and v.get("max_age_s") and v["oldest_s"] > v["max_age_s"] / 2]
         return out
 
     # ── Fleet overview ──────────────────────────────────────────────────
@@ -185,6 +221,19 @@ def build(ctx) -> APIRouter:
         if (wl is not None and v < wl) or (wh is not None and v > wh):
             return "warning"
         return ""
+
+    def _hero_by_name(store, names) -> list:
+        """Fleet-row metrics for the named values of a device's live store
+        (calculated and meter-given values included); a name not in the
+        store now keeps its place with no value."""
+        by_name = {e.get("name"): (addr, e) for addr, e in list(store.items())}
+        out = []
+        for n in names:
+            addr, e = by_name.get(n, (None, {}))
+            out.append({"address": e.get("address", addr), "key": addr, "name": n,
+                        "label": e.get("label") or n, "unit": e.get("unit") or "",
+                        "value": e.get("value")})
+        return out
 
     @r.get("/api/fleet")
     async def get_fleet():
@@ -232,12 +281,7 @@ def build(ctx) -> APIRouter:
             if declared:
                 # the template says what a fleet row of this kind shows —
                 # calculated fields included (a pack's power is one)
-                by_name = {e.get("name"): (addr, e) for addr, e in list(store.items())}
-                for n in declared[:3]:
-                    addr, e = by_name.get(n, (None, {}))
-                    hero.append({"address": e.get("address", addr), "key": addr, "name": n,
-                                 "label": e.get("label") or n, "unit": e.get("unit") or "",
-                                 "value": e.get("value")})
+                hero = _hero_by_name(store, declared[:3])
             else:
                 dash = sorted(
                     (x for x in regs if x.ui_show_on_dashboard),
@@ -250,6 +294,12 @@ def build(ctx) -> APIRouter:
                         "unit": getattr(x, "unit", "") or "",
                         "value": item.get("value"),
                     })
+            if not hero:
+                # a device measured by meters (a UPS with no connection of
+                # its own) reads no registers: its row shows what its meters
+                # give it — the values its own page shows
+                hero = [dict(h, meters=True) for h in
+                        _hero_by_name(store, fleet_names(links_of(dev_cfg)))]
             health, stale_s = "idle", None
             if client:
                 health = client.data_health().get("status")

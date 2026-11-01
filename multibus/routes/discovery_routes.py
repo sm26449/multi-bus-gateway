@@ -1,5 +1,5 @@
 # Multi-Bus Gateway — multi-protocol Modbus/HTTP/MQTT acquisition gateway.
-# Copyright (C) 2024-2026 Stefan Maldaianu <sm26449@diysolar.ro>
+# Copyright (C) 2024-2026 Stefan Maldaianu <stefan@multibus.dev>
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU Affero General Public License as published by
@@ -26,7 +26,8 @@ import json
 import re
 from typing import Dict
 
-from fastapi import APIRouter, Body, HTTPException, Query
+from fastapi import APIRouter, Body, HTTPException, Query, Request
+from fastapi.responses import JSONResponse
 
 from ..payload import flag
 
@@ -62,6 +63,9 @@ def _require_lan_host(host: str) -> str:
     return sorted(addrs)[0]
 
 
+UNITS_WAIT_S = 120.0     # the longest POST /api/discover/modbus/units waits for its sweep
+
+
 def _port_or_422(port: int) -> int:
     """Shared TCP-port bound for every discovery route — an out-of-range port
     must 422 here, not surface from the client code."""
@@ -74,6 +78,14 @@ def _port_or_422(port: int) -> int:
 def build(ctx) -> APIRouter:
     r = APIRouter(tags=["discovery"])
     config = ctx.config
+
+    def _refuse_if_listened(what: str, protocol: str, conn: Dict) -> None:
+        """409 on a bus a device only listens to (ADR-0025): nothing is sent."""
+        from ..bus_claims import bus_of, listeners, refusal_detail, where_of
+        bus = bus_of(protocol, conn)
+        ids = listeners(config, bus, getattr(ctx, "template_registry", None))
+        if ids:
+            raise HTTPException(status_code=409, detail=refusal_detail(what, bus, ids, where_of(protocol, conn)))
 
     @r.post("/api/discover/modbus/scan")
     async def discover_modbus_scan(payload: Dict = Body(...)):
@@ -93,8 +105,28 @@ def build(ctx) -> APIRouter:
             hosts = discovery.hosts_from_cidr(cidr, allow_nonlan=config.security.allow_nonlan_http_devices)
         except ValueError as e:
             raise HTTPException(status_code=422, detail={"errors": [str(e)]})
+        # a host:port a device only listens to is not knocked on (ADR-0025)
+        from ..bus_claims import bus_of, listeners
+        tr = getattr(ctx, "template_registry", None)
+        skipped = [{"host": h, "listeners": ids} for h in hosts
+                   for ids in [listeners(config, bus_of("tcp", {"host": h, "port": port}), tr)] if ids]
+        held = {s["host"] for s in skipped}
+        # …nor a host:port a device of ours polls, nor a bridge port of ours
+        # with a client that is not us (or that nobody can name, unless
+        # confirm_open): never a second connection there (L3.7 m1)
+        from .. import preview
+        from .previews import env_of
+        env = env_of(ctx)
+        confirm = payload.get("confirm_open") is True
+        for h in [h for h in hosts if h not in held]:
+            why = preview.second_connection(env, h, port, confirm)
+            if why:
+                skipped.append({"host": h, **{k: v for k, v in why.items() if k in ("pollers", "client", "unknown")},
+                                "reason": why["errors"][0]})
+                held.add(h)
+        hosts = [h for h in hosts if h not in held]
         results = await asyncio.to_thread(discovery.scan_tcp, hosts, port, unit, timeout)
-        return {"scanned": len(hosts), "results": results}
+        return {"scanned": len(hosts), "results": results, **({"skipped": skipped} if skipped else {})}
 
     @r.post("/api/discover/esphome")
     async def discover_esphome(payload: Dict = Body(...)):
@@ -119,40 +151,59 @@ def build(ctx) -> APIRouter:
         return await asyncio.to_thread(discovery.scan_esphome, hosts, port, timeout)
 
     @r.post("/api/discover/modbus/units")
-    async def discover_modbus_units(payload: Dict = Body(...)):
-        """Sweep unit/slave ids on ONE endpoint (TCP host or RTU serial line)."""
-        from .. import discovery
+    async def discover_modbus_units(request: Request, payload: Dict = Body(...)):
+        """Sweep unit/slave ids on ONE endpoint, waited for: the generic bus
+        scan (``POST /api/bus-scan``, bus_scan.py) — through the bus's shared
+        transport, reads only, 409 on a listened bus. RTU never opens a serial
+        client of its own beside a device that holds the line (L3-F1). The
+        protocol is kept (rtu, ascii, tcp, udp, rtu-tcp, ascii-tcp); what the
+        scan cannot do is refused. Answers ``{protocol, units, job}``; past
+        120 s it answers 202 ``{protocol, job, state: running}`` (poll
+        ``GET /api/bus-scan/{job}``). A client that goes away stops the job."""
+        from .. import bus_scan
+        from ..config import NETWORK_PROTOCOLS, SERIAL_PROTOCOLS
+        from .bus_scan import launch
         proto = str(payload.get('protocol', 'tcp')).lower()
         try:
             u0 = int(payload.get('unit_start', 1))
             u1 = int(payload.get('unit_end', 32))
-            timeout = min(3.0, max(0.1, float(payload.get('timeout', 0.5))))
+            timeout = min(3.0, max(0.2, float(payload.get('timeout', 0.5))))
         except (TypeError, ValueError):
             raise HTTPException(status_code=422, detail={"errors": ["unit range / timeout must be numbers"]})
-        if proto == 'rtu':
+        if proto in SERIAL_PROTOCOLS:
             sp = str(payload.get('serial_port', '') or '').strip()
             if not sp:
-                raise HTTPException(status_code=422, detail={"errors": ["serial_port required for RTU"]})
-            units = await asyncio.to_thread(
-                discovery.sweep_units_rtu, sp, u0, u1, timeout,
-                int(payload.get('baudrate', 9600)), str(payload.get('parity', 'N')),
-                int(payload.get('stopbits', 1)), int(payload.get('bytesize', 8)))
-        else:
+                raise HTTPException(status_code=422, detail={"errors": [f"serial_port required for {proto.upper()}"]})
+            conn = {"protocol": proto, "serial_port": sp,
+                    **{k: payload[k] for k in ('baudrate', 'parity', 'stopbits', 'bytesize') if k in payload}}
+        elif proto in NETWORK_PROTOCOLS:
             host = str(payload.get('host', '') or '').strip()
             if not host:
-                raise HTTPException(status_code=422, detail={"errors": ["host required for TCP"]})
-            # LAN-guard the single host — resolves hostnames (meter.local) too, not
-            # just literal IPs, then validates the resolved addresses are private.
-            _e = discovery.lan_host_error(host, config.security.allow_nonlan_http_devices)
-            if _e:
-                raise HTTPException(status_code=422, detail={"errors": [_e]})
+                raise HTTPException(status_code=422, detail={"errors": [f"host required for {proto}"]})
             try:
                 tcp_port = _port_or_422(int(payload.get('port', 502)))
             except (TypeError, ValueError):
                 raise HTTPException(status_code=422, detail={"errors": ["port must be a number"]})
-            units = await asyncio.to_thread(discovery.sweep_units_tcp, host,
-                                            tcp_port, u0, u1, timeout)
-        return {"protocol": proto, "units": units}
+            conn = {"protocol": proto, "host": host, "port": tcp_port}
+        else:
+            raise HTTPException(status_code=422, detail={"errors": [
+                f"protocol: '{proto}' cannot be swept (rtu, ascii, tcp, udp, rtu-tcp, ascii-tcp)"]})
+        body = {"connection": conn, "from": max(1, u0), "to": min(247, u1), "timeout": timeout,
+                "fc43": False, "confirm_open": payload.get("confirm_open") is True}
+        job = launch(ctx, request, body)
+        end = asyncio.get_running_loop().time() + UNITS_WAIT_S
+        while job.finished is None:
+            if await request.is_disconnected():
+                bus_scan.cancel(job.id)               # nobody waits for it: it stops asking
+                break
+            if asyncio.get_running_loop().time() > end:
+                return JSONResponse(status_code=202, content={"protocol": proto, "job": job.id, "state": "running"})
+            await asyncio.sleep(0.1)
+        if job.final == 'failed' and not job.found:
+            raise HTTPException(status_code=502, detail={"errors": [job.error or "the sweep failed"], "job": job.id})
+        return {"protocol": proto, "units": [f["unit_id"] for f in job.found if f.get("asked")],
+                "known": [{"unit": f["unit_id"], "device": f["device"]} for f in job.found if not f.get("asked")],
+                "job": job.id}
 
     @r.post("/api/discover/sunspec")
     async def discover_sunspec(payload: Dict = Body(...)):
@@ -173,6 +224,12 @@ def build(ctx) -> APIRouter:
         except (TypeError, ValueError):
             raise HTTPException(status_code=422, detail={"errors": ["port/unit_id/timeout must be numbers"]})
         _port_or_422(port)
+        _refuse_if_listened("A SunSpec walk", "tcp", {"host": host, "port": port})
+        from .. import preview
+        from .previews import env_of
+        why = preview.second_connection(env_of(ctx), host, port, payload.get("confirm_open") is True)
+        if why:
+            raise HTTPException(status_code=409, detail=why)
         return await asyncio.to_thread(discovery.sunspec_walk, host, port, unit, timeout)
 
     @r.post("/api/discover/mqtt/browse")

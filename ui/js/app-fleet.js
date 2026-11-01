@@ -1,5 +1,5 @@
 /* Multi-Bus Gateway — multi-protocol Modbus/HTTP/MQTT acquisition gateway.
- * Copyright (C) 2024-2026 Stefan Maldaianu <sm26449@diysolar.ro>
+ * Copyright (C) 2024-2026 Stefan Maldaianu <stefan@multibus.dev>
  * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 // Fleet overview — the dashboard's default face when several devices exist.
@@ -241,7 +241,7 @@ Object.assign(JanitzaMonitor.prototype, {
                 const m = (d.hero || [])[0];
                 value = m?.value;
                 unit = m?.unit || '';
-                metricLabel = m?.label || d.health || '';
+                metricLabel = this._fleetMetricLabel(m) || d.health || '';
             }
             const disp = this._displayValue(value, { unit });
             cards.push(`
@@ -375,6 +375,12 @@ Object.assign(JanitzaMonitor.prototype, {
         return (s / 3600).toFixed(1) + 'h';
     },
 
+    // a fleet metric's label: what a device's meters give it goes by the
+    // words its own page uses (the full label, which meter, is the tooltip)
+    _fleetMetricLabel(m) {
+        return (m && m.meters && this._meterValueWord(m.name)) || (m && m.label) || '';
+    },
+
     _fleetRow(d) {
         const rank = this._fleetRank(d);
         const hDot = { ok: 'var(--success)', degraded: 'var(--warning)',
@@ -382,8 +388,10 @@ Object.assign(JanitzaMonitor.prototype, {
         const sev = (rank <= 1) ? 'sev-danger' : (rank < 50 ? 'sev-warning' : '');
         const metrics = (d.hero || []).map(m => {
             const disp = this._displayValue(m.value, { unit: m.unit });
-            return `<span class="fleet-metric" title="${this._esc(m.label)}">
-                <span class="fm-l">${this._esc(m.label)}</span>
+            const label = this._fleetMetricLabel(m);
+            const tip = m.label && m.label !== m.name ? m.label : label;
+            return `<span class="fleet-metric" title="${this._esc(tip)}">
+                <span class="fm-l">${this._esc(label)}</span>
                 <span class="fm-v">${this._esc(disp.text)}</span><span class="fm-u">${this._esc(disp.unit)}</span>
             </span>`;
         }).join('');

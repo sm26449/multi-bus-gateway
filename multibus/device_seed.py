@@ -1,5 +1,5 @@
 # Multi-Bus Gateway — multi-protocol Modbus/HTTP/MQTT acquisition gateway.
-# Copyright (C) 2024-2026 Stefan Maldaianu <sm26449@diysolar.ro>  — AGPL-3.0-or-later
+# Copyright (C) 2024-2026 Stefan Maldaianu <stefan@multibus.dev>  — AGPL-3.0-or-later
 """Template → register-selection seeding, shared by the API and the boot path.
 
 Extracted from ``create_api()``'s ``_autoselect_template_registers`` closure so
@@ -11,11 +11,84 @@ closure this replaces; the API keeps a thin wrapper.
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import Any, Dict
 
+from .can_signal import can_fields
 from .canonical_fields import measurement_for, mqtt_topic_for
 
 logger = logging.getLogger(__name__)
+
+
+def _seed_output(r):
+    """MQTT topic + InfluxDB measurement + UI for a seeded register.
+    Precedence: the template's explicit per-register ``defaults`` win;
+    else derive from the canonical dictionary (name → hierarchical MQTT
+    topic + InfluxDB measurement). A non-canonical name (e.g. a raw
+    vendor map) leaves BOTH empty so the publisher owns the fallback
+    uniformly — MQTT to the flat register name, InfluxDB to the
+    name/unit heuristic in ``_get_measurement`` — instead of pinning the
+    measurement to the raw ``category`` (often 'other'), which would
+    shadow that heuristic and collapse every series into one measurement."""
+    d = r.defaults or {}
+    dm, di, du = d.get('mqtt') or {}, d.get('influxdb') or {}, d.get('ui') or {}
+    return {
+        'mqtt': {'enabled': dm.get('enabled', True),
+                 'topic': dm.get('topic') or mqtt_topic_for(r.name) or ''},
+        'influxdb': {'enabled': di.get('enabled', True),
+                     'measurement': (di.get('measurement')
+                                     or measurement_for(r.name) or ''),
+                     'tags': di.get('tags') or {}},
+        'ui': {'show_on_dashboard': du.get('show_on_dashboard', True),
+               'widget': du.get('widget', 'value')},
+    }
+
+
+SEED_CAP = 300
+
+
+def seeded_rows(tpl) -> list:
+    """The template rows a new device starts with. Curated templates mark a
+    recommended subset via per-register `defaults` (the Janitza map has 58 of
+    4126) — only those. A template without defaults is taken whole, but
+    capped so a huge map can't flood MQTT/InfluxDB with thousands of series
+    on a single click: past SEED_CAP rows, none ([])."""
+    rows = list(getattr(tpl, 'registers', None) or [])
+    chosen = [r for r in rows if r.defaults]
+    if chosen:
+        return chosen
+    return rows if len(rows) <= SEED_CAP else []
+
+
+def seed_row(r) -> Dict[str, Any]:
+    """One template row as a device's selection stores it: the seed of a
+    new device, and the rows a read preview decodes with (preview.py)."""
+    return {
+        'address': r.address, 'name': r.name, 'label': r.label or r.name,
+        'unit': r.unit, 'data_type': r.data_type,
+        # what the template says about the row, so a unit starts identical to
+        # it (and "Update from template" has nothing to offer a new unit)
+        **({'description': r.description} if getattr(r, 'description', '') else {}),
+        **({'category': r.category} if getattr(r, 'category', '') else {}),
+        'poll_group': r.poll_group or 'normal', 'json_path': r.json_path,
+        'topic': getattr(r, 'topic', ''), 'scale': r.scale,
+        **({'offset': r.offset} if getattr(r, 'offset', 0) else {}),
+        **({'scale_from': r.scale_from} if getattr(r, 'scale_from', '') else {}),
+        'register_type': getattr(r, 'register_type', 'holding'),
+        **({'nan': r.nan} if getattr(r, 'nan', None) is not None else {}),
+        **({'monotonic': True} if getattr(r, 'monotonic', False) else {}),
+        **{k: getattr(r, k) for k in ('enum', 'bits', 'mask', 'shift')
+           if getattr(r, k, None) is not None},
+        **{k: getattr(r, k) for k in
+           ('device_class', 'state_class', 'entity_category', 'icon')
+           if getattr(r, k, '')},
+        **({'enabled_by_default': r.enabled_by_default}
+           if getattr(r, 'enabled_by_default', None) is not None else {}),
+        **({'suggested_display_precision': r.suggested_display_precision}
+           if getattr(r, 'suggested_display_precision', None) is not None else {}),
+        **({'aggregates': r.aggregates} if getattr(r, 'aggregates', None) else {}),
+        **can_fields(r),
+        **_seed_output(r),
+    }
 
 
 def autoselect_template_registers(config: Any, template_registry: Any,
@@ -68,68 +141,14 @@ def autoselect_template_registers(config: Any, template_registry: Any,
         # a previous device's file: its formulas, Energy selection and poll
         # intervals belong to that device, not to this one
         stale_file = True
-    # Curated templates mark a recommended subset via per-register `defaults`
-    # (the Janitza map has 58 of 4126) — seed only those. A template without
-    # defaults is seeded whole, but capped so a huge map can't flood
-    # MQTT/InfluxDB with thousands of series on a single click.
-    chosen = [r for r in tpl.registers if r.defaults]
+    chosen = seeded_rows(tpl)
     if not chosen:
-        chosen = tpl.registers
-        if len(chosen) > 300:
-            logger.warning(f"device {dev_cfg.id}: template {tpl.id} has "
-                           f"{len(chosen)} registers and no curated defaults — "
-                           "auto-selecting none (pick registers in the UI)")
-            return
+        logger.warning(f"device {dev_cfg.id}: template {tpl.id} has "
+                       f"{len(tpl.registers)} registers and no curated defaults — "
+                       "auto-selecting none (pick registers in the UI)")
+        return
 
-    def _seed_output(r):
-        """MQTT topic + InfluxDB measurement + UI for a seeded register.
-        Precedence: the template's explicit per-register ``defaults`` win;
-        else derive from the canonical dictionary (name → hierarchical MQTT
-        topic + InfluxDB measurement). A non-canonical name (e.g. a raw
-        vendor map) leaves BOTH empty so the publisher owns the fallback
-        uniformly — MQTT to the flat register name, InfluxDB to the
-        name/unit heuristic in ``_get_measurement`` — instead of pinning the
-        measurement to the raw ``category`` (often 'other'), which would
-        shadow that heuristic and collapse every series into one measurement."""
-        d = r.defaults or {}
-        dm, di, du = d.get('mqtt') or {}, d.get('influxdb') or {}, d.get('ui') or {}
-        return {
-            'mqtt': {'enabled': dm.get('enabled', True),
-                     'topic': dm.get('topic') or mqtt_topic_for(r.name) or ''},
-            'influxdb': {'enabled': di.get('enabled', True),
-                         'measurement': (di.get('measurement')
-                                         or measurement_for(r.name) or ''),
-                         'tags': di.get('tags') or {}},
-            'ui': {'show_on_dashboard': du.get('show_on_dashboard', True),
-                   'widget': du.get('widget', 'value')},
-        }
-
-    reg_list = [{
-        'address': r.address, 'name': r.name, 'label': r.label or r.name,
-        'unit': r.unit, 'data_type': r.data_type,
-        # what the template says about the row, so a unit starts identical to
-        # it (and "Update from template" has nothing to offer a new unit)
-        **({'description': r.description} if getattr(r, 'description', '') else {}),
-        **({'category': r.category} if getattr(r, 'category', '') else {}),
-        'poll_group': r.poll_group or 'normal', 'json_path': r.json_path,
-        'topic': getattr(r, 'topic', ''), 'scale': r.scale,
-        **({'offset': r.offset} if getattr(r, 'offset', 0) else {}),
-        **({'scale_from': r.scale_from} if getattr(r, 'scale_from', '') else {}),
-        'register_type': getattr(r, 'register_type', 'holding'),
-        **({'nan': r.nan} if getattr(r, 'nan', None) is not None else {}),
-        **({'monotonic': True} if getattr(r, 'monotonic', False) else {}),
-        **{k: getattr(r, k) for k in ('enum', 'bits', 'mask', 'shift')
-           if getattr(r, k, None) is not None},
-        **{k: getattr(r, k) for k in
-           ('device_class', 'state_class', 'entity_category', 'icon')
-           if getattr(r, k, '')},
-        **({'enabled_by_default': r.enabled_by_default}
-           if getattr(r, 'enabled_by_default', None) is not None else {}),
-        **({'suggested_display_precision': r.suggested_display_precision}
-           if getattr(r, 'suggested_display_precision', None) is not None else {}),
-        **({'aggregates': r.aggregates} if getattr(r, 'aggregates', None) else {}),
-        **_seed_output(r),
-    } for r in chosen]
+    reg_list = [seed_row(r) for r in chosen]
     tpg = {n: {'interval': g.get('interval', 5), 'description': g.get('description', '')}
            for n, g in (tpl.poll_groups or {}).items()} or None
     config.save_device_registers(dev_cfg.id, reg_list, poll_groups=tpg,

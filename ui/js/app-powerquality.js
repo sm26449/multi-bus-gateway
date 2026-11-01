@@ -1,5 +1,5 @@
 /* Multi-Bus Gateway — multi-protocol Modbus/HTTP/MQTT acquisition gateway.
- * Copyright (C) 2024-2026 Stefan Maldaianu <sm26449@diysolar.ro>
+ * Copyright (C) 2024-2026 Stefan Maldaianu <stefan@multibus.dev>
  * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 /* Multi-Bus Gateway — Power Quality section (Jasic PQ recorder archive).
@@ -66,7 +66,7 @@ Object.assign(JanitzaMonitor.prototype, {
             // the device shown, and only its row — never another device's
             // counters; embedded on a device page the switch is on this tab
             const embedded = !!document.getElementById('pqInfo')?.closest('#deviceDetailView');
-            const id = this._viewDevice || this._primaryDeviceId();
+            const id = this._viewDevice || this._defaultDeviceId();
             const dev = (data.devices || []).find(d => d.device === id);
             const el = document.getElementById('pqInfo');
             if (!el) return;
@@ -75,10 +75,10 @@ Object.assign(JanitzaMonitor.prototype, {
                 return;
             }
             if (!dev.enabled) {
-                // the switch is on this same tab of the device page
+                // the switch is one of the device's outputs (⋯ → Outputs…)
                 el.textContent = embedded
-                    ? this.t('pq.disabledHere', 'The PQ event recorder is off — switch it on above.')
-                    : this.t('pq.disabledThere', "The PQ event recorder is off — switch it on in the device's Power Quality tab.");
+                    ? this._roleHint('pq.disabledHere', 'The PQ event recorder is off — switch it on from ⋯ → Outputs….', 'pq.disabledOther', 'The PQ event recorder is off: an admin switches it on.')
+                    : this._roleHint('pq.disabledThere', "The PQ event recorder is off — switch it on from the device's ⋯ → Outputs….", 'pq.disabledOther', 'The PQ event recorder is off: an admin switches it on.');
                 return;
             }
             const c = dev.counters || {};

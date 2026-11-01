@@ -1,5 +1,5 @@
 /* Multi-Bus Gateway — multi-protocol Modbus/HTTP/MQTT acquisition gateway.
- * Copyright (C) 2024-2026 Stefan Maldaianu <sm26449@diysolar.ro>
+ * Copyright (C) 2024-2026 Stefan Maldaianu <stefan@multibus.dev>
  * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 /* Asset attributes (docs/attributes.md): what a piece of equipment is, where,
@@ -88,6 +88,8 @@ Object.assign(JanitzaMonitor.prototype, {
             return `${this._esc(v)}°${c ? ` (${c[0]})` : ''}`;
         }
         if (spec?.type === 'choice') return this._esc(this.t(`attr.${cat}.${fid}.${v}`, String(v)));
+        if (spec?.type === 'labels' && Array.isArray(v)) return v.map(x => `<span class="dev-chip">${this._esc(x)}</span>`).join(' ');
+        if (spec?.multiline) return `<span style="white-space:pre-line;">${this._esc(v)}</span>`;
         return `${this._esc(v)}${spec?.unit ? ' ' + this._esc(spec.unit) : ''}`;
     },
 
@@ -143,8 +145,19 @@ Object.assign(JanitzaMonitor.prototype, {
         const lbl = this._esc(this._attrLabel(cat, fid, f.label || fid));
         const req = f.required ? ' *' : '';
         let input;
-        if (f.type === 'text') {
-            input = `<input class="input input-sm" id="${id}" type="text" maxlength="${f.max_len || 64}" value="${this._esc(v ?? '')}" data-attr-f="${fid}" data-attr-row="${i}" spellcheck="false">`;
+        const hintId = `${id}_hint`;
+        let hint = '';
+        if (f.type === 'text' && f.multiline) {
+            input = `<textarea class="input input-sm" id="${id}" rows="3" maxlength="${f.max_len || 500}" data-attr-f="${fid}" data-attr-row="${i}" aria-describedby="${hintId}">${this._esc(v ?? '')}</textarea>`;
+            hint = this.t('attr.hint.maxLen', 'At most {n} characters', { n: f.max_len || 500 });
+        } else if (f.type === 'text') {
+            input = `<input class="input input-sm" id="${id}" type="text" maxlength="${f.max_len || 64}" value="${this._esc(v ?? '')}" data-attr-f="${fid}" data-attr-row="${i}" spellcheck="false"${f.private ? ` aria-describedby="${hintId}"` : ''}>`;
+            if (f.private) hint = this.t('attr.hint.private', 'Shown to signed-in users; published on MQTT only when the settings allow it');
+        } else if (f.type === 'labels') {
+            input = `<input class="input input-sm" id="${id}" type="text" value="${this._esc(Array.isArray(v) ? v.join(', ') : (v ?? ''))}" data-attr-f="${fid}" data-attr-row="${i}" spellcheck="false" autocapitalize="none" placeholder="hvac, floor-1" aria-describedby="${hintId}">`;
+            hint = this.t('attr.hint.labels', 'Separated by commas: a-z 0-9 - _, at most {n}', { n: f.max_items || 16 });
+        } else if (f.type === 'date') {
+            input = `<input class="input input-sm" id="${id}" type="date" min="${this._esc(f.min || '')}" max="${this._esc(f.max || '')}" value="${this._esc(v ?? '')}" data-attr-f="${fid}" data-attr-row="${i}">`;
         } else if (f.type === 'choice') {
             input = `<select class="input input-sm" id="${id}" data-attr-f="${fid}" data-attr-row="${i}">
                 <option value=""></option>${f.choices.map(c => `<option value="${this._esc(c)}" ${String(v) === String(c) ? 'selected' : ''}>${this._esc(this.t(`attr.${cat}.${fid}.${c}`, String(c)))}</option>`).join('')}</select>`;
@@ -159,7 +172,8 @@ Object.assign(JanitzaMonitor.prototype, {
         } else {
             input = `<input class="input input-sm" id="${id}" type="number" step="${f.type === 'integer' ? 1 : 'any'}" ${f.min != null ? `min="${f.min}"` : ''} ${f.max != null ? `max="${f.max}"` : ''} value="${this._esc(v ?? '')}" data-attr-f="${fid}" data-attr-row="${i}">`;
         }
-        return `<div class="form-group" style="min-width:120px;"><label class="form-label" for="${id}">${lbl}${req}${f.unit ? ` <span class="field-hint" style="margin:0;">(${this._esc(f.unit)})</span>` : ''}</label>${input}</div>`;
+        const wide = f.multiline ? 'flex-basis:100%;' : '';
+        return `<div class="form-group" style="min-width:120px;${wide}"><label class="form-label" for="${id}">${lbl}${req}${f.unit ? ` <span class="field-hint" style="margin:0;">(${this._esc(f.unit)})</span>` : ''}</label>${input}${hint ? `<div class="field-hint" id="${hintId}">${this._esc(hint)}</div>` : ''}</div>`;
     },
 
     _attrRenderEditor() {
@@ -214,8 +228,11 @@ Object.assign(JanitzaMonitor.prototype, {
                 const f = spec.fields[fid];
                 const raw = String(el.value ?? '').trim();
                 if (raw === '') return;
-                if (f.type === 'text') {
+                if (f.type === 'text' || f.type === 'date') {
                     row[fid] = raw;
+                } else if (f.type === 'labels') {
+                    // what was typed, split — the server says which one is not a label
+                    row[fid] = raw.split(',').map(x => x.trim()).filter(Boolean);
                 } else if (f.type === 'choice') {
                     const c = f.choices.find(x => String(x) === raw);
                     row[fid] = c !== undefined ? c : raw;
@@ -327,14 +344,18 @@ Object.assign(JanitzaMonitor.prototype, {
                          ...(all.orphans?.installation || []).map(id => ['installations', id])];
         return `
         <div class="settings-card">
-            <div class="settings-card-header"><h3><i aria-hidden="true" class="bi bi-shield-lock"></i> ${t('attr.privacy', 'Coordinates')}</h3></div>
+            <div class="settings-card-header"><h3><i aria-hidden="true" class="bi bi-shield-lock"></i> ${t('attr.privacy', 'Privacy')}</h3></div>
             <div class="settings-card-body">
                 <div class="form-group"><label class="form-label" for="attrPublish">${t('attr.publish', 'Shown to viewers and published as')}</label>
-                    <select class="input" id="attrPublish" data-admin ${this._act('attrPublishSet', [], { value: true, on: 'change' })} style="max-width:320px;">
+                    <select class="input" id="attrPublish" aria-describedby="attrPublishHint" data-admin ${this._act('attrPublishSet', [], { value: true, on: 'change' })} style="max-width:320px;">
                         <option value="coarse" ${mode === 'coarse' ? 'selected' : ''}>${t('attr.publishCoarse', 'Coarse (2 decimals, about 1 km)')}</option>
                         <option value="exact" ${mode === 'exact' ? 'selected' : ''}>${t('attr.publishExact', 'Exact')}</option>
                         <option value="off" ${mode === 'off' ? 'selected' : ''}>${t('attr.publishOff', 'Not at all')}</option></select>
-                    <div class="field-hint">${t('attr.publishHint', 'Coordinates locate a home. An admin always sees them exactly; logs and the backup diff show them coarse; a sanitised backup leaves them out.')}</div></div>
+                    <div class="field-hint" id="attrPublishHint">${t('attr.publishHint', 'Coordinates locate a home, and so does where a device is mounted (its Identity): “Not at all” keeps both off MQTT and OPC UA. An admin always sees them exactly; logs and the backup diff show coordinates coarse; a sanitised backup leaves them out.')}</div></div>
+                <div class="form-group">
+                    <label class="switch-label"><input type="checkbox" id="attrPublishSerials" data-admin aria-describedby="attrPublishSerialsHint" ${all.settings?.publish_serials === true ? 'checked' : ''}
+                        ${this._act('attrSerialsSet', [], { el: true, on: 'change' })}><span>${t('attr.publishSerials', 'Publish serial numbers')}</span></label>
+                    <div class="field-hint" id="attrPublishSerialsHint">${t('attr.publishSerialsHint', 'Off: a device’s serial number (its Identity) is shown to signed-in users only, never sent to MQTT or OPC UA. On: it goes out in the device’s meta with the rest of its nameplate.')}</div></div>
                 ${(all.warnings || []).map(w => `<div class="field-error">${this._esc(w)}</div>`).join('')}
                 ${orphans.length ? `<h4 style="margin:12px 0 6px;">${t('attr.orphans', 'Kept for ids that no longer exist')}</h4>
                     <p class="field-hint">${t('attr.orphansHint', 'A deleted device can be restored with them. Delete them when the equipment is gone for good.')}</p>
@@ -351,6 +372,23 @@ Object.assign(JanitzaMonitor.prototype, {
         else this.showToast('success', this.t('attr.saved', 'Saved'), mode);
         const st = this._attrState;
         if (st) await this._loadAttributes(st.kind, st.id, st.host);
+    },
+
+    async attrSerialsSet(cb) {
+        const on = !!cb.checked;
+        const r = await fetch('/api/attributes/settings', { method: 'PUT', headers: { 'Content-Type': 'application/json' },
+                                                            body: JSON.stringify({ publish_serials: on }) });
+        if (!r.ok) {
+            cb.checked = !on;
+            this.showToast('error', this.t('attr.notSaved', 'Not saved'), String(r.status));
+            return;
+        }
+        this.showToast('success', this.t('attr.saved', 'Saved'),
+                       on ? this.t('attr.serialsOn', 'Serial numbers are published') : this.t('attr.serialsOff', 'Serial numbers stay off MQTT and OPC UA'));
+        // the document's revision moved: read again (the editors send it), focus kept
+        const st = this._attrState;
+        if (st) await this._loadAttributes(st.kind, st.id, st.host);
+        document.getElementById('attrPublishSerials')?.focus();
     },
 
     async attrDropOrphan(kind, id) {

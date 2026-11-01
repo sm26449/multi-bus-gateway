@@ -1,0 +1,39 @@
+# command_binding_e2e: the binding and channel editors (ADR-0019) — a GX of
+# its own (`gx`, victron_gx_mqtt: every channel 60 s in its template, no safe
+# values), a drive of its own (`vfd1`, delta_vfd_el: a `motor` channel with
+# min off / starts per hour) and the `sunfield` installation, whose inverter
+# group binds power_limit / restore. Every address is the container's own
+# loopback: nothing answers, nothing real is reached.
+devices:
+  - id: gx
+    name: Victron GX
+    template: victron_gx_mqtt
+    enabled: true
+    connection: {protocol: mqtt, broker: 127.0.0.1, topic: "N/c0619ab00001/#",
+                 vars: {portal: c0619ab00001, vebus: "276"}, keepalive: false}
+    commands:
+      - {name: ess_setpoint, enabled: true}
+      - {name: max_charge_current, enabled: true}
+  - id: vfd1
+    name: Pump drive
+    template: delta_vfd_el
+    enabled: true
+    connection: {protocol: tcp, host: 127.0.0.1, port: 15503, unit_id: 1, timeout: 1}
+    commands: [{name: run_at}]
+endpoints:
+  - id: sunfield
+    name: Sunfield PV
+    enabled: true
+    groups:
+      - id: inverters
+        role: inverter
+        template: fronius_sunspec_inverter
+        units: [1, 2]
+        sources: [{id: sunspec, protocol: tcp, host: 127.0.0.1, port: 15502, timeout: 1,
+                   template: fronius_sunspec_inverter}]
+        commands: [{name: power_limit}, {name: restore}]
+      - id: grid
+        role: meter
+        units: [{unit_id: 240, id: sunfield-meter-240, name: Grid meter}]
+        sources: [{id: sunspec, protocol: tcp, host: 127.0.0.1, port: 15502, timeout: 1,
+                   template: fronius_sunspec_meter}]

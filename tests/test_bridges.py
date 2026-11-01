@@ -1,5 +1,5 @@
 # Multi-Bus Gateway — multi-protocol Modbus/HTTP/MQTT acquisition gateway.
-# Copyright (C) 2024-2026 Stefan Maldaianu <sm26449@diysolar.ro>  — AGPL-3.0-or-later
+# Copyright (C) 2024-2026 Stefan Maldaianu <stefan@multibus.dev>  — AGPL-3.0-or-later
 """Bridges: boxes a serial bus is reached through, several slaves per bus,
 devices following their bridge, and telling a transparent converter from a
 Modbus TCP gateway by asking it."""
@@ -245,7 +245,11 @@ def test_scanning_a_bus_finds_its_slaves_and_recognises_a_fingerprinted_one(tmp_
         cfg, client = make_app(tmp_path)
         client.post("/api/bridges", json={"id": "ws", "type": "rtu_transparent", "host": "127.0.0.1",
                                           "ports": [{"port": port}]})
-        job = client.post(f"/api/bridges/ws/ports/{port}/scan", json={"from": 1, "to": 10, "timeout": 0.2}).json()["job"]
+        # a transparent converter cannot say who else is connected (L3.7): asked first, then confirmed
+        r = client.post(f"/api/bridges/ws/ports/{port}/scan", json={"from": 1, "to": 10, "timeout": 0.2})
+        assert r.status_code == 409 and r.json()["detail"]["client"] == "unknown", r.text
+        job = client.post(f"/api/bridges/ws/ports/{port}/scan",
+                          json={"from": 1, "to": 10, "timeout": 0.2, "confirm_open": True}).json()["job"]
         for _ in range(100):
             st = client.get(f"/api/bus-scan/{job}").json()
             if st["state"] != "running":
@@ -329,6 +333,11 @@ def test_listening_through_a_bridge_a_bus_is_polled_or_tapped_never_both(tmp_pat
     by = {p["port"]: p for p in b["ports"]}
     assert by[4196]["tapped"] is True and by[4197]["tapped"] is False
     assert all(x["tap"] for x in by[4196]["devices"])
+    # a tap holds the bus while it runs (ADR-0025: only an enabled listener
+    # claims it; these were saved off so that no client starts in the test)
+    for x in cfg.devices:
+        if x.id in ("t1", "t2"):
+            x.enabled = True
     r = client.post("/api/bridges/ws/ports/4196/scan", json={})
     assert r.status_code == 409 and "only listens" in r.text
     r = client.post("/api/bridges/ws/probe", json={"port": 4196, "unit_id": 1})
@@ -409,3 +418,101 @@ def test_a_modbus_device_changes_transport_keeping_its_map(tmp_path):
     assert (d.protocol, d.connection.host, d.connection.unit_id) == ("tcp", "192.0.2.61", 4)
     r = client.put("/api/devices/mv", json={**base, "connection": {"protocol": "http", "url": "http://192.168.1.5/x"}})
     assert r.status_code == 422
+
+
+@needs_tc
+def test_scan_lists_ports_the_bridge_cannot_serve_with_the_reason(tmp_path):
+    """A board UART the bridge lists but cannot serve (no-access, a console)
+    comes back with its status, reason and fix and NO port — never offered as
+    a bus — beside the ports it serves. RS-485 mode reaches the bridge."""
+    import http.server
+    import json as _json
+    posted = []
+    params = {"baud": 9600, "parity": "N", "databits": 8, "stopbits": 1}
+    adapters = [
+        {"stable_id": "1a86:7523@1-1", "dev": "/dev/ttyUSB0", "model": "USB Serial", "serial": "",
+         "tcp_port": 7001, "available": True, "excluded": False, "kind": "usb",
+         "label": "USB Serial (USB 1-1)", "status": "ok", "reason": "", "fix": "",
+         "serial_params": params, "serial_text": "9600 8N1", "rs485": False},
+        {"stable_id": "spi0.0:0", "dev": "/dev/ttySC0", "model": "", "serial": "",
+         "tcp_port": None, "available": False, "excluded": False, "kind": "board",
+         "label": "SC16IS752 ch0 (spi0.0)", "status": "no-access", "needs_major": 509,
+         "reason": "the container may not open device major 509", "fix": "sh scripts/serial-access.sh",
+         "serial_params": params, "serial_text": "9600 8N1", "rs485": False},
+        {"stable_id": "107d001000.serial", "dev": "/dev/ttyAMA10", "tcp_port": None,
+         "available": False, "kind": "board", "label": "pl011-axi (107d001000.serial)",
+         "status": "reserved", "reason": "kernel console (console=ttyAMA10 in /proc/cmdline)"},
+    ]
+
+    adapters.append({"stable_id": "00:05", "dev": "/dev/ttyS0", "tcp_port": None,
+                     "available": False, "kind": "board", "label": "serial (00:05)",
+                     "status": "not-enabled", "needs_enable": True, "enabled": False,
+                     "reason": "a UART of the board itself: served only once enabled"})
+    warning = {"slot": 1, "rule": "509:*", "driver": "sc16is7xx", "fix": "sh scripts/serial-access.sh",
+               "message": "device rule slot BRIDGE_TTY_1=509:* (written for sc16is7xx): no device "
+                          "has that number now"}
+
+    class Bridge(http.server.BaseHTTPRequestHandler):
+        def _send(self, obj):
+            body = _json.dumps(obj).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def do_GET(self):  # noqa: N802
+            if self.path == "/health":
+                self._send({"status": "ok", "adapters": 3, "version": "3.93.0",
+                            "warnings": [warning["message"]]})
+                return
+            self._send({"version": "3.93.0", "hostname": "pi5", "adapters": adapters,
+                        "warnings": [warning]})
+
+        def do_POST(self):  # noqa: N802
+            posted.append((self.path, _json.loads(self.rfile.read(int(self.headers["Content-Length"])))))
+            self._send({"stable_id": "spi0.0:0", "serial_text": "9600 8N1 RS-485", "rs485": True})
+
+        def log_message(self, *a):
+            pass
+    hs = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Bridge)
+    threading.Thread(target=hs.serve_forever, daemon=True).start()
+    try:
+        _cfg, client = make_app(tmp_path)
+        r = client.post("/api/bridges", json={"id": "pi", "type": "mbg_serial_bridge", "host": "127.0.0.1",
+                                              "control_port": hs.server_address[1]})
+        assert r.status_code == 200, r.text
+        s = client.get("/api/bridges/pi/scan").json()
+        by = {p["key"]: p for p in s["ports"]}
+        assert set(by) == {"1a86:7523@1-1", "spi0.0:0", "107d001000.serial", "00:05"}
+        assert by["00:05"]["status"] == "not-enabled" and by["00:05"]["needs_enable"] is True
+        assert by["00:05"]["port"] is None
+        assert s["warnings"][0]["slot"] == 1 and "sc16is7xx" in s["warnings"][0]["message"]
+        assert by["1a86:7523@1-1"]["port"] == 7001 and by["1a86:7523@1-1"]["status"] == "ok"
+        sc = by["spi0.0:0"]
+        assert sc["port"] is None and sc["available"] is False and sc["status"] == "no-access"
+        assert sc["kind"] == "board" and sc["label"] == "SC16IS752 ch0 (spi0.0)"
+        assert sc["fix"] == "sh scripts/serial-access.sh" and "509" in sc["reason"]
+        assert by["107d001000.serial"]["status"] == "reserved" and by["107d001000.serial"]["port"] is None
+        r = client.post("/api/bridges/pi/ports/spi0.0%3A0/serial", json={"rs485": True, "baud": 9600})
+        assert r.status_code == 200, r.text
+        assert posted[-1] == ("/adapters/spi0.0%3A0/serial", {"baud": 9600, "rs485": True})
+        client.post("/api/bridges/pi/ports/spi0.0%3A0/serial", json={"rs485": "yes", "baud": 9600})
+        assert posted[-1][1] == {"baud": 9600}                    # only a real boolean is passed on
+        n = len(posted)
+        r = client.post("/api/bridges/pi/ports/1a86%3A7523%401-1/serial", json={"rs485": True})
+        assert r.status_code == 422 and "board UART" in r.text and len(posted) == n
+        r = client.post("/api/bridges/pi/ports/00%3A05/enable", json={"enabled": True})
+        assert r.status_code == 200 and posted[-1] == ("/adapters/00%3A05/enable", {"enabled": True})
+        assert client.post("/api/bridges/pi/ports/00%3A05/enable", json={"enabled": 1}).status_code == 422
+        # the bridge's own warning reaches its card: degraded, with the reason
+        import time as _t
+        for _ in range(30):
+            card = next(b for b in client.get("/api/bridges").json()["bridges"] if b["id"] == "pi")
+            if (card.get("state") or {}).get("status") not in (None, "checking"):
+                break
+            _t.sleep(0.1)
+        assert card["state"]["status"] == "degraded" and "BRIDGE_TTY_1" in card["state"]["detail"]
+    finally:
+        hs.shutdown()
+        hs.server_close()

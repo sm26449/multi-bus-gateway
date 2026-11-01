@@ -1,5 +1,5 @@
 // Multi-Bus Gateway — multi-protocol Modbus/HTTP/MQTT acquisition gateway.
-// Copyright (C) 2024-2026 Stefan Maldaianu <sm26449@diysolar.ro>  — AGPL-3.0-or-later
+// Copyright (C) 2024-2026 Stefan Maldaianu <stefan@multibus.dev>  — AGPL-3.0-or-later
 //
 // The connection form's model (ui/js/connform-model.js), with no browser:
 // every way a device is reached, opened from the rows the server serves
@@ -58,6 +58,23 @@ check('ascii-tcp opens as RTU over the network, ASCII', mode('ascii-tcp').mode =
 check('a gateway bus opens as Modbus TCP on that bus', mode('via-gw').mode === 'tcp' && mode('via-gw').bridge === 'gw');
 check('a bridged device has no address of its own', mode('on-bridge').host === '' && mode('on-bridge').port === null);
 check('the local tap keeps its serial path', mode('tap-local').serial_port === '/dev/ttySEPLOS');
+check('seplos_v2-tcp opens as Seplos V2 over the network, polled (no mode stored)',
+      mode('seplos-net').mode === 'seplos_v2' && mode('seplos-net').net === true && mode('seplos-net').bus_mode === 'poll');
+check('a listened-to Seplos pack opens on its serial port, listening',
+      mode('seplos-listen').mode === 'seplos_v2' && !mode('seplos-listen').net
+      && mode('seplos-listen').bus_mode === 'listen' && mode('seplos-listen').serial_port === '/dev/ttyBMS0');
+{
+  // a NEW Seplos V2 device has no mode until one is chosen (review SV2-R4)
+  const M = Object.assign(CM.blank(), { mode: 'seplos_v2', serial_port: '/dev/ttyBMS0' });
+  check('new Seplos device: no mode pre-selected, none sent',
+        M.bus_mode === '' && !('mode' in CM.wire(M)) && CM.display(M).bus_mode === '', CM.wire(M));
+  check('new Seplos device: the form asks for the mode', 'connection.mode' in CM.errors(M), CM.errors(M));
+  const L = CM.apply(M, Object.assign(CM.display(M), { bus_mode: 'listen' }), CM.display(M));
+  check('new Seplos device: listen chosen is sent, no timeout asked',
+        CM.wire(L).mode === 'listen' && !Object.keys(CM.errors(L)).length, CM.errors(L));
+  check('fieldOf: the server\'s connection.mode lands on the mode choice', CM.fieldOf('connection.mode', M) === 'bus_mode');
+}
+check('a Seplos V2 bus is a family of its own', CM.classOf('seplos_v2') === 'seplos_v2' && CM.classOf('rtu_tap') === 'modbus');
 
 // ── what the whole connection says, mode by mode ──
 check('wire: a bridged device names the bus, not an address nor a line',
@@ -67,6 +84,12 @@ check('wire: a tap through a bridge says it is a tap, with no line',
 check('wire: a local tap has its serial port and no host',
       out.wire['tap-local'].serial_port === '/dev/ttySEPLOS' && !('host' in out.wire['tap-local']), out.wire['tap-local']);
 check('wire: ASCII over the network is ascii-tcp', out.wire['ascii-tcp'].protocol === 'ascii-tcp');
+check('wire: a Seplos pack on a local port has its line and mode, no host',
+      out.wire['seplos-listen'].protocol === 'seplos_v2' && out.wire['seplos-listen'].serial_port === '/dev/ttyBMS0'
+      && out.wire['seplos-listen'].mode === 'listen' && !('host' in out.wire['seplos-listen']), out.wire['seplos-listen']);
+check('wire: a Seplos pack over the network has host and port, no line',
+      out.wire['seplos-net'].protocol === 'seplos_v2-tcp' && out.wire['seplos-net'].host === '192.0.2.95'
+      && !('serial_port' in out.wire['seplos-net']) && !('baudrate' in out.wire['seplos-net']), out.wire['seplos-net']);
 check('wire: MQTT carries vars, the certificate choice and its own keepalive',
       eq(out.wire.gx.vars, { portal: 'c0ffee000001', vebus: '274' }) && out.wire.gx.tls_insecure === true
       && eq(out.wire.gx.keepalive, { every_s: 30, payload: '', topic: 'R/{portal}/keepalive' }), out.wire.gx);
@@ -84,6 +107,8 @@ const cases = [
   ['ascii-tcp', 'unit', { unit_id: '8' }, { unit_id: 8, protocol: 'ascii-tcp' }],
   ['tap-local', 'baud', { baudrate: '9600' }, { baudrate: 9600, protocol: 'rtu_tap' }],
   ['tap-bridge', 'unit', { unit_id: '10' }, { unit_id: 10, protocol: 'rtu_tap' }],
+  ['seplos-listen', 'pack address', { unit_id: '3' }, { unit_id: 3, protocol: 'seplos_v2' }],
+  ['seplos-net', 'listen instead of poll', { bus_mode: 'listen' }, { mode: 'listen', protocol: 'seplos_v2-tcp' }],
   ['http', 'url', { url: 'http://192.0.2.40/solar_api/v1/GetInverterRealtimeData.cgi?DeviceId=2' },
     { url: 'http://192.0.2.40/solar_api/v1/GetInverterRealtimeData.cgi?DeviceId=2', protocol: 'http' }],
   ['gx', 'a topic variable', { vars: 'portal=c0ffee000001, vebus=274, extra=1' },

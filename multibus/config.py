@@ -1,5 +1,5 @@
 # Multi-Bus Gateway — multi-protocol Modbus/HTTP/MQTT acquisition gateway.
-# Copyright (C) 2024-2026 Stefan Maldaianu <sm26449@diysolar.ro>
+# Copyright (C) 2024-2026 Stefan Maldaianu <stefan@multibus.dev>
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU Affero General Public License as published by
@@ -23,6 +23,7 @@ import re
 import yaml
 import json
 import logging
+import math
 from pathlib import Path
 from typing import Dict, Any, Optional, List
 from dataclasses import dataclass, field
@@ -80,7 +81,7 @@ def validate_register_identity(registers: List[Dict]) -> None:
         # neighbour); a register sourced from an MQTT topic or a JSON path has
         # a synthetic address, and consecutive ints are the NORM there — the
         # check would print one bogus warning per register at every boot
-        if r.get('topic') or r.get('json_path'):
+        if r.get('topic') or r.get('json_path') or r.get('can_id') not in (None, ''):
             continue
         dt = str(r.get('data_type') or 'uint16').lower()
         span = (max(1, int(r.get('length') or 1)) if dt == 'string'
@@ -196,6 +197,15 @@ class ModbusConfig:
     # 0 (the default) keeps the old behaviour: nothing changes for a device
     # with its bus to itself, or a gateway that does not care.
     endpoint_min_gap_s: float = 0.0
+    # A pause after every successful connect, before the first request. Some
+    # gateways ignore or refuse what arrives in the first seconds after a TCP
+    # connect (a Huawei SDongle, some serial bridges), so the first batch after
+    # every reconnect burned its whole retry budget. It belongs to the access
+    # point: held under the transport lock (a sibling sharing the socket waits
+    # too), and the largest value among the units sharing it wins (ADR-0015).
+    # None = the connection says nothing: the template's protocol default
+    # applies, else 0 — no pause, the old behaviour. Clamped to 0..30 s.
+    connect_settle_s: Optional[float] = None
     # Addresses this slave answers with ILLEGAL DATA ADDRESS (exception 02).
     # The batch builder never bridges a merged read across one of these (and
     # skips a selected register that sits on one), so a single unmapped address
@@ -216,11 +226,29 @@ class ModbusConfig:
     parity: str = "N"                 # N | E | O
     stopbits: int = 1
     bytesize: int = 8
+    # a virtual-map bus (seplos_v2): "poll" (the gateway asks) or "listen"
+    # (it never transmits); "" = the driver's default (poll)
+    mode: str = ""
+    # which adapter of our serial bridge this bus is (its stable_id): the
+    # bridge guard refuses to connect when the bridge serves another one on
+    # this port (bridge_guard.py). "" = not recorded yet (backfilled).
+    adapter: str = ""
 
     @property
     def bus(self) -> str:
         """Where the bus is: the serial port, or the bridge's host:port."""
         return self.serial_port or f"{self.host}:{self.port}"
+
+
+CONNECT_SETTLE_MAX_S = 30.0
+
+
+def settle_seconds(v) -> Optional[float]:
+    """``connect_settle_s`` as given: None when unset (the template's default
+    then applies), else clamped to 0..CONNECT_SETTLE_MAX_S."""
+    if v is None or v == '':
+        return None
+    return min(CONNECT_SETTLE_MAX_S, max(0.0, float(v)))
 
 
 def _serial_from_conn(c: Dict) -> Dict[str, Any]:
@@ -303,15 +331,19 @@ def _block(raw, did: str, key: str, ignored: Optional[Dict[str, str]] = None) ->
 
 
 def _kind_override(raw, did: str, ignored: Optional[Dict[str, str]] = None) -> str:
-    """A device's `kind:` override: one of the kinds, or nothing. Anything
-    else is dropped — never the device — and noted in ``ignored``."""
+    """A device's `kind:` override — its type: one of the kinds, a user type
+    (device_types.py), or nothing. Anything else is dropped — never the
+    device — and noted in ``ignored``."""
     from .device_kind import OVERRIDABLE, normalize
+    from .device_types import is_user_type, type_ids
     if raw in (None, ''):
         return ''
     k = normalize(raw)
     if k in OVERRIDABLE:
         return k
-    why = f"kind {raw!r} is not one of {', '.join(OVERRIDABLE)}: ignored"
+    if is_user_type(raw):
+        return raw
+    why = f"kind {raw!r} is not one of {', '.join(type_ids(include_other=False))}: ignored"
     logger.warning(f"devices[{did}]: {why}")
     if ignored is not None:
         ignored[f"{did}.kind"] = why
@@ -328,6 +360,46 @@ def _opcua_fields(raw) -> List[str]:
         if n and n not in out:
             out.append(n)
     return out
+
+
+def primary_opcua_kept(block: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    """The primary's `opcua_output:` as the file keeps it: on with every value
+    (the default) is not written, so it is {} — memory, the diff and the
+    ETag hold that form too (review 2026-11-01 #5)."""
+    block = dict(block or {})
+    if block.get('enabled', True) is True and not block.get('fields'):
+        return {}
+    return block
+
+
+def primary_rest_push_kept(cfg: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    """The primary's `rest_push:` as the file keeps it: one neither enabled
+    nor pointed at a URL is not written, so it is {}."""
+    cfg = dict(cfg or {})
+    return cfg if (cfg.get('enabled') or cfg.get('url')) else {}
+
+
+def _number_or(v, default, kind):
+    """A stored number read as ``kind`` (int or float); what cannot be read
+    keeps ``default`` (a hand-edited file never stops the gateway)."""
+    if v is None or isinstance(v, bool):
+        return default
+    try:
+        f = float(v)
+    except (TypeError, ValueError):
+        logger.warning("modbus: %r is not a number — %r kept", v, default)
+        return default
+    if kind is int:
+        if not f.is_integer():
+            logger.warning("modbus: %r is not a whole number — %r kept", v, default)
+            return default
+        return int(f)
+    return f
+
+
+class PrimaryRebuildError(RuntimeError):
+    """The primary's edit was saved, but rebuilding the running devices from
+    it failed: the file is new, the gateway runs on the old (restart it)."""
 
 
 def _influx_tags(raw: Any, did: str) -> Dict[str, str]:
@@ -362,7 +434,23 @@ def _mqtt_in_from_conn(c: Dict) -> Dict[str, Any]:
              'accept_retained', 'availability', 'stale_after_s', 'vars', 'keepalive') if k in c}
 
 
+def _can_from_conn(c: Dict) -> Dict[str, Any]:
+    # a CAN source (can_client.py): the carrier (socketcan), its channel
+    # (can0, vcan0), the bitrate the device expects (shown, set by the host)
+    # and how long a quiet bus stays fresh
+    if str(c.get('protocol', '')).lower() not in CAN_PROTOCOLS:
+        return {}
+    return {k: c[k] for k in ('carrier', 'channel', 'bitrate', 'stale_after_s') if k in c}
+
+
 PRIMARY_DEVICE_ID = "umg512"
+
+# What the legacy primary (device #1, the Janitza UMG 512-PRO synthesized from
+# the flat sections) was called before a fresh install stopped creating it
+# (ADR-0024). An install that HAS that device keeps these when its file does
+# not name them; a save then writes them out, so they stop being implicit.
+LEGACY_TOPIC_PREFIX = "multibus/umg512"
+LEGACY_HA_DEVICE_NAME = "Janitza UMG 512-PRO"
 
 
 @dataclass
@@ -391,6 +479,7 @@ class SourceConfig:
     serial: Dict[str, Any] = field(default_factory=dict)
     http: Dict[str, Any] = field(default_factory=dict)
     mqtt_in: Dict[str, Any] = field(default_factory=dict)
+    can: Dict[str, Any] = field(default_factory=dict)   # CAN input: carrier, channel, bitrate
     # Per-source intervals. A slow, complete source and a fast, partial one do
     # not share a polling rhythm, so the groups belong to the source and not to
     # the device.
@@ -429,11 +518,18 @@ class DeviceConfig:
     # command bindings: [{name, from_template, enabled, faces, confirm, lease_s,
     # …or a full inline recipe}] — a template preset is offered, a binding enables it
     commands: List[Dict[str, Any]] = field(default_factory=list)
+    # this device's overrides of its template's channel settings, keyed by a
+    # declared channel name or a member command's name (ADR-0019):
+    # {ess_setpoint: {min_interval_s: 5}} — the template's value is the default
+    channels: Dict[str, Dict[str, Any]] = field(default_factory=dict)
 
     serial: Dict[str, Any] = field(default_factory=dict)   # rtu params (reserved)
     http: Dict[str, Any] = field(default_factory=dict)     # http input: url, timeout, headers, verify_tls
     mqtt_in: Dict[str, Any] = field(default_factory=dict)  # mqtt input: broker, port, username, password, tls, topic
     mqtt_topic_prefix: str = ""
+    # its Home Assistant node (ADR-0026 §3): stored with it at creation like
+    # the prefix; none stored = `mbg_dev_<id>` (every device before the scope)
+    ha_node: str = ""
     influxdb_bucket: str = ""
     influxdb_device_tag: str = ""
     # static tags on every point this device writes (`influxdb.tags`); an
@@ -450,6 +546,7 @@ class DeviceConfig:
     mqtt_heartbeat_s: Optional[int] = None
     influxdb_publish_mode: str = ""
     influxdb_write_interval_s: Optional[float] = None
+    influxdb_heartbeat_s: Optional[int] = None   # ADR-0029; None = the gateway's
     http_output_enabled: bool = False        # serve this device's live values as JSON (GET /api/meters/<id>)
     # served on the OPC UA server (`opcua:`); [] = every value, else these names.
     # A device without an `opcua:` block is on, as before the block existed;
@@ -510,7 +607,10 @@ class MQTTConfig:
     port: int = 1883
     username: str = ""
     password: str = ""
-    topic_prefix: str = "multibus/umg512"
+    # the gateway's own root (<prefix>/status, <prefix>/site/meta, the virtual
+    # meters' state) — and the legacy primary's topics on an install that has
+    # one (ADR-0024: those keep LEGACY_TOPIC_PREFIX when their file is silent)
+    topic_prefix: str = "mbg/gateway"
     retain: bool = True
     qos: int = 0
     publish_mode: str = "changed"  # "changed" or "all"
@@ -520,7 +620,9 @@ class MQTTConfig:
     heartbeat_interval: int = 0
     ha_discovery_enabled: bool = True
     ha_discovery_prefix: str = "homeassistant"
-    ha_device_name: str = "Janitza UMG 512-PRO"
+    # the legacy primary's name in Home Assistant; empty = no such device
+    # (an install that has it keeps LEGACY_HA_DEVICE_NAME, ADR-0024)
+    ha_device_name: str = ""
     # Expose writable registers as HA number/select entities AND subscribe to
     # their command topics to perform the write. OFF by default: this turns
     # broker-publish access into hardware-write access, so it is DOUBLE-gated —
@@ -552,6 +654,67 @@ class MQTTConfig:
     tls_insecure: bool = False
 
 
+# ADR-0029: the starting value of influxdb.heartbeat_interval (10 min), written
+# into a config.yaml that does not have the key yet; from then on the file's
+# value (Settings → InfluxDB) is the only one that runs.
+INFLUX_HEARTBEAT_START_S = 600
+HEARTBEAT_MAX_S = 86400
+
+# ADR-0031 §5: the read preview's budget (Add → Check, the device page's
+# Preview), its own top-level `preview:` section: written into config.yaml on
+# first load like the heartbeat, so the running value is the file's and
+# Settings → Modbus shows it. key → (start, lo, hi)
+PREVIEW_BUDGET = {
+    'max_requests': (4, 1, 20),    # reads one preview may send
+    'listen_s': (10, 1, 60),       # seconds a preview listens on a bus another master polls
+}
+
+
+def preview_budget_error(key: str, raw) -> Optional[str]:
+    """The one check of a preview budget value (file, API): a whole number in
+    its range; None when it is fine."""
+    _start, lo, hi = PREVIEW_BUDGET[key]
+    if isinstance(raw, bool) or not isinstance(raw, (int, float)) or raw != raw \
+            or not float(raw).is_integer() or not (lo <= raw <= hi):
+        return f"preview.{key}: a whole number, {lo}..{hi}"
+    return None
+
+
+def heartbeat_seconds(raw) -> Optional[int]:
+    """The one check of an InfluxDB heartbeat value — the gateway's, a
+    device's, an installation's, and the API's: whole seconds 0..86400 (an
+    integral float such as 30.0 counts). Anything else (a fraction, text,
+    a boolean, NaN/inf, out of range) is None."""
+    if isinstance(raw, bool) or not isinstance(raw, (int, float)):
+        return None
+    if not math.isfinite(raw) or raw != int(raw) or not 0 <= raw <= HEARTBEAT_MAX_S:
+        return None
+    return int(raw)
+
+
+def _device_heartbeat(raw, did: str) -> Optional[int]:
+    """A device's own influxdb.heartbeat_interval; None = the gateway's (a
+    value that is not whole seconds 0..86400 is reported and ignored)."""
+    if raw in (None, ''):
+        return None
+    v = heartbeat_seconds(raw)
+    if v is None:
+        logger.warning(f"devices[{did}]: influxdb.heartbeat_interval {raw!r} is not whole seconds "
+                       f"0..{HEARTBEAT_MAX_S}: the gateway's is used")
+    return v
+
+
+def _heartbeat_setting(raw) -> int:
+    """influxdb.heartbeat_interval as the file has it: whole seconds,
+    0..86400. Anything else is reported and runs as the starting value."""
+    v = heartbeat_seconds(raw)
+    if v is not None:
+        return v
+    logger.warning(f"influxdb.heartbeat_interval {raw!r} is not whole seconds 0..{HEARTBEAT_MAX_S}: "
+                   f"{INFLUX_HEARTBEAT_START_S} s runs until it is set in Settings → InfluxDB")
+    return INFLUX_HEARTBEAT_START_S
+
+
 @dataclass
 class InfluxDBConfig:
     enabled: bool = False
@@ -564,6 +727,12 @@ class InfluxDBConfig:
     bucket: str = "multibus"
     write_interval: int = 5
     publish_mode: str = "changed"  # "changed" or "all"
+    # In "changed" mode, rewrite an UNCHANGED value once it has not been
+    # written for this many seconds (0 = off), so state timelines and "last
+    # value" panels always have a recent point (ADR-0029). write_interval stays
+    # the minimum gap. The value lives in config.yaml: a file without the key
+    # gets INFLUX_HEARTBEAT_START_S written into it on its first load.
+    heartbeat_interval: int = INFLUX_HEARTBEAT_START_S
     # Default bucket pattern for NEW devices ({device} = the device id).
     # Device #1 keeps its migrated bucket; this only seeds new devices.
     default_bucket_pattern: str = "{device}"
@@ -606,6 +775,115 @@ class SecurityConfig:
 
 
 OPCUA_ENCRYPTION = ('required', 'optional', 'off')
+
+
+def _on_off(v: Any, default: bool) -> bool:
+    """on / off as YAML or an environment says it (`off` reads as false in
+    YAML, as a word in a quoted value or an env); anything else → default."""
+    if isinstance(v, bool):
+        return v
+    w = str(v if v is not None else '').strip().lower()
+    if w in ('on', 'true', 'yes', '1'):
+        return True
+    if w in ('off', 'false', 'no', '0'):
+        return False
+    return default
+
+
+# The kill switches removed in 3.97 (ADR-0021 D9 `rules.recheck`, ADR-0022 D7
+# `commands.raw_lanes`): their ON behaviour is the only one. A file that still
+# holds them loads (one INFO line) and the next save drops them.
+# Gateway-level sections that are a mapping (QA-D-11, review 2026-10-28).
+# Three kinds, documented in docs/config-reference.md:
+# - what reaches the plant and its data (broker, credentials, token): in
+#   another shape the load is refused (the file is kept as .bad, the last
+#   good copy runs, saves stay blocked) — their defaults would lose them for
+#   good once saved; empty (null) is their defaults;
+_DATA_SECTIONS = ('modbus', 'mqtt', 'influxdb')
+# - where the defaults would open the gateway (no login, no TLS, no
+#   allowlist): refused in another shape AND when explicitly null;
+_ACCESS_SECTIONS = (('ui',), ('ui', 'auth'), ('ui', 'tls'), ('security',))
+# - the rest: read as their defaults, said; such a load never refreshes the
+#   last good copy, so the real section survives there
+_MAPPING_SECTIONS = ('opcua', 'polling', 'http_output', 'rest_push', 'preview',
+                     'opcua_output', 'pq_recorder', 'alerts', 'gateway')
+
+
+def _shape_sections(data: Dict) -> List[str]:
+    """Bring the gateway-level sections of a parsed config.yaml to the shape
+    the loader reads, in place. Raises ValueError (the load is refused) for a
+    data or an access section in another shape; returns the keys read as
+    their defaults instead (empty: nothing was lost)."""
+    def kind(v):
+        return 'a list' if isinstance(v, list) else repr(v)
+    for path in _ACCESS_SECTIONS:
+        box, v, there = data, None, True
+        for k in path:
+            there = isinstance(box, dict) and k in box
+            v = box.get(k) if there else None
+            box = v
+        if there and not isinstance(v, dict):
+            raise ValueError(f"`{'.'.join(path)}` must be a section (key: value lines), found {kind(v)} — "
+                             "its defaults would open the gateway, so this file is not used")
+    for k in _DATA_SECTIONS:
+        v = data.get(k)
+        if k in data and v is None:
+            data[k] = {}
+        elif v is not None and not isinstance(v, dict):
+            raise ValueError(f"`{k}` must be a section (key: value lines), found {kind(v)} — "
+                             "its defaults would lose what reaches the plant (address, broker, "
+                             "credentials, token), so this file is not used")
+    degraded: List[str] = []
+    for k in _MAPPING_SECTIONS:
+        if k not in data:
+            continue
+        v = data[k]
+        if v is None:
+            data[k] = {}
+        elif not isinstance(v, dict):
+            logger.warning("config.yaml: `%s` must be a section (key: value lines), found %s — "
+                           "its defaults are used; the rest of the file is read", k, kind(v))
+            data[k] = {}
+            degraded.append(k)
+    m = data.get('mqtt') or {}
+    ha = m.get('ha_discovery')
+    if 'ha_discovery' in m and ha is None:
+        m['ha_discovery'] = {}
+    elif isinstance(ha, bool):
+        # the per-device form at gateway level: nothing is lost
+        logger.warning("config.yaml: `mqtt.ha_discovery: %s` read as `{enabled: %s}` "
+                       "(the gateway's form is a section: enabled, prefix)",
+                       str(ha).lower(), str(ha).lower())
+        m['ha_discovery'] = {'enabled': ha}
+    elif ha is not None and not isinstance(ha, dict):
+        logger.warning("config.yaml: `mqtt.ha_discovery` must be a section (enabled, prefix), found %s — "
+                       "its defaults are used", kind(ha))
+        m['ha_discovery'] = {}
+        degraded.append('mqtt.ha_discovery')
+    pol = data.get('polling') or {}
+    groups = pol.get('groups')
+    if 'groups' in pol and groups is None:
+        pol['groups'] = {}
+    elif groups is not None and not isinstance(groups, dict):
+        logger.warning("config.yaml: `polling.groups` must be a section, found %s — ignored", kind(groups))
+        pol.pop('groups')
+        degraded.append('polling.groups')
+    elif isinstance(groups, dict):
+        for name in [n for n, g in groups.items() if not isinstance(g, dict)]:
+            logger.warning("config.yaml: `polling.groups.%s` must be a section (interval, description), "
+                           "found %s — that group is skipped", name, kind(groups[name]))
+            groups.pop(name)
+            degraded.append(f'polling.groups.{name}')
+    return degraded
+
+
+class ConfigSaveBlocked(RuntimeError):
+    """A save refused because config.yaml failed to load: writing would
+    replace the user's file with defaults."""
+
+
+_REMOVED_397 = (('rules', 'recheck'), ('commands', 'raw_lanes'))
+_REMOVED_397_ENV = ('MBG_RULES_RECHECK', 'MBG_RAW_LANES')
 
 
 @dataclass
@@ -716,9 +994,52 @@ SERIAL_PROTOCOLS = ('rtu', 'ascii')                 # a serial port on this host
 BUS_OVER_TCP_PROTOCOLS = ('rtu-tcp', 'ascii-tcp')   # a serial bus reached through a socket
 NETWORK_PROTOCOLS = ('tcp', 'udp') + BUS_OVER_TCP_PROTOCOLS
 MODBUS_PROTOCOLS = NETWORK_PROTOCOLS + SERIAL_PROTOCOLS + ('rtu_tap',)
+# Buses that are not Modbus, read by their own driver into a fixed virtual
+# register map (input table), so templates use the normal register machinery:
+#   seplos_v2      Seplos V2 BMS ASCII protocol on a serial port here (seplos_v2.py)
+#   seplos_v2-tcp  the same frames through a TCP socket to a serial bridge
+# `connection.mode` is poll (the gateway asks) or listen (it never transmits).
+# They are read-only: the driver has no write path.
+VIRTUAL_MAP_SERIAL = ('seplos_v2',)
+VIRTUAL_MAP_OVER_TCP = ('seplos_v2-tcp',)
+VIRTUAL_MAP_PROTOCOLS = VIRTUAL_MAP_SERIAL + VIRTUAL_MAP_OVER_TCP
+# a protocol's register-map family: a template is written for one of them
+VIRTUAL_MAP_FAMILY = {'seplos_v2': 'seplos_v2', 'seplos_v2-tcp': 'seplos_v2'}
+# every protocol whose template is a register map read by address
+REGISTER_MAP_PROTOCOLS = MODBUS_PROTOCOLS + VIRTUAL_MAP_PROTOCOLS
+# nothing can be written through these (they listen, or their driver is read-only)
+# CAN (can_client.py): frames from a carrier, listen-only by construction
+CAN_PROTOCOLS = ('can',)
+READ_ONLY_PROTOCOLS = ('rtu_tap',) + VIRTUAL_MAP_PROTOCOLS + CAN_PROTOCOLS
 # how the frames look on the wire (the bus monitor decodes by this)
 WIRE_FRAMING = {'tcp': 'tcp', 'udp': 'tcp', 'rtu': 'rtu', 'rtu-tcp': 'rtu', 'rtu_tap': 'rtu',
                 'ascii': 'ascii', 'ascii-tcp': 'ascii'}
+
+
+def _can_kwargs(reg: Dict) -> Dict[str, Any]:
+    """A selection row's CAN fields as SelectedRegister keywords ({} for a
+    row that is not a CAN signal)."""
+    from .can_signal import parse_can_id
+    cid = parse_can_id(reg.get('can_id'))
+    if cid is None:
+        return {}
+    out: Dict[str, Any] = {'can_id': cid, 'can_id_extended': bool(reg.get('can_id_extended', False)),
+                           'byte_order': str(reg.get('byte_order') or '').lower()}
+    for k in ('start_bit', 'bit_length'):
+        try:
+            out[k] = int(reg[k]) if reg.get(k) is not None else None
+        except (TypeError, ValueError):
+            out[k] = None
+    return out
+
+
+def protocol_family(protocol: str) -> str:
+    """The template family a device protocol reads: 'http', 'mqtt', a
+    virtual-map family ('seplos_v2'), else 'modbus'."""
+    p = str(protocol or '').lower()
+    if p in ('http', 'mqtt', 'none') + CAN_PROTOCOLS:
+        return p
+    return VIRTUAL_MAP_FAMILY.get(p, 'modbus')
 
 
 # The live store keys a value by its address — and a Modbus device may hold
@@ -812,6 +1133,12 @@ class SelectedRegister:
     # endpoint fan-out: {output_name: sum|avg|min|max|spread} — how this field
     # combines across the units of an endpoint (declared by the template)
     aggregates: Optional[Dict[str, str]] = None
+    # CAN signal (can_signal.py): the frame and the bits; None = not a CAN row
+    can_id: Optional[int] = None
+    can_id_extended: bool = False
+    start_bit: Optional[int] = None
+    bit_length: Optional[int] = None
+    byte_order: str = ""
 
     @property
     def key(self) -> int:
@@ -832,8 +1159,13 @@ class Config:
         # soft-delete lifecycle lives in a collaborator (see tombstone_store.py)
         self._tombstones = TombstoneStore(self.config_path.parent / 'devices',
                                           self._safe_device_id)
+        self._last_tombstone: Dict[str, Optional[float]] = {}
 
         self.modbus = ModbusConfig()
+        # the read preview's budget (PREVIEW_BUDGET), kept apart from the
+        # primary's connection: no device runs on it
+        self.preview_max_requests = PREVIEW_BUDGET['max_requests'][0]
+        self.preview_listen_s = PREVIEW_BUDGET['listen_s'][0]
         self.mqtt = MQTTConfig()
         self.influxdb = InfluxDBConfig()
         self.ui = UIConfig()
@@ -852,6 +1184,8 @@ class Config:
         self.all_registers: Dict = {}
         self.devices: List[DeviceConfig] = []
         self._raw_devices: List[Dict] = []
+        # the user device types (`device_types:`, device_types.py, ADR-0027)
+        self._raw_device_types: List[Dict] = []
         # `device.key` -> why a device's block was ignored at load (see _block)
         self.ignored_blocks: Dict[str, str] = {}
         # Endpoints (one template + one endpoint + N unit ids → N materialized
@@ -879,24 +1213,193 @@ class Config:
         # handlers in a threadpool) can't interleave their tmp/rename dance
         self._file_lock = __import__("threading").Lock()
         self.alerts: Dict = {}                # optional `alerts:` block (off by default)
+        # Whether the legacy primary (device #1, umg512) exists (ADR-0024).
+        # A fresh install has none; `primary_device:` in the file says so
+        # explicitly, an older file without the key has one exactly when it
+        # holds a `modbus:` section. _primary_file = the file's own word (None:
+        # not written there); resolved in load().
+        self.primary_enabled: bool = False
+        # How new devices are named (ADR-0026 §3): `legacy` (every file
+        # written before the key existed) or `gateway` (a first boot), and
+        # this gateway's own id. The default patterns as the FILE chose them
+        # ('' = the scope's default; a built-in default written out by an
+        # older save counts as not chosen).
+        self.identity_scope: str = 'legacy'
+        self.gateway_id: str = ''
+        self._topic_pattern_explicit: str = ''
+        self._bucket_pattern_explicit: str = ''
+        self._primary_file: Optional[bool] = None
+        self._primary_legacy: bool = False
+        self._file_mqtt: Dict[str, Any] = {}
 
         self.load()
 
     def load(self):
         """Load configuration from files."""
         self._load_yaml_config()
+        self._resolve_identity()
         self._load_selected_registers()
         self._load_all_registers()
         self._apply_env_overrides()
+        self._resolve_primary()
         # AFTER env overrides, so device #1 inherits MODBUS_HOST etc.
         self._build_devices()
+        self._write_starting_values()
+        if not self.primary_enabled and self.selected_registers:
+            # a selection with no device to read it would still be announced
+            # (HA sensors of a meter that is not there): kept on disk, unused
+            logger.info("selected_registers.json ignored: this gateway has no "
+                        "primary device (primary_device: false)")
+            self.selected_registers = []
+        self._keep_generated_gateway_id()
+
+    def _keep_generated_gateway_id(self) -> None:
+        """A file that says `identity_scope: gateway` with no id got one
+        generated: written at once, so every restart names new devices after
+        the same id (review M1). Unsaved, it is not used for anything stored."""
+        if not getattr(self, '_gateway_id_unsaved', False):
+            return
+        self._gateway_id_unsaved = False
+        try:
+            self.save_yaml_config()
+            logger.warning("config.yaml: gateway.id %s written", self.gateway_id)
+        except Exception as e:  # noqa: BLE001 — a read-only file: no random id is stored anywhere
+            logger.error("config.yaml: the generated gateway.id could not be written (%s) — "
+                         "new devices get no gateway-scoped name until an id is set", e)
+            self.gateway_id = ''
+            self._resolve_identity()
+
+    def _resolve_identity(self) -> None:
+        """The default patterns new devices get, from the scope and the
+        patterns the file chose, and what the publisher names HA entities
+        with. Called after a load and after any change to either."""
+        from .identity import DEFAULT_PATTERNS
+        d = DEFAULT_PATTERNS.get(self.identity_scope, DEFAULT_PATTERNS['legacy'])
+        self.mqtt.default_topic_pattern = self._topic_pattern_explicit or d['topic']
+        self.influxdb.default_bucket_pattern = self._bucket_pattern_explicit or d['bucket']
+
+    def set_identity(self, *, scope: Optional[str] = None, gateway_id: Optional[str] = None) -> None:
+        """Change the scope and / or the gateway id (validated by the
+        caller), in memory; the caller saves."""
+        if scope is not None:
+            self.identity_scope = scope
+        if gateway_id is not None:
+            self.gateway_id = gateway_id
+        self._resolve_identity()
+
+    def _load_preview_budget(self, pv) -> None:
+        """The read preview's budget from `preview:`; a value that fails its
+        check runs as the starting value (said once), a key the file does not
+        have is written out (_write_starting_values)."""
+        pv = pv if isinstance(pv, dict) else {}
+        self._preview_missing = [k for k in PREVIEW_BUDGET if k not in pv]
+        for k, (start, _lo, _hi) in PREVIEW_BUDGET.items():
+            v = pv.get(k, start)
+            if preview_budget_error(k, v):
+                logger.warning(f"config: {preview_budget_error(k, v)} — {v!r} ignored, {start} used")
+                v = start
+            setattr(self, f"preview_{k}", int(v))
+
+    def preview_budget(self) -> Dict[str, int]:
+        """The `preview:` section as stored and served."""
+        return {'max_requests': int(self.preview_max_requests), 'listen_s': int(self.preview_listen_s)}
+
+    def update_preview(self, **fields) -> None:
+        """Set the read preview's budget (checked by the caller)."""
+        for k in PREVIEW_BUDGET:
+            if fields.get(k) is not None:
+                setattr(self, f"preview_{k}", int(fields[k]))
+
+    def _write_starting_values(self) -> None:
+        """ADR-0029 (and ADR-0031 §5): a config.yaml that does not have
+        influxdb.heartbeat_interval, or the preview budget under modbus:, gets
+        the starting value written into it, once, so the value is the file's
+        (and Settings') from then on — never a constant only the code knows.
+        Only those keys are added: the rest of the file stays as it was (no
+        env override is persisted). A file that failed to load is never
+        touched. One rewrite, one INFO line per setting written."""
+        missing_hb = bool(self._heartbeat_missing)
+        missing_pv = list(getattr(self, '_preview_missing', []) or [])
+        if ((not missing_hb and not missing_pv) or getattr(self, '_load_failed', False)
+                or not self.config_path.exists()):
+            return
+        self._heartbeat_missing = False
+        self._preview_missing = []
+        wrote_hb, wrote_pv = False, []
+        try:
+            with self._file_lock:
+                with open(self.config_path, 'r') as f:
+                    data = yaml.safe_load(f) or {}
+                if missing_hb:
+                    ix = data.get('influxdb')
+                    if not isinstance(ix, dict):
+                        ix = data['influxdb'] = {}
+                    if 'heartbeat_interval' not in ix:
+                        ix['heartbeat_interval'] = INFLUX_HEARTBEAT_START_S
+                        wrote_hb = True
+                if missing_pv:
+                    pv = data.get('preview')
+                    if not isinstance(pv, dict):
+                        pv = data['preview'] = {}
+                    for k in missing_pv:
+                        if k not in pv:
+                            pv[k] = PREVIEW_BUDGET[k][0]
+                            wrote_pv.append(k)
+                if not wrote_hb and not wrote_pv:
+                    return
+                tmp = self.config_path.with_suffix(self.config_path.suffix + '.tmp')
+                fd = os.open(str(tmp), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+                with os.fdopen(fd, 'w') as f:
+                    yaml.dump(data, f, default_flow_style=False, allow_unicode=True, sort_keys=False)
+                    f.flush()
+                    os.fsync(f.fileno())
+                os.replace(tmp, self.config_path)
+        except Exception as e:  # noqa: BLE001 — it still runs on the value; the next save writes it
+            logger.warning(f"config: could not write its starting values into "
+                           f"{self.config_path}: {e}")
+            return
+        # the last-known-good snapshot is left as the load judged it (a
+        # truncated file must never be promoted); the next save refreshes it
+        if wrote_hb:
+            logger.info(f"config: influxdb.heartbeat_interval was not set — wrote "
+                        f"{INFLUX_HEARTBEAT_START_S} s into {self.config_path} (an unchanged value "
+                        f"is rewritten to InfluxDB every {INFLUX_HEARTBEAT_START_S} s; "
+                        f"Settings → InfluxDB, 0 = off). Like any save from the UI, this "
+                        f"one-time rewrite drops the file's comments and YAML anchors")
+        if wrote_pv:
+            logger.info("config: the read preview's budget was not set — wrote "
+                        + ", ".join(f"preview.{k}: {PREVIEW_BUDGET[k][0]}" for k in wrote_pv)
+                        + f" into {self.config_path} (Settings → Modbus)")
+
+    def _resolve_primary(self) -> None:
+        """Does device #1 (the legacy Janitza primary) exist? The file's
+        `primary_device:` decides; without it, an older install has one when
+        its file holds a `modbus:` section (or MODBUS_HOST names its host),
+        and a fresh install has none. ADR-0024."""
+        if self._primary_file is not None:
+            self.primary_enabled = self._primary_file
+        else:
+            self.primary_enabled = self._primary_legacy or bool(os.getenv('MODBUS_HOST'))
+        if self.primary_enabled:
+            # device #1 exists — however it was declared, its old names hold
+            # wherever the file is silent (a save then writes them out)
+            self._keep_legacy_primary_defaults(self._file_mqtt)
+
+    def _keep_legacy_primary_defaults(self, mqtt_section) -> None:
+        """An older install that has the legacy primary read the old defaults
+        wherever its file was silent: keep them (a save writes them out)."""
+        m = mqtt_section if isinstance(mqtt_section, dict) else {}
+        if 'topic_prefix' not in m and not os.getenv('MQTT_PREFIX'):
+            self.mqtt.topic_prefix = LEGACY_TOPIC_PREFIX
+        if 'device_name' not in (m.get('ha_discovery') or {}):
+            self.mqtt.ha_device_name = LEGACY_HA_DEVICE_NAME
 
     def _build_devices(self):
         """Materialize the device list. Device #1 = the legacy flat config
         (invisible migration — routing identical to today); extra devices come
         from the optional ``devices:`` yaml list."""
         self.ignored_blocks = {}               # judged afresh on every build
-        devices: List[DeviceConfig] = [DeviceConfig(
+        devices: List[DeviceConfig] = [] if not self.primary_enabled else [DeviceConfig(
             id=PRIMARY_DEVICE_ID,
             name="Janitza UMG 512-PRO",
             template="janitza_umg512_pro",
@@ -962,6 +1465,87 @@ class Config:
             if dev is not None:
                 devices.append(dev)
         self.devices = devices
+        # which hosts are our serial bridges, for the bus guard
+        from . import bridge_guard
+        from .bridges import TYPES as _bridge_types
+        bridge_guard.configure(self._raw_bridges, _bridge_types)
+        bridge_guard.set_recorder(self.record_bus_adapter)
+
+    def _raw_connections(self):
+        """Every raw connection dict: devices, their sources, installations,
+        their groups and sources."""
+        for d in self._raw_devices:
+            yield d.get('connection')
+            yield from d.get('sources') or []
+        for ep in self._raw_endpoints:
+            yield ep.get('connection')
+            yield from ep.get('sources') or []
+            for g in ep.get('groups') or []:
+                yield g.get('connection')
+                yield from g.get('sources') or []
+
+    def _guarded_bridge(self, host: str) -> Optional[Dict]:
+        from .bridges import TYPES as _bridge_types
+        return next((b for b in self._raw_bridges if str(b.get('host')) == host
+                     and _bridge_types.get(str(b.get('type')), {}).get('discovery') == 'api'), None)
+
+    def record_bus_adapter(self, host: str, port: int, adapter: str) -> bool:
+        """The bridge guard's backfill: write which adapter serves a bus where
+        the bus is declared — the bridge record's port entry, and every
+        host:port connection to it. Never overwrites a recorded adapter."""
+        changed = False
+        rec = self._guarded_bridge(host)
+        if rec is not None:
+            ports = rec.setdefault('ports', [])
+            entry = next((p for p in ports if str(p.get('port')) == str(port)), None)
+            if entry is None:
+                ports.append({'port': int(port), 'adapter': adapter})
+                changed = True
+            elif not entry.get('adapter'):
+                entry['adapter'] = adapter
+                changed = True
+        for c in self._raw_connections():
+            if (isinstance(c, dict) and not c.get('bridge') and str(c.get('host', '')) == host
+                    and str(c.get('port', '')) == str(port) and not c.get('adapter')):
+                c['adapter'] = adapter
+                changed = True
+        if changed:
+            self.save_yaml_config()
+            logger.info("bus %s:%s recorded as adapter %s", host, port, adapter)
+        return changed
+
+    def follow_bus_adapters(self, host: str, moves: Dict[int, int]) -> List[str]:
+        """Re-bind every bus of this bridge whose adapter moved: {old port:
+        new port}, applied together (two swapped buses swap). The bridge
+        record's port entries and devices follow, and so do host:port
+        connections. Returns the devices that moved."""
+        moves = {int(k): int(v) for k, v in moves.items() if int(k) != int(v)}
+        if not moves:
+            return []
+        rec = self._guarded_bridge(host)
+        before = {d.id: (d.connection.host, d.connection.port) for d in self.devices}
+        if rec is not None:
+            raw = dict(rec)
+            raw['ports'] = [{**p, 'port': moves.get(int(p.get('port', 0) or 0), p.get('port'))}
+                            for p in rec.get('ports') or []]
+            self._move_legacy_ports(host, moves)
+            self.upsert_raw_bridge(raw, port_moves=moves)     # rebuilds and saves
+        else:
+            self._move_legacy_ports(host, moves)
+            self._build_devices()
+            self.save_yaml_config()
+        return [d.id for d in self.devices
+                if before.get(d.id) and before[d.id] != (d.connection.host, d.connection.port)]
+
+    def _move_legacy_ports(self, host: str, moves: Dict[int, int]) -> None:
+        for c in self._raw_connections():
+            if isinstance(c, dict) and not c.get('bridge') and str(c.get('host', '')) == host:
+                try:
+                    old = int(c.get('port'))
+                except (TypeError, ValueError):
+                    continue
+                if old in moves:
+                    c['port'] = moves[old]
 
     def _resolve_bridge(self, conn: Dict) -> Dict:
         from .bridges import resolve_connection
@@ -988,12 +1572,15 @@ class Config:
             max_connections=max(1, int(conn.get('max_connections', 1) or 1)),
             endpoint_wait_s=float(conn.get('endpoint_wait_s', 10.0)),
             endpoint_min_gap_s=max(0.0, float(conn.get('endpoint_min_gap_s', 0.0) or 0.0)),
+            connect_settle_s=settle_seconds(conn.get('connect_settle_s')),
             protocol=str(conn.get('protocol', 'tcp')).lower(),
             serial_port=conn.get('serial_port', ''),
             baudrate=int(conn.get('baudrate', 9600)),
             parity=str(conn.get('parity', 'N')),
             stopbits=int(conn.get('stopbits', 1)),
             bytesize=int(conn.get('bytesize', 8)),
+            mode=str(conn.get('mode', '') or '').lower(),
+            adapter=str(conn.get('adapter', '') or ''),
         )
 
     def _sources_from_raw(self, d: Dict) -> List["SourceConfig"]:
@@ -1036,6 +1623,7 @@ class Config:
                     serial=_serial_from_conn(r),
                     http=_http_from_conn(r),
                     mqtt_in=_mqtt_in_from_conn(r),
+                    can=_can_from_conn(r),
                     poll_groups=groups,
                     stale_after_s=max(0.0, float(r.get('stale_after_s', 0.0) or 0.0)),
                 ))
@@ -1094,10 +1682,14 @@ class Config:
                 group_id=str(d.get('group_id', '') or ''),
                 role=str(d.get('role', '') or ''),
                 commands=[dict(c) for c in (d.get('commands') or []) if isinstance(c, dict)],
+                channels={str(k): dict(v) for k, v in (d.get('channels') or {}).items()
+                          if isinstance(v, dict)} if isinstance(d.get('channels'), dict) else {},
                 serial=_serial_from_conn(conn),
                 http=_http_from_conn(conn),
                 mqtt_in=_mqtt_in_from_conn(conn),
                 mqtt_topic_prefix=prefix,
+                ha_node=str(mqtt_cfg.get('ha_node') or '').replace('${device_id}', did).replace('${id}', did)
+                or f"mbg_dev_{did}",
                 influxdb_bucket=influx_cfg.get('bucket', self.influxdb.bucket),
                 influxdb_device_tag=influx_cfg.get('device_tag', did),
                 influxdb_tags=_influx_tags(influx_cfg.get('tags'), did),
@@ -1108,6 +1700,7 @@ class Config:
                 mqtt_heartbeat_s=_seconds(mqtt_cfg.get('heartbeat_interval'), did, int),
                 influxdb_publish_mode=_publish_mode(influx_cfg.get('publish_mode'), did),
                 influxdb_write_interval_s=_seconds(influx_cfg.get('write_interval'), did, float),
+                influxdb_heartbeat_s=_device_heartbeat(influx_cfg.get('heartbeat_interval'), did),
                 http_output_enabled=bool(http_out_cfg.get('enabled', False)),
                 opcua_enabled=bool(opcua_cfg.get('enabled', True)),
                 opcua_fields=_opcua_fields(opcua_cfg.get('fields')),
@@ -1191,8 +1784,13 @@ class Config:
             pid = str(p.get('id', '')).strip()
             pconn = self._parent_mqtt_connection(p)
             if str(pconn.get('protocol', 'tcp')).lower() != 'mqtt':
-                logger.warning(f"devices[{pid}]: components are read over MQTT only — "
-                               "its components are not started")
+                # said once per parent: this runs on every ETag a device
+                # write answers (ADR-0030), not only at a load
+                warned = self.__dict__.setdefault('_comp_not_mqtt_warned', set())
+                if pid not in warned:
+                    warned.add(pid)
+                    logger.warning(f"devices[{pid}]: components are read over MQTT only — "
+                                   "its components are not started")
                 continue
             pm, pi = dict(p.get('mqtt') or {}), dict(p.get('influxdb') or {})
             po = p.get('opcua') if isinstance(p.get('opcua'), dict) else {}
@@ -1424,6 +2022,8 @@ class Config:
                   m = dict(mqtt_cfg, **(grp.get('mqtt') or {}))
                   if m.get('topic_prefix'):
                       m['topic_prefix'] = sub(m['topic_prefix'])
+                  if m.get('ha_node'):
+                      m['ha_node'] = sub(m['ha_node'])
                   i = dict(influx_cfg, **(grp.get('influxdb') or {}))
                   # OPC UA: the group's block wins (its template, its fields)
                   o = dict(opcua_cfg, **(grp.get('opcua') or {}))
@@ -1466,6 +2066,9 @@ class Config:
                       'role': grole,
                       # the group's command bindings apply to every unit of it
                       'commands': list(grp.get('commands') or p.get('commands') or []),
+                      # and its channel overrides (ADR-0019), like the bindings
+                      **({'channels': dict(grp.get('channels') or p.get('channels'))}
+                         if (grp.get('channels') or p.get('channels')) else {}),
                       'write_locked': bool(p.get('write_locked', False)),
                       'connection': c,
                       # declared once on the endpoint, resolved per unit
@@ -1484,38 +2087,59 @@ class Config:
 
     def default_topic_prefix(self, device_id: str) -> str:
         """Resolve the default MQTT topic prefix for a NEW device from the
-        configured pattern ({device} = id)."""
+        configured pattern ({device} = id, {gateway} = this gateway's id)."""
+        from .identity import fill
         pat = getattr(self.mqtt, 'default_topic_pattern', '') or MQTTConfig.default_topic_pattern
-        return pat.replace('{device}', device_id).replace('{device_id}', device_id)
+        return fill(pat, device_id, self.gateway_id)
 
     def default_bucket(self, device_id: str) -> str:
+        from .identity import fill
         pat = getattr(self.influxdb, 'default_bucket_pattern', '{device}') or '{device}'
-        return pat.replace('{device}', device_id).replace('{device_id}', device_id)
+        return fill(pat, device_id, self.gateway_id)
 
     @property
-    def primary_device(self) -> DeviceConfig:
-        return self.devices[0]
+    def primary_device(self) -> Optional[DeviceConfig]:
+        """Device #1 (the legacy primary), or None — a fresh install has none
+        (ADR-0024)."""
+        d = self.devices[0] if self.devices else None
+        return d if (d is not None and d.primary) else None
+
+    @property
+    def primary_id(self) -> str:
+        """The id the legacy primary's live store answers to — '' when there
+        is no primary, so no route offers a device that is not there."""
+        return PRIMARY_DEVICE_ID if self.primary_device is not None else ''
 
     def get_device(self, device_id: str) -> Optional[DeviceConfig]:
         return next((d for d in self.devices if d.id == device_id), None)
+
+    def raw_device_refusal(self, did: str) -> Optional[str]:
+        """Why a `devices[]` entry cannot be written at id ``did``, or None —
+        asked by a save and by its dry run alike (ADR-0026 §5)."""
+        if not did:
+            return "device id is required"
+        if did == PRIMARY_DEVICE_ID:
+            # reserved even where there is no primary: its registers live in the
+            # legacy root file, so the id must never mean two devices
+            return (f"'{PRIMARY_DEVICE_ID}' is reserved for the legacy primary "
+                    "device (edited via the Modbus settings) — choose another id")
+        _ex = self.get_device(did)
+        if _ex is not None and _ex.endpoint_id:
+            return (f"device {did!r} is materialized from endpoint "
+                    f"{_ex.endpoint_id!r} — edit the endpoint instead")
+        if _ex is not None and _ex.component_of:
+            return (f"device {did!r} is a component of {_ex.component_of!r} — "
+                    "manage it from that device")
+        return None
 
     def upsert_raw_device(self, raw: Dict) -> DeviceConfig:
         """Create or update a non-primary device from its raw yaml-shaped dict,
         rebuild the device list and persist config.yaml. Returns the built
         DeviceConfig. Raises ValueError on invalid/primary ids."""
         did = str(raw.get('id', '')).strip()
-        if not did:
-            raise ValueError("device id is required")
-        if did == PRIMARY_DEVICE_ID:
-            raise ValueError(f"'{PRIMARY_DEVICE_ID}' is the primary device — "
-                             "edit it via the Modbus settings")
-        _ex = self.get_device(did)
-        if _ex is not None and _ex.endpoint_id:
-            raise ValueError(f"device {did!r} is materialized from endpoint "
-                             f"{_ex.endpoint_id!r} — edit the endpoint instead")
-        if _ex is not None and _ex.component_of:
-            raise ValueError(f"device {did!r} is a component of {_ex.component_of!r} — "
-                             "manage it from that device")
+        why = self.raw_device_refusal(did)
+        if why:
+            raise ValueError(why)
         # Transactional: snapshot the raw list so a build/save failure restores
         # the PREVIOUS state exactly, instead of leaving the old entry deleted
         # (which a later unrelated save would then persist — the device would
@@ -1528,6 +2152,30 @@ class Config:
             built = self.get_device(did)
             if built is None:
                 raise ValueError(f"device {did!r} could not be built from the given data")
+            self.save_yaml_config()
+            return built
+        except Exception:
+            self._raw_devices = _snapshot
+            self._build_devices()
+            raise
+
+    def upsert_raw_devices(self, raws: List[Dict]) -> List[DeviceConfig]:
+        """Several ``upsert_raw_device`` at once: one rebuild, one config
+        write, all or nothing (Edit bus line…, ADR-0031 §4)."""
+        ids = [str(r.get('id', '')).strip() for r in raws]
+        for did in ids:
+            why = self.raw_device_refusal(did)
+            if why:
+                raise ValueError(why)
+        _snapshot = [dict(d) for d in self._raw_devices]
+        try:
+            by = dict(zip(ids, raws))
+            self._raw_devices = [by.pop(d.get('id'), d) for d in self._raw_devices] + list(by.values())
+            self._build_devices()
+            built = [self.get_device(did) for did in ids]
+            missing = [did for did, b in zip(ids, built) if b is None]
+            if missing:
+                raise ValueError(f"device(s) {', '.join(missing)} could not be built from the given data")
             self.save_yaml_config()
             return built
         except Exception:
@@ -1572,7 +2220,8 @@ class Config:
             self._endpoint_entry_for(dev.endpoint_id).setdefault(
                 'http_output', {})['enabled'] = bool(enabled)
         else:
-            self._own_entry(device_id).setdefault('http_output', {})['enabled'] = bool(enabled)
+            from .device_patch import apply_http_output
+            apply_http_output(self._own_entry(device_id), enabled)
         self._build_devices()
         self.save_yaml_config()
 
@@ -1589,13 +2238,8 @@ class Config:
             raise ValueError("the primary device always publishes to MQTT and InfluxDB")
         if dev.endpoint_id:
             raise ValueError(f"set on its installation ({dev.endpoint_id}): it applies to every unit")
-        raw = self._own_entry(device_id)
-        if mqtt is not None:
-            raw.setdefault('mqtt', {})['enabled'] = bool(mqtt)
-        if ha_discovery is not None:
-            raw.setdefault('mqtt', {})['ha_discovery'] = bool(ha_discovery)
-        if influxdb is not None:
-            raw.setdefault('influxdb', {})['enabled'] = bool(influxdb)
+        from .device_patch import apply_sinks
+        apply_sinks(self._own_entry(device_id), mqtt=mqtt, influxdb=influxdb, ha_discovery=ha_discovery)
         self._build_devices()
         self.save_yaml_config()
 
@@ -1617,13 +2261,8 @@ class Config:
                            and str(g.get('id', '')) == dev.group_id), None) or ep
         else:
             target = self._own_entry(device_id)
-        for sect, keys in (('mqtt', mqtt), ('influxdb', influxdb)):
-            for k, v in (keys or {}).items():
-                block = target.setdefault(sect, {})
-                if v is None:
-                    block.pop(k, None)
-                else:
-                    block[k] = v
+        from .device_patch import apply_publishing
+        apply_publishing(target, mqtt=mqtt, influxdb=influxdb)
         self._build_devices()
         self.save_yaml_config()
 
@@ -1641,14 +2280,15 @@ class Config:
         if names:
             block['fields'] = names
         if dev.primary:
-            self.opcua_primary = block
+            self.opcua_primary = primary_opcua_kept(block)
         elif dev.endpoint_id:
             ep = self._endpoint_entry_for(dev.endpoint_id)
             grp = next((g for g in (ep.get('groups') or []) if isinstance(g, dict)
                         and str(g.get('id', '')) == dev.group_id), None)
             (grp if grp is not None else ep)['opcua'] = block
         else:
-            self._own_entry(device_id)['opcua'] = block
+            from .device_patch import apply_opcua
+            apply_opcua(self._own_entry(device_id), block)
         self._build_devices()
         self.save_yaml_config()
 
@@ -1672,6 +2312,33 @@ class Config:
         if raw is None:
             raise ValueError(f"device {device_id!r} is not a configurable device")
         return raw
+
+    def _set_device_types(self, raw) -> None:
+        """Hold the user device types as the file has them: the raw entries
+        are kept for the next save (an entry that cannot be read too — it is
+        the file's, and is only skipped), the readable ones go to the catalog."""
+        from . import device_types as _dt
+        self._raw_device_types = [dict(x) if isinstance(x, dict) else x
+                                  for x in (raw if isinstance(raw, list) else [])]
+        for where, why in _dt.set_user_types(self._raw_device_types).items():
+            logger.warning(f"{where}: {why}: ignored")
+
+    @property
+    def device_types(self) -> List[Dict]:
+        return [dict(x) for x in self._raw_device_types if isinstance(x, dict)]
+
+    def save_device_types(self, types: List[Dict]) -> None:
+        """Replace the user device types and save (the API checked them)."""
+        from . import device_types as _dt
+        before = self._raw_device_types
+        self._raw_device_types = [dict(x) for x in types]
+        _dt.set_user_types(self._raw_device_types)
+        try:
+            self.save_yaml_config()
+        except Exception:
+            self._raw_device_types = before
+            _dt.set_user_types(before)
+            raise
 
     def set_device_kind(self, device_id: str, kind: Optional[str]) -> None:
         """An admin's word on what kind of equipment a device is (None or ''
@@ -1752,11 +2419,12 @@ class Config:
             raise ValueError(f"device {device_id!r} not found")
         cfg = dict(cfg or {})
         if dev.primary:
-            self.rest_push_primary = cfg
+            self.rest_push_primary = primary_rest_push_kept(cfg)
         elif dev.endpoint_id:
             self._endpoint_entry_for(dev.endpoint_id)['rest_push'] = cfg
         else:
-            self._own_entry(device_id)['rest_push'] = cfg
+            from .device_patch import apply_rest_push
+            apply_rest_push(self._own_entry(device_id), cfg)
         self._build_devices()
         self.save_yaml_config()
 
@@ -1791,14 +2459,35 @@ class Config:
         self._raw_devices = [d for d in self._raw_devices if d.get('id') != device_id]
         if len(self._raw_devices) == before:
             return False
-        if raw is not None:
-            self._write_device_tombstone(device_id, raw)
+        # what an Undo names (its deleted_ts), None when nothing was kept
+        self._last_tombstone[device_id] = self._write_device_tombstone(device_id, raw) if raw is not None else None
         self._build_devices()
         self.save_yaml_config()
         return True
 
-    def _write_device_tombstone(self, device_id: str, raw: Dict) -> None:
-        self._tombstones.write(device_id, raw)
+    def discard_raw_device(self, device_id: str) -> bool:
+        """Take back a device just created whose creation failed: its entry
+        goes, and nothing else — no tombstone is written, and an older
+        device's kept dir at the same id is left as it was."""
+        before = len(self._raw_devices)
+        self._raw_devices = [d for d in self._raw_devices if d.get('id') != device_id]
+        if len(self._raw_devices) == before:
+            return False
+        self._build_devices()
+        self.save_yaml_config()
+        return True
+
+    def _write_device_tombstone(self, device_id: str, raw: Dict) -> Optional[float]:
+        return self._tombstones.write(device_id, raw)
+
+    def last_tombstone_ts(self, device_id: str) -> Optional[float]:
+        """The ``deleted_ts`` the last delete of ``device_id`` kept, or None
+        when its settings could not be kept (it cannot be restored)."""
+        return self._last_tombstone.get(device_id)
+
+    def deleted_device_ts(self, device_id: str) -> Optional[float]:
+        """The kept device's ``deleted_ts`` (None: absent or unreadable)."""
+        return self._tombstones.deleted_ts(device_id)
 
     def list_deleted_devices(self) -> List[Dict]:
         """Restorable devices (a tombstone whose id is not currently active)."""
@@ -2095,6 +2784,8 @@ class Config:
     def load_energy_fields(self, device_id: str) -> List[Dict]:
         """The device's saved Energy-tab field selection (the cumulative counters
         to total per month), or [] if the user hasn't picked any yet."""
+        if not device_id:                      # no primary (ADR-0024): nothing saved
+            return []
         path = self.device_registers_path(device_id)
         if not path.exists():
             return []
@@ -2107,6 +2798,8 @@ class Config:
     def load_calculated(self, device_id: str) -> List[Dict]:
         """The device's saved calculated registers (formula-derived measurements),
         or [] if none. Each entry: {name, label, unit, expr, poll_group, decimals}."""
+        if not device_id:                      # no primary (ADR-0024): nothing saved
+            return []
         path = self.device_registers_path(device_id)
         if not path.exists():
             return []
@@ -2161,6 +2854,8 @@ class Config:
     def save_energy_fields(self, device_id: str, fields: List[Dict]) -> None:
         """Persist the Energy-tab field selection alongside the device's registers
         file (a top-level ``energy_fields`` list, next to registers/poll_groups)."""
+        if not device_id:
+            raise ValueError("no device: this gateway has no primary device")
         path = self.device_registers_path(device_id)
         with self._file_lock:                  # serialize the read-modify-write
             if path.exists():
@@ -2245,8 +2940,11 @@ class Config:
                 regs = list(parsed) if shared else [copy.copy(r) for r in parsed]
             groups = dict(self.poll_groups)
             for name, group in (data.get('poll_groups') or {}).items():
+                # merged per key, as the save is: a group stored with only an
+                # interval keeps the gateway group's description (QA-R1-04)
+                base = groups.get(name)
                 groups[name] = PollGroup(interval=group.get('interval', 5),
-                                         description=group.get('description', ''))
+                                         description=group.get('description', base.description if base else ''))
             # A source's declared intervals are the last word: they describe how
             # fast THIS way of reaching the unit may be driven, which the shared
             # device file cannot know.
@@ -2277,8 +2975,21 @@ class Config:
 
     def _load_yaml_config(self):
         """Load main YAML configuration."""
+        self._primary_file, self._primary_legacy = None, False
+        self._heartbeat_missing = False
+        self._preview_missing = []
+        self._file_mqtt = {}
+        self._degraded_sections: List[str] = []
+        self.identity_scope, self.gateway_id = 'legacy', ''
+        self._topic_pattern_explicit = self._bucket_pattern_explicit = ''
+        self._gateway_id_unsaved = False
+        self._set_device_types([])
         if not self.config_path.exists():
             logger.warning(f"Config file not found: {self.config_path}, using defaults")
+            # a first boot names its devices after this gateway (ADR-0026 §3);
+            # the id is kept by the save that follows
+            from .identity import new_gateway_id
+            self.identity_scope, self.gateway_id = 'gateway', new_gateway_id()
             return
 
         try:
@@ -2297,6 +3008,8 @@ class Config:
                 raise ValueError(
                     "config.yaml parsed but looks truncated/implausible "
                     f"(top-level keys: {sorted(data) if isinstance(data, dict) else type(data).__name__})")
+            # a section in the wrong shape costs that section, not the file
+            self._degraded_sections = _shape_sections(data)
 
             # Version stamp (audit MEDIUM-2): a file written by a NEWER gateway
             # may hold settings this version does not know — loading works
@@ -2314,6 +3027,15 @@ class Config:
                     "will be DROPPED by the next save from this version",
                     self.config_written_by, __version__, __version__)
 
+            self._load_identity(data)
+
+            # The legacy primary (ADR-0024): the file's word, else an older
+            # install has it exactly when its file holds a `modbus:` section
+            if 'primary_device' in data:
+                self._primary_file = _on_off(data.get('primary_device'), 'modbus' in data)
+            else:
+                self._primary_legacy = 'modbus' in data
+
             # Modbus
             if 'modbus' in data:
                 m = data['modbus']
@@ -2322,8 +3044,10 @@ class Config:
                     port=m.get('port', self.modbus.port),
                     unit_id=m.get('unit_id', self.modbus.unit_id),
                     timeout=m.get('timeout', self.modbus.timeout),
-                    retry_attempts=m.get('retry_attempts', self.modbus.retry_attempts),
-                    retry_delay=m.get('retry_delay', self.modbus.retry_delay),
+                    # whole / real numbers, whatever the file says (a stored
+                    # 4.0 broke range() in the meter's read loop, review #2)
+                    retry_attempts=_number_or(m.get('retry_attempts'), self.modbus.retry_attempts, int),
+                    retry_delay=_number_or(m.get('retry_delay'), self.modbus.retry_delay, float),
                     stale_after_s=m.get('stale_after_s', self.modbus.stale_after_s),
                     max_gap=m.get('max_gap', self.modbus.max_gap),
                     startup_jitter_s=float(m.get('startup_jitter_s',
@@ -2335,6 +3059,7 @@ class Config:
                     max_connections=max(1, int(m.get('max_connections', 1) or 1)),
                     endpoint_wait_s=float(m.get('endpoint_wait_s', 10.0)),
                     endpoint_min_gap_s=max(0.0, float(m.get('endpoint_min_gap_s', 0.0) or 0.0)),
+                    connect_settle_s=settle_seconds(m.get('connect_settle_s')),
                 )
 
             # MQTT
@@ -2366,6 +3091,10 @@ class Config:
                     compat_aliases=m.get('compat_aliases', self.mqtt.compat_aliases) or [],
                 )
 
+            # what the file says of MQTT, for the legacy primary's old
+            # defaults (applied once device #1 is resolved, _resolve_primary)
+            self._file_mqtt = data.get('mqtt') if isinstance(data.get('mqtt'), dict) else {}
+
             # InfluxDB
             if 'influxdb' in data:
                 i = data['influxdb']
@@ -2377,6 +3106,8 @@ class Config:
                     bucket=i.get('bucket', self.influxdb.bucket),
                     write_interval=i.get('write_interval', self.influxdb.write_interval),
                     publish_mode=i.get('publish_mode', self.influxdb.publish_mode),
+                    heartbeat_interval=(_heartbeat_setting(i['heartbeat_interval'])
+                                        if 'heartbeat_interval' in i else INFLUX_HEARTBEAT_START_S),
                     buffer_minutes=i.get('buffer_minutes', self.influxdb.buffer_minutes),
                     buffer_max_points=i.get('buffer_max_points', self.influxdb.buffer_max_points),
                     buffer_persist=i.get('buffer_persist', self.influxdb.buffer_persist),
@@ -2422,6 +3153,14 @@ class Config:
                     write_rate_limit_per_s=float(s.get('write_rate_limit_per_s', 10.0)),
                 )
 
+            # rules.recheck / commands.raw_lanes: removed in 3.97 — ignored,
+            # said once, never written back by a save
+            _gone = [f"{sec}.{key}" for sec, key in _REMOVED_397
+                     if isinstance(data.get(sec), dict) and key in data[sec]]
+            if _gone:
+                logger.info("config: %s ignored — removed in 3.97 (always on); the next save drops it",
+                            ', '.join(_gone))
+
             # OPC UA server
             if 'opcua' in data:
                 o = data['opcua'] or {}
@@ -2454,13 +3193,16 @@ class Config:
                 self.http_output_primary_enabled = bool(
                     (data['http_output'] or {}).get('enabled', False))
             if 'rest_push' in data:
-                self.rest_push_primary = dict(data['rest_push'] or {})
+                self.rest_push_primary = primary_rest_push_kept(data["rest_push"])
             if 'modules' in data:
                 self.modules = _modules(data['modules'])
             if 'opcua_output' in data:
-                self.opcua_primary = dict(data['opcua_output'] or {})
+                self.opcua_primary = primary_opcua_kept(data["opcua_output"])
             if 'pq_recorder' in data:
                 self.pq_recorder_primary = dict(data['pq_recorder'] or {})
+
+            # the user device types BEFORE the devices: a device's type may be one
+            self._set_device_types(data.get('device_types'))
 
             # Additional southbound devices (Tier 2) — materialized in
             # _build_devices() after env overrides.
@@ -2490,6 +3232,9 @@ class Config:
                 logger.info("config: the `esphome:` block is ignored — ESP firmware "
                             "is available in MBG Pro")
 
+            _ix = data.get('influxdb')
+            self._heartbeat_missing = 'heartbeat_interval' not in (_ix if isinstance(_ix, dict) else {})
+            self._load_preview_budget(data.get('preview'))
             logger.info(f"Loaded config from {self.config_path}")
             self._load_failed = False
             # Keep a last-known-good snapshot so a future corrupt edit can be
@@ -2498,7 +3243,13 @@ class Config:
             if not getattr(self, '_healing', False):
                 try:
                     good = self.config_path.with_suffix('.yaml.good')
-                    if self._good_would_regress(data, good):
+                    if self._degraded_sections:
+                        # a section was read as its defaults: this file is
+                        # not a good copy — the real section lives on in .good
+                        logger.warning(
+                            "config.yaml: %s read as defaults — NOT refreshing the "
+                            "last-known-good snapshot %s", ', '.join(self._degraded_sections), good)
+                    elif self._good_would_regress(data, good):
                         # Truncated-but-plausible file (external audit): a cut
                         # at a section boundary can still parse AND carry
                         # modbus/mqtt while having lost the devices tail.
@@ -2520,6 +3271,11 @@ class Config:
             # the user's real file with defaults (permanent config loss). Keep a
             # copy of the broken file and block saves until it's fixed.
             self._load_failed = True
+            # unreadable: nothing says the primary is not there — keep what an
+            # older gateway did (device #1 with its old names); saves are
+            # blocked until the file is repaired, so this is never persisted
+            self._primary_file, self._primary_legacy = None, True
+            self._file_mqtt = {}
             try:
                 bad = self.config_path.with_suffix('.yaml.bad')
                 _copy_private(self.config_path, bad)
@@ -2545,6 +3301,39 @@ class Config:
                     self._healing = False
                 self._load_failed = True              # real file still broken → block saves
                 self._healed_from_snapshot = True
+
+    def _load_identity(self, data: Dict) -> None:
+        """`identity_scope` and `gateway.id` as the file says them. A file
+        without the scope is an existing install: legacy. A value that is
+        not one is reported and not used."""
+        from .identity import (BUILTIN_BUCKET_PATTERNS, BUILTIN_TOPIC_PATTERNS, SCOPES, gateway_id_error,
+                               new_gateway_id)
+        scope = data.get('identity_scope')
+        if scope is None:
+            scope = 'legacy'
+        elif scope not in SCOPES:
+            logger.warning("config.yaml: identity_scope %r is not one of %s — legacy is used",
+                           scope, ', '.join(SCOPES))
+            scope = 'legacy'
+        gw = data.get('gateway')
+        gid = gw.get('id') if isinstance(gw, dict) else None
+        if gid is not None and gateway_id_error(gid):
+            logger.warning("config.yaml: gateway.id %r is not a gateway id (%s) — ignored",
+                           gid, gateway_id_error(gid))
+            gid = None
+        gid = gid or ''
+        if scope == 'gateway' and not gid:
+            gid = new_gateway_id()
+            self._gateway_id_unsaved = True        # load() keeps it in the file at once
+            logger.warning("config.yaml: identity_scope is gateway but no gateway.id — %s is generated", gid)
+        self.identity_scope, self.gateway_id = scope, gid
+        tp = (data.get('mqtt') or {}).get('default_topic_pattern') if isinstance(data.get('mqtt'), dict) else None
+        bp = ((data.get('influxdb') or {}).get('default_bucket_pattern')
+              if isinstance(data.get('influxdb'), dict) else None)
+        # a scope's default written out (every save before the scope existed
+        # did) is the default, not a choice
+        self._topic_pattern_explicit = tp if tp and tp not in BUILTIN_TOPIC_PATTERNS else ''
+        self._bucket_pattern_explicit = bp if bp and bp not in BUILTIN_BUCKET_PATTERNS else ''
 
     @staticmethod
     def _file_sig(path):
@@ -2686,6 +3475,7 @@ class Config:
                 thresholds=reg.get('thresholds'),
                 aggregates=(dict(reg['aggregates'])
                             if isinstance(reg.get('aggregates'), dict) else None),
+                **_can_kwargs(reg),
             ))
         return out
 
@@ -2704,6 +3494,12 @@ class Config:
 
     def _apply_env_overrides(self):
         """Apply environment variable overrides."""
+        # the kill switches removed in 3.97: an environment still setting
+        # them is said, and changes nothing
+        _gone = [k for k in _REMOVED_397_ENV if os.getenv(k)]
+        if _gone:
+            logger.info("env %s ignored — removed in 3.97 (always on)", ', '.join(_gone))
+
         # Modbus
         if os.getenv('MODBUS_HOST'):
             self.modbus.host = os.getenv('MODBUS_HOST')
@@ -2809,6 +3605,7 @@ class Config:
                 "illegal_registers": list(self.modbus.illegal_registers),
                 "drop_all_zero": self.modbus.drop_all_zero,
             },
+            "preview": self.preview_budget(),
             "mqtt": {
                 "enabled": self.mqtt.enabled,
                 "broker": self.mqtt.broker,
@@ -2837,6 +3634,7 @@ class Config:
                 "bucket": self.influxdb.bucket,
                 "write_interval": self.influxdb.write_interval,
                 "publish_mode": self.influxdb.publish_mode,
+                "heartbeat_interval": self.influxdb.heartbeat_interval,
                 "buffer_minutes": self.influxdb.buffer_minutes,
                 "buffer_max_points": self.influxdb.buffer_max_points,
                 "buffer_persist": self.influxdb.buffer_persist,
@@ -2846,6 +3644,8 @@ class Config:
                 name: {"interval": g.interval, "description": g.description}
                 for name, g in self.poll_groups.items()
             },
+            "identity_scope": self.identity_scope,
+            "gateway": {"id": self.gateway_id},
             "selected_registers_count": len(self.selected_registers),
             "devices": [d.summary() for d in self.devices],
         }
@@ -2910,10 +3710,18 @@ class Config:
                                for k, v in sorted(getattr(self, 'ignored_blocks', {}).items())],
         }
 
+    def _pattern_out(self, key: str, explicit: str, effective: str) -> Dict[str, str]:
+        """A default pattern as a save writes it: a legacy file keeps it
+        written out, as every save before; under `gateway` only a chosen one
+        is written, so the scope's default stays a default."""
+        if explicit or self.identity_scope == 'legacy':
+            return {key: explicit or effective}
+        return {}
+
     def save_yaml_config(self):
         """Save current configuration to YAML file."""
         if getattr(self, '_load_failed', False):
-            raise RuntimeError(
+            raise ConfigSaveBlocked(
                 f"config.yaml failed to load at startup — refusing to overwrite it "
                 f"with defaults. Repair {self.config_path} (a copy of the broken "
                 f"file was kept as .yaml.bad) and restart.")
@@ -2921,6 +3729,13 @@ class Config:
             # First key on purpose: who wrote this file (see the downgrade
             # warning in _load_yaml_config).
             'config_version': __version__,
+            # whether device #1 (the legacy primary) exists — always written,
+            # so it is never again a default (ADR-0024)
+            'primary_device': bool(self.primary_enabled),
+            # how new devices are named — always written, so a file is never
+            # again read as a default (ADR-0026 §3)
+            'identity_scope': self.identity_scope,
+            **({'gateway': {'id': self.gateway_id}} if self.gateway_id else {}),
             'modbus': {
                 'host': self.modbus.host,
                 'port': self.modbus.port,
@@ -2934,6 +3749,8 @@ class Config:
                 'illegal_registers': list(self.modbus.illegal_registers),
                 'drop_all_zero': self.modbus.drop_all_zero,
             },
+            # the read preview's budget (ADR-0031 §5)
+            'preview': self.preview_budget(),
             'mqtt': {
                 'enabled': self.mqtt.enabled,
                 'broker': self.mqtt.broker,
@@ -2956,7 +3773,8 @@ class Config:
                 'tls_client_cert': self.mqtt.tls_client_cert,
                 'tls_client_key': self.mqtt.tls_client_key,
                 'tls_insecure': self.mqtt.tls_insecure,
-                'default_topic_pattern': self.mqtt.default_topic_pattern,
+                **self._pattern_out('default_topic_pattern', self._topic_pattern_explicit,
+                                    self.mqtt.default_topic_pattern),
                 'compat_aliases': self.mqtt.compat_aliases,
             },
             'influxdb': {
@@ -2967,10 +3785,12 @@ class Config:
                 'bucket': self.influxdb.bucket,
                 'write_interval': self.influxdb.write_interval,
                 'publish_mode': self.influxdb.publish_mode,
+                'heartbeat_interval': self.influxdb.heartbeat_interval,
                 'buffer_minutes': self.influxdb.buffer_minutes,
                 'buffer_max_points': self.influxdb.buffer_max_points,
                 'buffer_persist': self.influxdb.buffer_persist,
-                'default_bucket_pattern': self.influxdb.default_bucket_pattern,
+                **self._pattern_out('default_bucket_pattern', self._bucket_pattern_explicit,
+                                    self.influxdb.default_bucket_pattern),
             },
             'ui': {
                 'host': self.ui.host,
@@ -3051,6 +3871,8 @@ class Config:
             data['endpoints'] = self._raw_endpoints
         if self._raw_bridges:
             data['bridges'] = self._raw_bridges
+        if self._raw_device_types:
+            data['device_types'] = self._raw_device_types
 
         # Preserve the optional alerts block across saves (device/config edits
         # rewrite this file; without this a save would silently drop alerting).
@@ -3110,10 +3932,70 @@ class Config:
         """Update Modbus configuration (non-None fields only)."""
         self._apply_updates(self.modbus, fields)
 
+    def apply_primary(self, *, modbus: Optional[Dict[str, Any]] = None, ha_discovery: Optional[bool] = None,
+                      http_output: Optional[bool] = None, opcua: Optional[Dict[str, Any]] = None,
+                      rest_push: Optional[Dict[str, Any]] = None) -> None:
+        """An edit of the primary meter (PUT and PATCH /api/devices/{primary},
+        ADR-0032 §6), already checked, onto its flat sections: ``modbus`` →
+        ``modbus:`` (update_modbus, non-None keys), ``ha_discovery`` → the
+        gateway's ``mqtt.ha_discovery_enabled``, ``http_output`` /
+        ``opcua`` / ``rest_push`` → their primary sections, in the form the
+        file keeps (primary_*_kept); None leaves one alone. ``ha_discovery``
+        is PUT's legacy mapping only: PATCH refuses it (the gateway's switch).
+        One save, then the devices rebuilt. A save that fails puts everything
+        back in memory and raises; a rebuild that fails after the save raises
+        PrimaryRebuildError (the file is new)."""
+        import dataclasses
+        snap = (copy.copy(self.modbus), self.mqtt.ha_discovery_enabled, self.http_output_primary_enabled,
+                copy.deepcopy(self.opcua_primary), copy.deepcopy(self.rest_push_primary))
+        try:
+            if modbus:
+                self.update_modbus(**modbus)
+            if ha_discovery is not None:
+                self.mqtt.ha_discovery_enabled = bool(ha_discovery)
+            if http_output is not None:
+                self.http_output_primary_enabled = bool(http_output)
+            if opcua is not None:
+                self.opcua_primary = primary_opcua_kept(opcua)
+            if rest_push is not None:
+                self.rest_push_primary = primary_rest_push_kept(rest_push)
+            self.save_yaml_config()
+        except Exception:
+            # the same ModbusConfig object (the primary's connection, the
+            # client's config): its fields put back in place
+            for f in dataclasses.fields(snap[0]):
+                setattr(self.modbus, f.name, getattr(snap[0], f.name))
+            (self.mqtt.ha_discovery_enabled, self.http_output_primary_enabled,
+             self.opcua_primary, self.rest_push_primary) = snap[1:]
+            raise
+        try:
+            self._build_devices()
+        except Exception as e:
+            # the file is written: said as such, never as "nothing saved"
+            raise PrimaryRebuildError(f"{type(e).__name__}: {e}") from e
+
     def update_mqtt(self, **fields):
-        """Update MQTT configuration (non-None fields only)."""
+        """Update MQTT configuration (non-None fields only). A default
+        topic pattern equal to a scope's default (or empty) is the default:
+        it follows the scope (ADR-0026 §3) — a form loaded before a scope
+        switch cannot pin the other scope's."""
+        from .identity import BUILTIN_TOPIC_PATTERNS
+        pat = fields.pop('default_topic_pattern', None)
+        fields.pop('identity_scope', None)
+        fields.pop('gateway_id', None)
         self._apply_updates(self.mqtt, fields)
+        if pat is not None:
+            pat = str(pat).strip()
+            self._topic_pattern_explicit = '' if pat in ('',) + BUILTIN_TOPIC_PATTERNS else pat
+        self._resolve_identity()
 
     def update_influxdb(self, **fields):
-        """Update InfluxDB configuration (non-None fields only)."""
+        """Update InfluxDB configuration (non-None fields only); the
+        default bucket pattern as update_mqtt's topic pattern."""
+        from .identity import BUILTIN_BUCKET_PATTERNS
+        pat = fields.pop('default_bucket_pattern', None)
         self._apply_updates(self.influxdb, fields)
+        if pat is not None:
+            pat = str(pat).strip()
+            self._bucket_pattern_explicit = '' if pat in ('',) + BUILTIN_BUCKET_PATTERNS else pat
+        self._resolve_identity()

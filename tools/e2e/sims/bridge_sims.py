@@ -8,7 +8,8 @@ simulated box; run them INSIDE the gateway container as the app user (uid
 
 Stop one with `touch /tmp/br_sim_<port>.stop` (or /tmp/br_sims.stop for all).
 
-  transparent PORT   a Waveshare-like converter in "Protocol: None": raw
+  transparent PORT [UNITS]
+                     a Waveshare-like converter in "Protocol: None": raw
                      Modbus RTU frames (with CRC) over TCP, two slaves on its
                      bus, ONE client at a time — a new connection takes the
                      line and the older one is closed ("newest wins"). Slaves
@@ -17,6 +18,10 @@ Stop one with `touch /tmp/br_sim_<port>.stop` (or /tmp/br_sims.stop for all).
                        unit 2: HR 0 = 3333, HR 1 = 4444
                      Writes /tmp/br_sim_<port>.json every 0.5 s:
                        {"accepts": n, "kicked": n, "frames": {unit: n}, "peer": ip}
+                     UNITS (e.g. 1,2,3,4) puts those slaves on the bus instead,
+                     unit u: HR 0 = 1000 + u, HR 1 = 2000 + u (add_many_e2e).
+                     A device identification (FC43/14) is answered ILLEGAL
+                     FUNCTION, as most meters do.
   master PORT        a transparent converter on a bus ANOTHER master polls:
                      every 0.5 s it carries that master's questions and the
                      slaves' answers (unit 1 HR 0-1 = 1111, 2222; unit 2 =
@@ -63,20 +68,21 @@ def adu(body):
 
 
 # ── transparent: RTU over TCP, one client, newest wins ───────────────────
-def transparent(port):
+def transparent(port, units=None):
+    slaves = ({u: {0: 1000 + u, 1: 2000 + u} for u in units} if units else TRANSPARENT)
     stats = {'accepts': 0, 'kicked': 0, 'frames': {}, 'peer': ''}
     cur = {'sock': None}
     lock = threading.Lock()
 
     def answer(frame):
         unit, fc = frame[0], frame[1]
-        if unit not in TRANSPARENT:
+        if unit not in slaves:
             return None                      # no such slave on the wire: silence
         addr, count = struct.unpack('>HH', frame[2:6])
         stats['frames'][str(unit)] = stats['frames'].get(str(unit), 0) + 1
         if fc not in (3, 4) or not 1 <= count <= 125:
             return adu(bytes([unit, fc | 0x80, 1]))
-        regs = TRANSPARENT[unit]
+        regs = slaves[unit]
         data = b''.join(struct.pack('>H', regs.get(addr + i, 0)) for i in range(count))
         return adu(bytes([unit, fc, len(data)]) + data)
 
@@ -93,6 +99,15 @@ def transparent(port):
             if not chunk:
                 break
             buf += chunk
+            while len(buf) >= 5 and buf[1] == 0x2B and len(buf) >= 7 \
+                    and crc16(buf[:5]) == buf[5] | (buf[6] << 8):
+                unit = buf[0]                # FC43/14: no identification here
+                buf = buf[7:]
+                if unit in slaves:
+                    try:
+                        conn.sendall(adu(bytes([unit, 0x2B | 0x80, 1])))
+                    except OSError:
+                        return
             while len(buf) >= 8:             # FC3/FC4 requests are 8 bytes
                 frame = buf[:8]
                 if crc16(frame[:6]) == frame[6] | (frame[7] << 8):
@@ -237,6 +252,9 @@ if __name__ == '__main__':
     for p in (f'/tmp/br_sim_{port}.stop',):
         if os.path.exists(p):
             os.unlink(p)
-    {'transparent': transparent, 'gateway': gateway, 'master': master}[kind](port)
+    if kind == 'transparent' and len(sys.argv) > 3:
+        transparent(port, [int(u) for u in sys.argv[3].split(',') if u])
+    else:
+        {'transparent': transparent, 'gateway': gateway, 'master': master}[kind](port)
     print('stopped', flush=True)
     os._exit(0)

@@ -1,5 +1,5 @@
 # Multi-Bus Gateway — multi-protocol Modbus/HTTP/MQTT acquisition gateway.
-# Copyright (C) 2024-2026 Stefan Maldaianu <sm26449@diysolar.ro>  — AGPL-3.0-or-later
+# Copyright (C) 2024-2026 Stefan Maldaianu <stefan@multibus.dev>  — AGPL-3.0-or-later
 """The OPC UA server: every device and value the gateway reads, with the
 quality and the time it was read.
 
@@ -141,6 +141,12 @@ class OpcUaServer:
     """start() / stop() / status(). ``devices()`` yields (device_id,
     display name, live?, store) — the live values as the gateway holds them."""
 
+    # command methods wait for their device's lane: on a small executor of
+    # their own, never asyncio's default one, which the server's other work
+    # shares (ADR-0018 D4)
+    COMMAND_WORKERS = 4
+    _command_executor = None
+
     def __init__(self, cfg, *, devices: Callable, authenticate: Callable[[str, str], Optional[str]],
                  config_dir: Path, version: str = '', run_command: Optional[Callable] = None):
         self.cfg = cfg
@@ -184,6 +190,9 @@ class OpcUaServer:
         if self._thread is not None:
             self._thread.join(10)
         self._thread = None
+        if self._command_executor is not None:
+            self._command_executor.shutdown(wait=False)
+            self._command_executor = None
         self._nodes.clear()
         self._last.clear()
         self._unread.clear()
@@ -193,8 +202,10 @@ class OpcUaServer:
         self._cmd_folders.clear()
 
     def status(self) -> Dict[str, Any]:
-        return {'enabled': bool(self.cfg.enabled), 'running': bool(self._thread and self._thread.is_alive()
-                                                                     and self._ready.is_set() and not self.error),
+        alive = bool(self._thread and self._thread.is_alive())
+        return {'enabled': bool(self.cfg.enabled), 'running': alive and self._ready.is_set() and not self.error,
+                # a slow host can take longer than start()'s wait: still coming up, not failed
+                'starting': alive and not self._ready.is_set() and not self.error,
                 'endpoint': self.endpoint, 'error': self.error, 'variables': len(self._nodes),
                 'devices': len(self._dev_nodes), 'commands': len(self._cmd_nodes),
                 'encryption': self.cfg.encryption,
@@ -506,7 +517,11 @@ class OpcUaServer:
         else:
             loop = asyncio.get_running_loop()
             try:
-                http, res = await loop.run_in_executor(None, functools.partial(
+                if self._command_executor is None:
+                    from concurrent.futures import ThreadPoolExecutor
+                    self._command_executor = ThreadPoolExecutor(max_workers=self.COMMAND_WORKERS,
+                                                                thread_name_prefix='opcua-cmd')
+                http, res = await loop.run_in_executor(self._command_executor, functools.partial(
                     self._run_command, dev, cname, dict(params), who))
             except Exception as e:  # noqa: BLE001 — a command that crashed is a failed one, said
                 http, res = 500, {'status': 'error', 'reason': f"{type(e).__name__}: {e}"}

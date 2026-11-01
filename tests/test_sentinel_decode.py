@@ -1,5 +1,5 @@
 # Multi-Bus Gateway — multi-protocol Modbus/HTTP/MQTT acquisition gateway.
-# Copyright (C) 2024-2026 Stefan Maldaianu <sm26449@diysolar.ro>  — AGPL-3.0-or-later
+# Copyright (C) 2024-2026 Stefan Maldaianu <stefan@multibus.dev>  — AGPL-3.0-or-later
 """A device 'not available' sentinel must decode to None (missing), not the raw
 max/min value — else garbage (e.g. 65535) is published to MQTT/InfluxDB and can
 reach a downstream ESS. Opt-in per register via `nan`; float NaN always dropped.

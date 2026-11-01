@@ -1,5 +1,5 @@
 # Multi-Bus Gateway — multi-protocol Modbus/HTTP/MQTT acquisition gateway.
-# Copyright (C) 2024-2026 Stefan Maldaianu <sm26449@diysolar.ro>
+# Copyright (C) 2024-2026 Stefan Maldaianu <stefan@multibus.dev>
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU Affero General Public License as published by
@@ -18,9 +18,11 @@
 api.py re-imports them so external references keep working)."""
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union
 
-from pydantic import BaseModel, Field
+import math
+
+from pydantic import BaseModel, Field, StrictInt, field_validator, model_validator
 
 
 class RegisterQuery(BaseModel):
@@ -99,6 +101,12 @@ class SelectedRegisterUpdate(BaseModel):
     ui_widget: str = "value"
     ui_config: Dict[str, Any] = {}
     thresholds: Optional[ThresholdConfig] = None
+    # a CAN signal (can_signal.py): a save must keep where it is read from
+    can_id: Optional[Union[int, str]] = None
+    can_id_extended: bool = False
+    start_bit: Optional[int] = None
+    bit_length: Optional[int] = None
+    byte_order: str = ""
 
 
 class ModbusConfigUpdate(BaseModel):
@@ -109,6 +117,13 @@ class ModbusConfigUpdate(BaseModel):
     timeout: Optional[int] = None
     retry_attempts: Optional[int] = None
     retry_delay: Optional[float] = None
+
+
+class PreviewBudgetUpdate(BaseModel):
+    """The read preview's budget (config.PREVIEW_BUDGET): whole numbers in range."""
+    model_config = {"extra": "forbid"}
+    max_requests: Optional[StrictInt] = Field(default=None, ge=1, le=20)
+    listen_s: Optional[StrictInt] = Field(default=None, ge=1, le=60)
 
 
 class MQTTConfigUpdate(BaseModel):
@@ -144,4 +159,28 @@ class InfluxDBConfigUpdate(BaseModel):
     bucket: Optional[str] = None
     write_interval: Optional[int] = None
     publish_mode: Optional[str] = None
+    # ADR-0029: whole seconds 0..86400, 0 = off — config.heartbeat_seconds,
+    # the check every heartbeat value goes through ("60", true, 1.5, NaN refused)
+    heartbeat_interval: Optional[int] = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _no_nan(cls, data):
+        # NaN/inf as text, so the 422 that refuses it can itself be sent as
+        # JSON (a non-finite float in the error body made it a 500)
+        v = data.get("heartbeat_interval") if isinstance(data, dict) else None
+        if isinstance(v, float) and not math.isfinite(v):
+            data = {**data, "heartbeat_interval": str(v)}
+        return data
+
+    @field_validator("heartbeat_interval", mode="before")
+    @classmethod
+    def _whole_seconds(cls, v):
+        if v is None:
+            return None
+        from ..config import heartbeat_seconds
+        s = heartbeat_seconds(v)
+        if s is None:
+            raise ValueError("whole seconds, 0..86400")
+        return s
     default_bucket_pattern: Optional[str] = None

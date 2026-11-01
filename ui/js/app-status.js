@@ -1,5 +1,5 @@
 /* Multi-Bus Gateway — multi-protocol Modbus/HTTP/MQTT acquisition gateway.
- * Copyright (C) 2024-2026 Stefan Maldaianu <sm26449@diysolar.ro>
+ * Copyright (C) 2024-2026 Stefan Maldaianu <stefan@multibus.dev>
  * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 // status domain — augments JanitzaMonitor.prototype
@@ -400,10 +400,10 @@ Object.assign(JanitzaMonitor.prototype, {
                 <td><span class="st-name">${this._esc(d.name || d.id)}</span>${inst}</td>
                 <td class="st-muted st-hide-sm">${this._esc(proto(d))}</td>
                 <td class="num st-hide-sm">${d.poll_rate != null ? this._stNum(d.poll_rate, 2) + '/s'
-                    : /mqtt|tap/.test(proto(d)) ? `<span class="st-muted" title="${this._esc(t('status.pushTip', 'It sends its values; nothing is polled'))}">${t('status.push', 'push')}</span>` : '—'}</td>
+                    : /mqtt|tap|can/.test(proto(d)) ? `<span class="st-muted" title="${this._esc(t('status.pushTip', 'It sends its values; nothing is polled'))}">${t('status.push', 'push')}</span>` : '—'}</td>
                 <td class="num st-hide-sm${d.slow ? ' st-warn-t' : ''}">${lat}</td>
                 <td class="num">${d.staleness_age_s != null ? this._stDur(d.staleness_age_s) : '—'}</td>
-                <td class="num${fails ? ' st-bad' : ' st-muted'}">${this._stNum(fails)}<span class="st-hide-sm">${this._errBreakdown(d.error_counts)}</span></td>
+                <td class="num${fails ? ' st-bad' : ' st-muted'}">${this._stNum(fails)}<span class="st-hide-sm">${this._errBreakdown(d.error_counts)}</span>${d.can && this._canCountersHtml ? `<div class="st-muted st-hide-sm" style="font-size:11.5px;">${this._canCountersHtml(d.can)}</div>` : ''}</td>
                 <td class="num st-muted st-hide-sm" title="${this._esc(t('status.upSinceTip', 'time in the current health state (connection uptime)'))}">${d.up_since_s != null ? this._stDur(d.up_since_s) : '—'}</td></tr>`;
             const groups = d.primary && (modbus.poll_groups_detail || []).length
                 ? `<tr class="st-sub" data-key="${this._esc(d.id)}:groups"><td></td><td colspan="7">${modbus.poll_groups_detail.map(g =>
@@ -557,7 +557,7 @@ Object.assign(JanitzaMonitor.prototype, {
         const op = this._st.data.opcua, opOn = !!(op && !op.unavailable && op.enabled);
         const cols = [
             ['mqtt_enabled', 'MQTT', mqttOn], ['influxdb_enabled', 'InfluxDB', influxOn], ['opcua_enabled', 'OPC UA', opOn],
-            ['http_output_enabled', 'HTTP', true], ['rest_push_enabled', 'REST push', true], ['ha_discovery_enabled', 'Home Assistant', mqttOn],
+            ['http_output_enabled', 'HTTP', true], ['rest_push_enabled', t('devices.sink.restTitle', 'REST push'), true], ['ha_discovery_enabled', 'Home Assistant', mqttOn],
         ];
         const yes = `<i aria-hidden="true" class="bi bi-check-lg st-yes"></i><span class="sr-only">${this._esc(t('status.yes', 'yes'))}</span>`;
         const no = `<span class="st-faint" aria-hidden="true">·</span><span class="sr-only">${this._esc(t('status.no', 'no'))}</span>`;
@@ -892,6 +892,11 @@ Object.assign(JanitzaMonitor.prototype, {
             const response = await fetch('/api/status');
             if (!response.ok) throw new Error('HTTP ' + response.status);
             const status = await response.json();
+            // what a write needs (the master switch, a credential): the device
+            // menus say why a write cannot run before a form is typed
+            const was = JSON.stringify(this._gwWrites || null);
+            this._gwWrites = status.writes || null;
+            if (was !== JSON.stringify(this._gwWrites) && this._view?.type === 'device' && this._ddvRefreshMenu) this._ddvRefreshMenu();
 
             const verEl = document.getElementById('appVersion');
             if (verEl && status.version) verEl.textContent = 'v' + status.version;

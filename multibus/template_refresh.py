@@ -1,5 +1,5 @@
 # Multi-Bus Gateway — multi-protocol Modbus/HTTP/MQTT acquisition gateway.
-# Copyright (C) 2024-2026 Stefan Maldaianu <sm26449@diysolar.ro>
+# Copyright (C) 2024-2026 Stefan Maldaianu <stefan@multibus.dev>
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU Affero General Public License as published by
@@ -23,7 +23,8 @@ existed. This refreshes what the template DESCRIBES on the rows the unit
 already has, and nothing the operator decided:
 
 refreshed  label, unit, description, category, aggregates, and how a value
-           is decoded (states, bits, mask/shift, the not-available marker) —
+           is decoded (states, bits, mask/shift, the not-available marker,
+           a CAN signal's frame and bits) —
            on registers and template-shipped calculated fields matched by
            name (the unit only while the row keeps the template's scale and
            offset)
@@ -80,6 +81,13 @@ def _apply_row(row: Dict[str, Any], t, keys: Tuple[str, ...]) -> None:
         row["aggregates"] = dict(agg)
     else:
         row.pop("aggregates", None)
+    # where a CAN signal sits in its frame is how it is decoded: the template's
+    from .can_signal import CAN_FIELDS, can_fields
+    cf = can_fields(t)
+    if cf:
+        for k in CAN_FIELDS:
+            row.pop(k, None)
+        row.update(cf)
 
 
 def _refresh_rows(rows: List[Dict[str, Any]], tpl_rows: Dict[str, Any],
@@ -107,7 +115,8 @@ def _row_changes(rows: List[Dict[str, Any]], tpl_rows: Dict[str, Any],
             continue
         after = copy.deepcopy(row)
         _apply_row(after, t, keys)
-        for k in keys + ("aggregates",):
+        from .can_signal import CAN_FIELDS
+        for k in keys + ("aggregates",) + CAN_FIELDS:
             # a section or a description the row never had is read from the
             # template anyway: filling it in changes nothing anyone sees, so it
             # is done with the next update but is no reason to announce one

@@ -26,6 +26,7 @@ An alert fires on these conditions (each toggleable), plus three ungated ones: c
 | `latency`| on | a source's read latency stays above `latency_ms` |
 | `buffer` | on | the InfluxDB store-and-forward buffer grows past `buffer_points` (or drops points) |
 | `threshold` | **off** | a register value crosses one of its warning/danger thresholds (see next section) |
+| `bridge` | **off** | a bus behind our serial bridge goes over one of its limits: line errors per minute (frame, parity, overrun, break), the bus silent while the gateway asks it, TCP reconnects per 10 minutes — and once more (`info`) when it is back under. See [Bus health](#bus-health-the-bridge-signal) |
 | `alarm` | on | an **alarm field its template declares** (`display.alarms`: an error code, a fault word, a calculated flag) turns active and stays so for its `for_s`; again on a new value (another error code); an `info` when it clears. Only while the device is live |
 
 Saving the alerts form changes only the signals it shows; a signal set in
@@ -68,6 +69,44 @@ A threshold event has `key` = `thr:<device-id>:<address>`, `severity` =
 `error` (danger band), `warn` (warning band) or `info` (back to normal), and a
 message like `Grid current L1 = 74.2 A — above danger limit 72 A` /
 `… — back to normal`.
+
+## Bus health (the `bridge` signal)
+
+Our serial bridge reports the line and the TCP side of each bus it serves
+(`docs/serial-bridge-api.md`, Diagnostics); the gateway asks every bridge
+every 30 s and compares over the last 5 minutes. With `signals.bridge: true`
+three conditions fire per bus, each with hysteresis: `warn` after **two
+polls in a row** over the limit, `info` "back to normal" after two polls in a
+row under **80 %** of it. Line errors and reconnects are rates and are judged
+only once the bus has a **full 5-minute window** of history (no alert from
+one reconnect right after a restart). A bridge older than diagnostics is
+reported `unsupported` and never alerts. Switching the signal off, or
+removing the bridge, forgets the alert states without a "back to normal":
+
+| Key | Fires when | Limit (default) |
+|---|---|---|
+| `bridge:<bridge>:<port>:line` | line errors per minute over the window are above the limit. An adapter that counts no line errors (CH340) never fires it | `line_errors_per_min` (10) |
+| `bridge:<bridge>:<port>:silent` | nothing has come from the bus for this long **while** the gateway sends to it; never less than twice the bus's longest poll interval (a device read every 4 minutes is silent 4 minutes between reads) | `silent_s` (120) |
+| `bridge:<bridge>:<port>:reconnects` | TCP clients connecting, scaled to 10 minutes | `reconnects_per_10min` (6) |
+
+The limits are set for every bus in `alerts.bridge`, and a bridge or one of
+its buses may carry its own in `config.yaml`; the bus's own wins, then the
+bridge's, then `alerts.bridge`. `enabled: false` mutes a bus:
+
+```yaml
+alerts:
+  signals: { bridge: true }
+  bridge: { line_errors_per_min: 10, silent_s: 120, reconnects_per_10min: 6 }
+bridges:
+  - id: pi-garage
+    type: mbg_serial_bridge
+    host: 192.168.1.50
+    alerts: { silent_s: 600 }                  # a slow bus on this bridge
+    ports:
+      - { port: 7002, alerts: { enabled: false } }   # a bus under test
+```
+
+A standby gateway neither alerts nor publishes.
 
 ## Configure (`config.yaml`, applied on restart; live-tunable from Config → Alerts)
 

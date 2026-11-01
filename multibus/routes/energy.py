@@ -1,5 +1,5 @@
 # Multi-Bus Gateway — multi-protocol Modbus/HTTP/MQTT acquisition gateway.
-# Copyright (C) 2024-2026 Stefan Maldaianu <sm26449@diysolar.ro>
+# Copyright (C) 2024-2026 Stefan Maldaianu <stefan@multibus.dev>
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU Affero General Public License as published by
@@ -25,6 +25,9 @@ import asyncio
 from typing import Dict
 
 from fastapi import APIRouter, Body, HTTPException, Query
+from fastapi.responses import Response
+
+from .. import write_guard
 
 from ._shared import device_influx
 
@@ -67,7 +70,7 @@ def build(ctx) -> APIRouter:
         auto-detected candidates, else the legacy Janitza defaults (primary only)."""
         did = _energy_device(device)
         regs = config.load_energy_fields(did) or _energy_candidates(did)
-        if not regs and (not device or registry.find(did)[1] and registry.find(did)[1].primary):
+        if not regs and did and (not device or registry.find(did)[1] and registry.find(did)[1].primary):
             regs = [
                 {"name": "energy_active_import", "label": "Consumption (import)", "unit": "kWh", "div": 1000},
                 {"name": "energy_active_export", "label": "Injection (export)", "unit": "kWh", "div": 1000},
@@ -76,15 +79,38 @@ def build(ctx) -> APIRouter:
             ]
         return regs
 
+    # the selection lives in its own file: its own revision (ADR-0030)
+    def _fields_rev(did):
+        return write_guard.rev(config.load_energy_fields(did) or [])
+
+    def _fields_check(if_match: str, kw: Dict) -> None:
+        did = _energy_device(kw.get("device", ""))
+        if not any(d.id == did for d in config.devices):
+            return                     # the route answers 404, never a read of a path
+        tag = _fields_rev(did)
+        if not write_guard.matches(if_match, tag):
+            raise HTTPException(status_code=412, detail={
+                "errors": ["If-Match: the Energy fields changed since they were read — "
+                           "reload them and apply the change again"],
+                "current": {"device": did, "selected": config.load_energy_fields(did) or []},
+                "etag": tag})
+
+    def _fields_tag(kw: Dict):
+        did = _energy_device(kw.get("device", ""))
+        return _fields_rev(did) if any(d.id == did for d in config.devices) else None
+
     @r.get("/api/energy/fields")
-    async def get_energy_fields(device: str = Query(default="")):
+    async def get_energy_fields(response: Response, device: str = Query(default="")):
         """The device's Energy-tab field selection + the auto-detected candidates
-        (every cumulative energy counter in its polled registers)."""
+        (every cumulative energy counter in its polled registers), with the
+        selection's ``ETag`` (what ``If-Match`` names on the POST)."""
         did = _energy_device(device)
+        response.headers["ETag"] = _fields_rev(did)
         return {"device": did, "candidates": _energy_candidates(did),
                 "selected": config.load_energy_fields(did)}
 
     @r.post("/api/energy/fields")
+    @write_guard.guarded('own-rev', check=_fields_check, tag=_fields_tag)
     async def set_energy_fields(payload: Dict = Body(...), device: str = Query(default="")):
         """Save which cumulative counters the Energy tab totals for this device."""
         did = _energy_device(device)

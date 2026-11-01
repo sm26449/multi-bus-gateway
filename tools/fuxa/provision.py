@@ -1,5 +1,5 @@
 # Multi-Bus Gateway — multi-protocol Modbus/HTTP/MQTT acquisition gateway.
-# Copyright (C) 2024-2026 Stefan Maldaianu <sm26449@diysolar.ro>  — AGPL-3.0-or-later
+# Copyright (C) 2024-2026 Stefan Maldaianu <stefan@multibus.dev>  — AGPL-3.0-or-later
 """Provision FUXA with the gateway's OPC UA server: FUXA's OPC UA plugin
 if missing, one OPCUA connection, and one tag per value the gateway serves
 (browsed with the same login FUXA will use), each device's _Online and

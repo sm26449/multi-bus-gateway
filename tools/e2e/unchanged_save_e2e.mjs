@@ -1,5 +1,5 @@
 // Multi-Bus Gateway — multi-protocol Modbus/HTTP/MQTT acquisition gateway.
-// Copyright (C) 2024-2026 Stefan Maldaianu <sm26449@diysolar.ro>  — AGPL-3.0-or-later
+// Copyright (C) 2024-2026 Stefan Maldaianu <stefan@multibus.dev>  — AGPL-3.0-or-later
 //
 // "An unchanged save changes nothing", through the real editors. Against a
 // throwaway gateway whose config.yaml has tools/e2e/fixtures/unchanged_save/
@@ -18,7 +18,7 @@ import { chromium } from 'playwright';
 import { watchDialogs } from './lib/dialogs.mjs';
 import { inflateRawSync } from 'node:zlib';
 import yaml from 'js-yaml';
-import { openDeviceTab } from './lib/device-page.mjs';
+import { openDeviceTab, editorModalOpen, editorSettled, closeDeviceEditor } from './lib/device-page.mjs';
 
 const BASE = process.env.MBG_URL || 'http://127.0.0.1:8097';
 const OUT = process.env.OUT || '';
@@ -69,7 +69,7 @@ const dlg = await watchDialogs(page);
 const said = () => dlg.seen.map(d => [d.title, d.message, ...(d.details || [])].join(' '));
 
 // the next PUT/POST to a path, and what the server answered
-const nextWrite = (re) => page.waitForResponse(r => re.test(r.url()) && ['PUT', 'POST'].includes(r.request().method()), { timeout: 8000 })
+const nextWrite = (re) => page.waitForResponse(r => re.test(r.url()) && ['PUT', 'POST', 'PATCH'].includes(r.request().method()), { timeout: 8000 })
   .then(async r => ({ status: r.status(), body: await r.json().catch(() => ({})), sent: r.request().postDataJSON() }))
   .catch(() => null);
 
@@ -81,12 +81,20 @@ try {
 
   // ── devices: an untouched page sends nothing; its own payload, sent
   // anyway, loses nothing and is a no-op from the first save (PROD-1/2) ──
+  // the Edit modal (L3.4; the primary: its page form) — Save with nothing
+  // changed: the modal holds it back ("No changes"), the form says so
   const saveDevice = async (id) => {
     await page.evaluate(i => window.app.openDeviceDetail(i), id);
     await openDeviceTab(page, 'connection');
     const w = nextWrite(new RegExp(`/api/devices/${id}$`));
-    await page.click('[data-action="saveDeviceDetail"]');
+    if (await editorModalOpen(page)) {
+      await editorSettled(page);
+      await page.click('#devEditSave', { force: true });
+    } else {
+      await page.click('[data-action="saveDeviceDetail"]');
+    }
     const clicked = await w;                       // null: nothing was sent
+    if (await editorModalOpen(page)) await closeDeviceEditor(page);
     const r = await page.evaluate(async did => {
       const res = await fetch(`/api/devices/${encodeURIComponent(did)}`, {
         method: 'PUT', headers: { 'Content-Type': 'application/json' },
@@ -110,7 +118,7 @@ try {
   await page.evaluate(() => window.app.openDeviceDetail('hp'));
   await openDeviceTab(page, 'connection');
   check('device on a bridge: the editor names the bridge, not an address',
-        (await page.inputValue('#ddvBridge')) === 'ws' && (await page.locator('#ddvHost, #ddvRtuHost').count()) === 0);
+        (await page.inputValue('#ddvBus')) === 'ws::15996' && (await page.locator('#ddvHost, #ddvRtuHost').count()) === 0);
   await page.evaluate(() => window.app.openDeviceDetail('rs'));
   await openDeviceTab(page, 'connection');
   check('serial device: the whole line is shown', (await page.inputValue('#ddvBaud')) === '19200'
@@ -118,8 +126,7 @@ try {
   await page.evaluate(() => window.app.openDeviceDetail('asc'));
   await openDeviceTab(page, 'connection');
   check('ASCII device: its protocol is the one shown',
-        await page.isChecked('input[name="ddvProto"][value="rtu"]') && await page.isChecked('input[name="ddvRtuMode"][value="rtu"]')
-        && (await page.inputValue('#ddvFraming')) === 'ascii');
+        await page.isChecked('input[name="ddvReach"][value="here"]') && await page.isChecked('input[name="ddvSpeaks"][value="modbus:ascii"]'));
 
   // ── installations ──
   const twice = async (label, epId, open) => {

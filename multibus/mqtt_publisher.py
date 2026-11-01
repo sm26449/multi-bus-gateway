@@ -1,5 +1,5 @@
 # Multi-Bus Gateway — multi-protocol Modbus/HTTP/MQTT acquisition gateway.
-# Copyright (C) 2024-2026 Stefan Maldaianu <sm26449@diysolar.ro>
+# Copyright (C) 2024-2026 Stefan Maldaianu <stefan@multibus.dev>
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU Affero General Public License as published by
@@ -27,9 +27,13 @@ import paho.mqtt.client as mqtt
 
 from . import __version__
 from . import role as gateway_role
-from .config import MQTTConfig, SelectedRegister, store_key
+from .config import LEGACY_HA_DEVICE_NAME, MQTTConfig, SelectedRegister, store_key
 
 import logging
+
+# the legacy primary's HA device identifier (device #1, the Janitza UMG
+# 512-PRO) — what an install that has it keeps (ADR-0024)
+PRIMARY_HA_ID = "janitza_umg512"
 logger = logging.getLogger(__name__)
 
 # Retry configuration
@@ -137,8 +141,13 @@ class MQTTPublisher:
     """
 
     def __init__(self, config: MQTTConfig, registers: List[SelectedRegister],
-                 publish_mode: str = 'changed', heartbeat_interval: int = 0):
+                 publish_mode: str = 'changed', heartbeat_interval: int = 0,
+                 has_primary: bool = True):
         self.config = config
+        # Is there a device #1 (the legacy Janitza primary)? Its HA device is
+        # what the other devices and the virtual meters hang under; a gateway
+        # without one (a fresh install, ADR-0024) names no Janitza anywhere.
+        self.has_primary = bool(has_primary)
         self.registers = registers
         self.publish_mode = publish_mode
         # force a republish of an unchanged value after this many seconds (0=off)
@@ -155,6 +164,9 @@ class MQTTPublisher:
         # non-primary = per-device sets.
         self._ha_discovery_topics: set = set()
         self._device_discovery_topics: Dict[str, set] = {}
+        # devices whose discovery was taken back this run (MQTT or discovery
+        # off): cleared once, not at every rebuild of the hooks
+        self._device_discovery_cleared: set = set()
 
         # Build register lookup by address
         self._register_map: Dict[int, SelectedRegister] = {
@@ -651,6 +663,12 @@ class MQTTPublisher:
             return 0
         if not self.connected or not self.config.ha_discovery_enabled:
             return 0
+        if not self.has_primary:
+            # no device #1: nothing of it to announce (only what an earlier
+            # announcement left is cleared)
+            cleared, failed = self._clear_stale_discovery(self._ha_discovery_topics)
+            self._ha_discovery_topics = failed
+            return 0
 
         count = 0
         device_info = self._build_ha_device_info()
@@ -694,7 +712,7 @@ class MQTTPublisher:
 
     def publish_device_discovery(self, device_id: str, device_name: str,
                                  topic_prefix: str, registers: List[SelectedRegister],
-                                 model: str = "", write_rules: Dict = None) -> int:
+                                 model: str = "", write_rules: Dict = None, ha_node: str = "") -> int:
         """HA autodiscovery for a NON-primary device: each becomes its own HA
         device (linked to the app via via_device=janitza_umg512), with sensors
         namespaced by device id so nothing collides with device #1 or other
@@ -709,14 +727,17 @@ class MQTTPublisher:
             return 0
         if not self.connected or not self.config.ha_discovery_enabled:
             return 0
+        node = self._ha_node(device_id, ha_node)
+        self._device_discovery_cleared.discard(device_id)
         write_rules = write_rules or {}
         device_info = {
-            "identifiers": [f"mbg_dev_{device_id}"],
+            "identifiers": [node],
             "name": device_name or device_id,
             "manufacturer": "multi-bus-gateway",
             "model": model or "Modbus device",
-            "via_device": "janitza_umg512",
         }
+        if self.has_primary:
+            device_info["via_device"] = PRIMARY_HA_ID
         count = 0
         published: set = set()
         # rebuild this device's command subscriptions from scratch
@@ -735,9 +756,9 @@ class MQTTPublisher:
                 "availability_topic": f"{topic_prefix}/availability",
                 # a value a meter gives the device is known by its name: its
                 # synthetic address follows the device's own calculated fields
-                "unique_id": (f"mbg_dev_{device_id}_{register.discovery_key}"
+                "unique_id": (f"{node}_{register.discovery_key}"
                               if getattr(register, 'discovery_key', '')
-                              else f"mbg_dev_{device_id}_{register.address}_{safe_name}"),
+                              else f"{node}_{register.address}_{safe_name}"),
                 "device": device_info,
             }
             component = "sensor"
@@ -755,7 +776,7 @@ class MQTTPublisher:
             if getattr(register, 'ha_expire_after', None):
                 config["expire_after"] = int(register.ha_expire_after)
             _dk = getattr(register, 'discovery_key', '') or f"{register.address}_{safe_name}"
-            disc = f"{self.config.ha_discovery_prefix}/{component}/mbg_dev_{device_id}/{_dk}/config"
+            disc = f"{self.config.ha_discovery_prefix}/{component}/{node}/{_dk}/config"
             published.add(disc)
             if self._publish(disc, json.dumps(config), retain=True):
                 count += 1
@@ -766,9 +787,9 @@ class MQTTPublisher:
             "payload_on": "online", "payload_off": "offline",
             "device_class": "connectivity", "entity_category": "diagnostic",
             "availability_topic": f"{self.config.topic_prefix}/status",
-            "unique_id": f"mbg_dev_{device_id}_connectivity", "device": device_info,
+            "unique_id": f"{node}_connectivity", "device": device_info,
         }
-        bs_disc = f"{self.config.ha_discovery_prefix}/binary_sensor/mbg_dev_{device_id}/connectivity/config"
+        bs_disc = f"{self.config.ha_discovery_prefix}/binary_sensor/{node}/connectivity/config"
         published.add(bs_disc)
         if self._publish(bs_disc, json.dumps(bs), retain=True):
             count += 1
@@ -780,6 +801,52 @@ class MQTTPublisher:
         logger.info(f"Published {count} HA discovery configs for device {device_id}" +
                     (f" (cleared {cleared} stale)" if cleared else ""))
         return count
+
+    @staticmethod
+    def _ha_node(device_id: str, stored: str = "") -> str:
+        """A non-primary device's HA node: the one stored with it (ADR-0026
+        §3), else `mbg_dev_<id>` (every device before the scope existed)."""
+        from .identity import legacy_node
+        return stored or legacy_node(device_id)
+
+    def clear_device_discovery(self, device_id: str, registers: List[SelectedRegister] = (),
+                               write_keys=(), ha_node: str = "") -> bool:
+        """Take a non-primary device's HA entities back (its MQTT output or
+        its discovery turned off, ADR-0025): an empty retained config for
+        everything announced this run, and for what its registers would have
+        announced (a previous run's) — a sensor per published value, a
+        number/select only for a register in ``write_keys`` (store keys of
+        the write entities it would have), the connectivity sensor. True
+        when it is all gone (the caller keeps that across restarts); False
+        when it could not be done now. Failed clears retry (DP-25)."""
+        if not gateway_role.is_active():
+            return False
+        if not self.connected or not self.config.ha_discovery_enabled:
+            return False
+        if device_id in self._device_discovery_cleared:
+            return True
+        pref = self.config.ha_discovery_prefix
+        node = self._ha_node(device_id, ha_node)
+        writable = set(write_keys or ())
+        topics = set(self._device_discovery_topics.get(device_id, set()))
+        for r in registers or []:
+            if not getattr(r, 'mqtt_enabled', True):
+                continue                       # never announced
+            safe_name = r.name.lower().replace('[', '_').replace(']', '').replace('_g_', '')
+            dk = getattr(r, 'discovery_key', '') or f"{r.address}_{safe_name}"
+            key = store_key(r.address, getattr(r, 'register_type', 'holding') or 'holding')
+            for component in (('number', 'select') if key in writable else ('sensor',)):
+                topics.add(f"{pref}/{component}/{node}/{dk}/config")
+        topics.add(f"{pref}/binary_sensor/{node}/connectivity/config")
+        self._drop_device_commands(device_id)
+        cleared, failed = self._clear_stale_discovery(topics)
+        if failed:
+            self._device_discovery_topics[device_id] = failed
+        else:
+            self._device_discovery_topics.pop(device_id, None)
+            self._device_discovery_cleared.add(device_id)
+        logger.info(f"Cleared {cleared} HA discovery configs for device {device_id}")
+        return not failed
 
     def _write_entity_config(self, config: Dict, register, rule,
                              command_topic: str, device_id: str) -> str:
@@ -1006,29 +1073,33 @@ class MQTTPublisher:
              {"icon": "mdi:alert"}),
         ]
         count = 0
+        # an install with the legacy primary keeps the ids its HA entities
+        # carry; one without names no Janitza (ADR-0024)
+        node = "janitza_vmeter" if self.has_primary else "mbg_vmeter"
         for m in meters:
             mid = m.get("id")
             if not mid:
                 continue
             state_topic = f"{self.config.topic_prefix}/vmeter/{mid}/state"
             device = {
-                "identifiers": [f"janitza_vmeter_{mid}"],
+                "identifiers": [f"{node}_{mid}"],
                 "name": f"Virtual Meter: {m.get('name', mid)}",
                 "manufacturer": "multi-bus-gateway",
                 "model": "Virtual Modbus meter",
-                "via_device": "janitza_umg512",
             }
+            if self.has_primary:
+                device["via_device"] = PRIMARY_HA_ID
             for key, friendly, component, tmpl, extra in specs:
                 config = {
                     "name": friendly,
                     "state_topic": state_topic,
                     "value_template": tmpl,
                     "availability_topic": f"{self.config.topic_prefix}/status",
-                    "unique_id": f"janitza_vmeter_{mid}_{key}",
+                    "unique_id": f"{node}_{mid}_{key}",
                     "device": device,
                 }
                 config.update(extra)
-                topic = f"{self.config.ha_discovery_prefix}/{component}/janitza_vmeter/{mid}_{key}/config"
+                topic = f"{self.config.ha_discovery_prefix}/{component}/{node}/{mid}_{key}/config"
                 if self._publish(topic, json.dumps(config), retain=True):
                     count += 1
         logger.info(f"Published {count} virtual-meter HA discovery configs ({len(meters)} meters)")
@@ -1037,8 +1108,8 @@ class MQTTPublisher:
     def _build_ha_device_info(self) -> Dict:
         """Build Home Assistant device info block."""
         return {
-            "identifiers": ["janitza_umg512"],
-            "name": self.config.ha_device_name,
+            "identifiers": [PRIMARY_HA_ID],
+            "name": self.config.ha_device_name or LEGACY_HA_DEVICE_NAME,
             "manufacturer": "Janitza electronics GmbH",
             "model": "UMG 512-PRO",
             "sw_version": __version__,

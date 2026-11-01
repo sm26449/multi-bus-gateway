@@ -1,5 +1,5 @@
 # Multi-Bus Gateway — multi-protocol Modbus/HTTP/MQTT acquisition gateway.
-# Copyright (C) 2024-2026 Stefan Maldaianu <sm26449@diysolar.ro>
+# Copyright (C) 2024-2026 Stefan Maldaianu <stefan@multibus.dev>
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU Affero General Public License as published by
@@ -17,15 +17,16 @@
 """RTU commissioning helpers — enumerate the serial lines a new device can use.
 
 Two read-only discovery endpoints the add-device wizard calls:
-- ``/api/serial-ports`` — local ``/dev`` lines visible to THIS container (direct
-  RTU via a compose ``devices:`` mapping); empty when MBG has no ``/dev`` access.
+- ``/api/serial-ports`` — the serial ports of this host from sysfs, each with
+  its state (polled, listened, not mapped into this container, …):
+  ``serial_inventory``, ADR-0028.
 - ``/api/bridge/adapters`` — adapter inventory from the serial-over-TCP bridge
-  (RTU-over-network). Both are self-contained: no shared gateway state.
+  (RTU-over-network). Self-contained: no shared gateway state.
 """
 from __future__ import annotations
 
-import glob
 import json
+import logging
 import os
 import urllib.request
 from urllib.parse import urlparse
@@ -34,6 +35,7 @@ from fastapi import APIRouter
 
 from ..redact import redact_url
 
+logger = logging.getLogger(__name__)
 _BRIDGE_URL = os.environ.get("SERIAL_BRIDGE_URL", "http://mbg-serial-bridge:7000")
 
 
@@ -41,33 +43,21 @@ def build(ctx) -> APIRouter:
     r = APIRouter(tags=["commissioning"])
 
     @r.get("/api/serial-ports")
-    def list_serial_ports():
-        """Local /dev serial lines visible to THIS container — for direct RTU
-        mode (a compose `devices:` mapping). Empty when MBG has no /dev access
-        (the default now: RTU goes through the bridge). Never raises."""
-        ports = []
-        for dev in sorted(glob.glob("/dev/ttyUSB*") + glob.glob("/dev/ttyACM*")):
-            entry = {"dev": dev}
-            try:
-                name = os.path.basename(dev)
-                usb = os.path.realpath(f"/sys/class/tty/{name}/device")
-                for _ in range(8):
-                    if os.path.exists(os.path.join(usb, "idVendor")):
-                        break
-                    usb = os.path.dirname(usb)
-
-                def _read(p):
-                    try:
-                        with open(os.path.join(usb, p)) as f:
-                            return f.read().strip()
-                    except OSError:
-                        return ""
-                entry.update(vendor_id=_read("idVendor"), product_id=_read("idProduct"),
-                             serial=_read("serial"), model=_read("product"))
-            except Exception:  # noqa: BLE001
-                pass
-            ports.append(entry)
-        return {"ports": ports}
+    def list_serial_ports(all: bool = False):  # noqa: A002 — the query parameter's name
+        """The serial ports of this host, the way the bridge lists them
+        (ADR-0028): every port in /sys, with its kind, stable path and one
+        state (free, polled, listened, busy, not_mapped, unknown; console
+        only with ``?all=1``). Read-only: sysfs, /dev and /proc, no port is
+        opened. The keys it answered with before (dev, vendor_id, …) stay.
+        Never raises; a failure is logged, the answer says no internals."""
+        from .. import serial_inventory
+        try:
+            return serial_inventory.inventory(ctx.config, getattr(ctx, "template_registry", None),
+                                              show_all=all)
+        except Exception:  # noqa: BLE001 — an odd sysfs never breaks the form
+            logger.warning("serial ports could not be listed", exc_info=True)
+            return {"ports": [], "hidden": 0,
+                    "error": "the serial ports could not be listed (see the gateway log)"}
 
     @r.get("/api/bridge/adapters")
     def bridge_adapters():

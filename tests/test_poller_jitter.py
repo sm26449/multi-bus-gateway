@@ -1,5 +1,5 @@
 # Multi-Bus Gateway — multi-protocol Modbus/HTTP/MQTT acquisition gateway.
-# Copyright (C) 2024-2026 Stefan Maldaianu <sm26449@diysolar.ro>  — AGPL-3.0-or-later
+# Copyright (C) 2024-2026 Stefan Maldaianu <stefan@multibus.dev>  — AGPL-3.0-or-later
 """Poller startup jitter: the first read is staggered by a random delay in
 [0, min(interval, startup_jitter_s)] so devices/groups don't fire in lock-step
 on a shared transport at boot. 0 = off (fire immediately)."""

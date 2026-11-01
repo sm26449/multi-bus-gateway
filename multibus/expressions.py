@@ -1,5 +1,5 @@
 # Multi-Bus Gateway — multi-protocol Modbus/HTTP/MQTT acquisition gateway.
-# Copyright (C) 2024-2026 Stefan Maldaianu <sm26449@diysolar.ro>
+# Copyright (C) 2024-2026 Stefan Maldaianu <stefan@multibus.dev>
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU Affero General Public License as published by
@@ -369,7 +369,7 @@ def validate_expression(expr, check_places: bool = True, assume_ids=()):
                     return False, f'{node.func.id}() takes a rule id in quotes: {node.func.id}("pool-pump")', []
                 elif fname == 'attr' or (fname in ('sun_elevation', 'sun_azimuth')):
                     return False, (f'{fname}() takes its place in quotes: {fname}("pv")' if fname != 'attr' else
-                                   'attr() takes three names in quotes: attr("umg512", "grid_connection", "max_export_kw")'), []
+                                   'attr() takes three names in quotes: attr("grid-meter", "grid_connection", "max_export_kw")'), []
             if fname == 'is_day':
                 nums = [a for a in node.args if not (isinstance(a, ast.Constant) and isinstance(a.value, str))]
                 if any((isinstance(a, ast.Constant) and isinstance(a.value, bool))
@@ -778,7 +778,7 @@ FUNCTIONS = [
     {"name": "sun_elevation", "sig": 'sun_elevation("pv")', "desc": "the sun's height in degrees at a place (the plant when empty)"},
     {"name": "sun_azimuth", "sig": 'sun_azimuth("pv")', "desc": "where the sun is, compass degrees (180 = south)"},
     {"name": "is_day", "sig": 'is_day(5, "pv")', "desc": "the sun is above the degrees (default: sunrise, -0.833)"},
-    {"name": "attr", "sig": 'attr("umg512", "grid_connection", "max_export_kw")', "desc": "an asset attribute (docs/attributes.md)"},
+    {"name": "attr", "sig": 'attr("grid-meter", "grid_connection", "max_export_kw")', "desc": "an asset attribute (docs/attributes.md)"},
     {"name": "dt", "sig": "dt", "desc": "seconds since this value was last computed"},
     {"name": "hour", "sig": "hour()", "desc": "the hour now, 0-23 (the installation's timezone)"},
     {"name": "minute", "sig": "minute()", "desc": "the minute now, 0-59"},

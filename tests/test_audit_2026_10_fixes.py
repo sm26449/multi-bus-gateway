@@ -1,5 +1,5 @@
 # Multi-Bus Gateway — multi-protocol Modbus/HTTP/MQTT acquisition gateway.
-# Copyright (C) 2024-2026 Stefan Maldaianu <sm26449@diysolar.ro>  — AGPL-3.0-or-later
+# Copyright (C) 2024-2026 Stefan Maldaianu <stefan@multibus.dev>  — AGPL-3.0-or-later
 """Pins for the 2026-10-01 audit fixes.
 
 Covered here:
@@ -213,7 +213,12 @@ def mqtt_handler(tmp_path):
     app, _ = create_api(cfg, None, mock_mqtt, None,
                         devices=[(d, None) for d in cfg.devices] + [(dev, fake)])
     app.state.template_registry._templates["parity_tpl"] = _parity_tpl()
-    handler = mock_mqtt.set_command_write_handler.call_args[0][0]
+    raw_handler = mock_mqtt.set_command_write_handler.call_args[0][0]
+
+    def handler(*a):
+        # a raw HA write is a lane job (ADR-0022 D5): waited for here
+        raw_handler(*a)
+        app.state.command_dispatch.drain(5)
     return handler, fake, cfg
 
 
@@ -271,7 +276,7 @@ def test_discovery_skips_scale_from_and_unfronted_command_registers(tmp_path):
     mock_mqtt = MagicMock()
     mock_mqtt.connected = True
     captured = {}
-    mock_mqtt.publish_device_discovery = lambda did, name, prefix, regs, model=None, write_rules=None: \
+    mock_mqtt.publish_device_discovery = lambda did, name, prefix, regs, model=None, write_rules=None, **_kw: \
         captured.update({did: dict(write_rules or {})})
     app, _ = create_api(cfg, None, mock_mqtt, None,
                         devices=[(d, None) for d in cfg.devices] + [(dev, _FakeClient())])
@@ -555,6 +560,8 @@ def test_endpoint_influx_buffers_during_an_outage():
     agg = EndpointAggregator.__new__(EndpointAggregator)
     agg._get_influx = lambda: ix
     agg._influx_last = {}
+    agg._influx_at, agg._influx_out_at = {}, {}         # ADR-0029 heartbeat stamps
+    agg._config = None
     agg._ensured = set()
     agg._publish_influx({"influxdb": {"enabled": True, "bucket": "b"}},
                         "plant", {"power_active_total": 1.0})

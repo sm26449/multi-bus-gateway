@@ -1,0 +1,1725 @@
+{
+  "device_template": {
+    "schema_version": 1,
+    "id": "deye_hybrid_1p",
+    "name": "Deye single-phase hybrid inverter (read-only)",
+    "vendor": "Deye",
+    "model": "SUN-xK-SG0xLP1 (e.g. SUN-8K-SG05LP1-EU)",
+    "kind": "inverter",
+    "version": "0.3.0",
+    "author": "Stefan Maldaianu",
+    "description": "Deye single-phase low-voltage hybrid inverter (SUN-xK-SG0xLP1 family, e.g. SUN-8K-SG05LP1-EU), READ-ONLY: FC03 holding registers only, no writable register and no command, so no rule or command can bind to it. Wire the inverter's RS485 \"Modbus\" port (not the BMS/CAN port, not the Wi-Fi logger port), Modbus RTU 9600 8N1, unit ID 1. Reads identity and serial, the running state, PV1/PV2 voltage, current and power, grid voltage, current, frequency and power, the inverter and load power, battery voltage, current, power, SOC and temperature, the GEN port (an AC-coupled microinverter there: its power, voltage and daily and total energy), the BMS block as the inverter receives it (voltage, current, temperature, SOC, charge/discharge current limits and voltages), the battery type and rated capacity settings, the load voltage, daily and total energies as counters, the inverter temperatures and the warning/fault words (bits named by the Fxx code the display shows). 32-bit totals are low word first, so the template's word order is little (CDAB); the total grid import is split across 78 and 80 (79 is the frequency) and is rebuilt as the calculated energy_active_import. Signs follow the gateway's canonical conventions: battery_power and battery_current + charging (Deye reports + discharging, so both are inverted with a negative scale), power_grid + import / - export (as Deye reports it), power_load negative = consuming (inverted). First checked on hardware on a SUN-8K-SG05LP1 (2026-10-27, no BMS connected): the rows that agreed say so, the rest are still to be verified on site against the inverter display.",
+    "source_document": "Deye single-phase hybrid Modbus map as published by the ha-solarman project (deye_hybrid.yaml, SUN-xK-SG01LP1/SG03LP1/SG05LP1) and cross-read against kellerza/sunsynk (src/sunsynk/definitions/single_phase.py: the same Deye/Sunsynk single-phase firmware; there a negative factor marks a signed register, not an inversion) and Deye's 'Modbus RTU protocol' for single-phase energy storage inverters. Reference only, no code copied. Checked on a SUN-8K-SG05LP1 (protocol 0x0201) on 2026-10-27; each row says whether it was. The GEN port, BMS block and battery settings (0.3.0) come from the same maps; the BMS temperature (319) from the Deye document only.",
+    "protocol": {
+      "line": {"baudrate": 9600, "parity": "N", "bytesize": 8, "stopbits": 1},
+      "transports": [
+        "rtu",
+        "tcp"
+      ],
+      "byte_order": "little",
+      "default_unit_id": 1,
+      "default_register_type": "holding"
+    },
+    "poll_groups": {
+      "fast": {
+        "interval": 5,
+        "description": "PV, grid, inverter, load and battery power"
+      },
+      "normal": {
+        "interval": 30,
+        "description": "running state, temperatures, warning and fault words"
+      },
+      "energy": {
+        "interval": 60,
+        "description": "daily and total energy counters"
+      },
+      "static": {
+        "interval": 3600,
+        "description": "device type, protocol version, serial, rated power"
+      }
+    },
+    "categories": {
+      "pv": {
+        "label": "PV",
+        "order": 1
+      },
+      "gen": {
+        "label": "GEN port (microinverter)",
+        "order": 2
+      },
+      "battery": {
+        "label": "Battery",
+        "order": 3
+      },
+      "bms": {
+        "label": "BMS (as the inverter receives it)",
+        "order": 4
+      },
+      "grid": {
+        "label": "Grid",
+        "order": 5
+      },
+      "inverter": {
+        "label": "Inverter and load",
+        "order": 6
+      },
+      "energy": {
+        "label": "Energy",
+        "order": 7
+      },
+      "temperature": {
+        "label": "Temperatures",
+        "order": 8
+      },
+      "status": {
+        "label": "Status",
+        "order": 9
+      },
+      "alarms": {
+        "label": "Warnings and faults",
+        "order": 10
+      },
+      "identity": {
+        "label": "Device identity",
+        "order": 11
+      }
+    },
+    "canonical": false,
+    "identify": {
+      "registers": [
+        {
+          "address": 0,
+          "register_type": "holding",
+          "data_type": "uint16",
+          "in": [
+            3,
+            768
+          ]
+        },
+        {
+          "address": 59,
+          "register_type": "holding",
+          "data_type": "uint16",
+          "min": 0,
+          "max": 5
+        }
+      ]
+    },
+    "notes": [
+      {
+        "level": "warning",
+        "text": "Partly checked on hardware (SUN-8K-SG05LP1, 2026-10-27, no BMS): identity, state, grid (GRID port and CT), load, PV, battery voltage/current/power, temperatures and the energy totals agreed, and the inverter display confirmed the signs and totals. Rows marked 'Not yet checked on hardware' (SOC and battery temperature with a BMS, inverter output power and current, rated power, serial, warning and fault words, and the GEN port, BMS block, battery settings, load voltage and cumulative production rows, whose display readings are noted) still need comparing with a register read."
+      },
+      {
+        "level": "info",
+        "text": "Read-only on purpose: the template declares no writable register and no command. Writing work mode or battery settings over Modbus changes the inverter's stored settings; do that from the inverter or its app."
+      },
+      {
+        "level": "info",
+        "text": "Wiring: the RS485 'Modbus' port, 9600 8N1, unit 1. The BMS port (RS485/CAN) talks to the battery and the logger port to the Wi-Fi stick; do not connect there."
+      },
+      {
+        "level": "info",
+        "text": "Signs: battery_power and battery_current are + while charging (Deye reports + discharging, - charging; the bench read raw -244 W while PV charged the battery); power_grid is + importing; power_load is negative while the loads consume, as every power_load in the gateway (the inverter shows the same figure positive).",
+        "fields": [
+          "battery_power",
+          "battery_current",
+          "power_grid",
+          "power_load"
+        ]
+      },
+      {
+        "level": "info",
+        "text": "The total grid import sits in registers 78 (low word) and 80 (high word), with the frequency in 79 between them; energy_active_import is calculated from the two, which are read but not published.",
+        "fields": [
+          "grid_import_total_low",
+          "grid_import_total_high",
+          "energy_active_import"
+        ]
+      },
+      {
+        "level": "info",
+        "text": "Grid: power_grid (169) is the power through the inverter's GRID port, measured inside the inverter. grid_ct_power (172) is the external CT at the site's meter: the whole site's exchange where a CT is fitted, noise near 0 where none is (the bench read 1572 W at 169 and 24 W at 172). The inverter display confirmed both (2026-10-27 09:31).",
+        "fields": [
+          "power_grid",
+          "grid_ct_power"
+        ]
+      },
+      {
+        "level": "info",
+        "text": "GEN port: an AC-coupled microinverter (or a generator, or a smart load) on the GEN port shows in gen_power, gen_voltage, gen_energy_today and gen_energy_total (calculated from 92 low and 95 high). energy_lifetime ('Cumulative Production (Active)') is the PV total plus the GEN total; energy_active_generated stays the PV total.",
+        "fields": [
+          "gen_power",
+          "gen_voltage",
+          "gen_energy_today",
+          "gen_energy_total",
+          "energy_lifetime",
+          "energy_active_generated"
+        ]
+      },
+      {
+        "level": "warning",
+        "text": "How a BMS loss shows on this model (bench, BMS disconnected, 2026-10-27): SOC 0, battery temperature raw 0 (published as absent), the running state still Normal (vendor_state 2) and no alarm, while battery voltage, current and power keep reading from the inverter's own sensors. Nothing in the state or alarm rows flags it, so a consumer (the ADR-0023 work) must read SOC 0 together with an absent battery temperature as 'BMS lost', not as an empty battery.",
+        "fields": [
+          "soc",
+          "battery_temperature",
+          "vendor_state",
+          "status_alarm"
+        ]
+      },
+      {
+        "level": "info",
+        "text": "The BMS block (312-321) is what the inverter receives from its BMS, next to its own battery measurements (183, 184, 182, 190, 191): for ADR-0023 it shows whether the BMS link carries data. With the BMS disconnected the display shows the whole block at 0 and its temperature at -100; bms_voltage, bms_temperature and the two BMS voltages are then absent (0 V and -100 °C cannot be real), while currents, limits and SOC stay 0 (a BMS may send 0).",
+        "fields": [
+          "bms_voltage",
+          "bms_current",
+          "bms_temperature",
+          "bms_soc",
+          "charge_current_limit",
+          "discharge_current_limit",
+          "bms_max_charge_current",
+          "bms_max_discharge_current",
+          "charge_voltage_limit",
+          "discharge_voltage_limit"
+        ]
+      }
+    ],
+    "registers": [
+      {
+        "address": 0,
+        "name": "device_type",
+        "label": "Device type",
+        "unit": "",
+        "data_type": "uint16",
+        "register_type": "holding",
+        "access": "RD",
+        "category": "identity",
+        "poll_group": "static",
+        "description": "0 (0x0000). Deye device type; the single-phase hybrid answers 3 (some firmware 0x0300 = 768). Source: ha-solarman deye_hybrid.yaml + kellerza/sunsynk single-phase map. Checked on hardware (SG05LP1, 2026-10-27): answered 3.",
+        "enum": {
+          "2": "String inverter",
+          "3": "Single-phase hybrid",
+          "4": "Microinverter",
+          "5": "LV three-phase hybrid",
+          "6": "HV three-phase hybrid",
+          "512": "String inverter",
+          "768": "Single-phase hybrid",
+          "1024": "Microinverter",
+          "1280": "LV three-phase hybrid",
+          "1536": "HV three-phase hybrid"
+        },
+        "entity_category": "diagnostic",
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": true
+          }
+        }
+      },
+      {
+        "address": 2,
+        "name": "protocol_version",
+        "label": "Modbus protocol version",
+        "unit": "",
+        "data_type": "uint16",
+        "register_type": "holding",
+        "access": "RD",
+        "category": "identity",
+        "poll_group": "static",
+        "description": "2 (0x0002). Protocol version word. Source: ha-solarman deye_hybrid.yaml + kellerza/sunsynk single-phase map. Checked on hardware (SG05LP1, 2026-10-27): answered 513 (0x0201).",
+        "entity_category": "diagnostic",
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": true
+          }
+        }
+      },
+      {
+        "address": 3,
+        "name": "serial",
+        "label": "Serial number",
+        "unit": "",
+        "data_type": "string:5",
+        "register_type": "holding",
+        "access": "RD",
+        "category": "identity",
+        "poll_group": "static",
+        "description": "3 (0x0003). Serial number, 10 ASCII characters in 5 registers. Source: ha-solarman deye_hybrid.yaml + kellerza/sunsynk single-phase map. Not yet checked on hardware: verify on site against the inverter display.",
+        "entity_category": "diagnostic",
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": true
+          }
+        }
+      },
+      {
+        "address": 16,
+        "name": "rated_power",
+        "label": "Rated power",
+        "unit": "W",
+        "data_type": "uint32",
+        "register_type": "holding",
+        "access": "RD",
+        "category": "identity",
+        "poll_group": "static",
+        "scale": 10,
+        "description": "16 (0x0010). Rated power in 0.1 W, two registers low word first (the template's word order). Source: ha-solarman deye_hybrid.yaml + kellerza/sunsynk single-phase map. Not yet checked on hardware: verify on site against the inverter display.",
+        "entity_category": "diagnostic",
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": true
+          }
+        }
+      },
+      {
+        "address": 59,
+        "name": "vendor_state",
+        "label": "Running state code",
+        "unit": "",
+        "data_type": "uint16",
+        "register_type": "holding",
+        "access": "RD",
+        "category": "status",
+        "poll_group": "normal",
+        "description": "59 (0x003B). Running state: 0 standby, 1 self-check, 2 normal, 3 alarm, 4 fault, 5 activating. Decoded to words in status_text. Source: ha-solarman deye_hybrid.yaml + kellerza/sunsynk single-phase map. Checked on hardware (SG05LP1, 2026-10-27): 2 (Normal) while running.",
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": true
+          }
+        }
+      },
+      {
+        "address": 62,
+        "name": "gen_energy_today",
+        "label": "GEN port energy today",
+        "unit": "Wh",
+        "data_type": "uint16",
+        "register_type": "holding",
+        "access": "RD",
+        "category": "gen",
+        "poll_group": "energy",
+        "scale": 0.01,
+        "description": "62 (0x003E). Energy through the GEN port today, 0.1 kWh (with a microinverter on the GEN port: its daily production, 'Daily Production MI' on the display). Source: ha-solarman deye_hybrid.yaml and the Deye single-phase Modbus document (not in the kellerza/sunsynk single-phase map). Not yet checked on hardware: the inverter display read 0.00 kWh on 2026-10-27 09:31; compare with a register read.",
+        "daily": true,
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": true
+          }
+        }
+      },
+      {
+        "address": 63,
+        "name": "energy_lifetime",
+        "label": "Cumulative production (active)",
+        "unit": "Wh",
+        "data_type": "uint32",
+        "register_type": "holding",
+        "access": "RD",
+        "category": "energy",
+        "poll_group": "energy",
+        "scale": 0.01,
+        "description": "63 (0x003F). Total active energy the inverter has produced, 0.1 kWh, 63-64 low word first ('Cumulative Production (Active)' on the display; kellerza 'Total active energy'). With a microinverter on the GEN port it is the PV total (96) plus the GEN total (92/95): the display read 22 118.3 kWh = 19 045.9 + 3 072.4 kWh. Source: ha-solarman deye_hybrid.yaml + kellerza/sunsynk single-phase map. Not yet checked on hardware: the inverter display read 22.11830 MWh on 2026-10-27 09:31; compare with a register read.",
+        "monotonic": true,
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": true
+          }
+        }
+      },
+      {
+        "address": 70,
+        "name": "battery_energy_charged_today",
+        "label": "Battery charged today",
+        "unit": "Wh",
+        "data_type": "uint16",
+        "register_type": "holding",
+        "access": "RD",
+        "category": "energy",
+        "poll_group": "energy",
+        "scale": 0.01,
+        "description": "70 (0x0046). Daily battery charge, 0.1 kWh. Source: ha-solarman deye_hybrid.yaml + kellerza/sunsynk single-phase map. Checked on hardware (SG05LP1, 2026-10-27): plausible daily figures; today's import (6.7 kWh) matches today's load (6.6 kWh).",
+        "daily": true,
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": true
+          }
+        }
+      },
+      {
+        "address": 71,
+        "name": "battery_energy_discharged_today",
+        "label": "Battery discharged today",
+        "unit": "Wh",
+        "data_type": "uint16",
+        "register_type": "holding",
+        "access": "RD",
+        "category": "energy",
+        "poll_group": "energy",
+        "scale": 0.01,
+        "description": "71 (0x0047). Daily battery discharge, 0.1 kWh. Source: ha-solarman deye_hybrid.yaml + kellerza/sunsynk single-phase map. Checked on hardware (SG05LP1, 2026-10-27): plausible daily figures; today's import (6.7 kWh) matches today's load (6.6 kWh).",
+        "daily": true,
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": true
+          }
+        }
+      },
+      {
+        "address": 72,
+        "name": "battery_energy_charged_total",
+        "label": "Battery charged (total)",
+        "unit": "Wh",
+        "data_type": "uint32",
+        "register_type": "holding",
+        "access": "RD",
+        "category": "energy",
+        "poll_group": "energy",
+        "scale": 0.01,
+        "description": "72 (0x0048). Total battery charge, 0.1 kWh, 72-73 low word first. Source: ha-solarman deye_hybrid.yaml + kellerza/sunsynk single-phase map. Checked on hardware (SG05LP1, 2026-10-27): the lifetime totals balance within 2 % (load 39 814.5 kWh vs import 22 800.8 + PV 19 045.8 - export 25.3 - net battery charge 1 420.9 kWh), which confirms the low-word-first order. The inverter display (2026-10-27 09:31) confirmed it (the charge total matches the display).",
+        "monotonic": true,
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": true
+          }
+        }
+      },
+      {
+        "address": 74,
+        "name": "battery_energy_discharged_total",
+        "label": "Battery discharged (total)",
+        "unit": "Wh",
+        "data_type": "uint32",
+        "register_type": "holding",
+        "access": "RD",
+        "category": "energy",
+        "poll_group": "energy",
+        "scale": 0.01,
+        "description": "74 (0x004A). Total battery discharge, 0.1 kWh, 74-75 low word first. Source: ha-solarman deye_hybrid.yaml + kellerza/sunsynk single-phase map. Checked on hardware (SG05LP1, 2026-10-27): the lifetime totals balance within 2 % (load 39 814.5 kWh vs import 22 800.8 + PV 19 045.8 - export 25.3 - net battery charge 1 420.9 kWh), which confirms the low-word-first order. The inverter display (2026-10-27 09:31) confirmed it (the discharge total matches the display).",
+        "monotonic": true,
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": true
+          }
+        }
+      },
+      {
+        "address": 76,
+        "name": "grid_energy_import_today",
+        "label": "Grid import today",
+        "unit": "Wh",
+        "data_type": "uint16",
+        "register_type": "holding",
+        "access": "RD",
+        "category": "energy",
+        "poll_group": "energy",
+        "scale": 0.01,
+        "description": "76 (0x004C). Daily energy bought from the grid, 0.1 kWh. Source: ha-solarman deye_hybrid.yaml + kellerza/sunsynk single-phase map. Checked on hardware (SG05LP1, 2026-10-27): plausible daily figures; today's import (6.7 kWh) matches today's load (6.6 kWh).",
+        "daily": true,
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": true
+          }
+        }
+      },
+      {
+        "address": 77,
+        "name": "grid_energy_export_today",
+        "label": "Grid export today",
+        "unit": "Wh",
+        "data_type": "uint16",
+        "register_type": "holding",
+        "access": "RD",
+        "category": "energy",
+        "poll_group": "energy",
+        "scale": 0.01,
+        "description": "77 (0x004D). Daily energy sold to the grid, 0.1 kWh. Source: ha-solarman deye_hybrid.yaml + kellerza/sunsynk single-phase map. Checked on hardware (SG05LP1, 2026-10-27): plausible daily figures; today's import (6.7 kWh) matches today's load (6.6 kWh).",
+        "daily": true,
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": true
+          }
+        }
+      },
+      {
+        "address": 78,
+        "name": "grid_import_total_low",
+        "label": "Grid import total (low word)",
+        "unit": "",
+        "data_type": "uint16",
+        "register_type": "holding",
+        "access": "RD",
+        "category": "energy",
+        "poll_group": "energy",
+        "description": "78 (0x004E). Low word of the total energy bought (0.1 kWh). Its high word is 80, not 79 (79 is the grid frequency), so the total is the calculated energy_active_import; the two halves are read for it and not published. Source: ha-solarman deye_hybrid.yaml + kellerza/sunsynk single-phase map. Checked on hardware (SG05LP1, 2026-10-27): the lifetime totals balance within 2 % (load 39 814.5 kWh vs import 22 800.8 + PV 19 045.8 - export 25.3 - net battery charge 1 420.9 kWh), which confirms the low-word-first order. The inverter display (2026-10-27 09:31) confirmed it (the purchased total matches the display).",
+        "entity_category": "diagnostic",
+        "defaults": {
+          "mqtt": {
+            "enabled": false
+          },
+          "influxdb": {
+            "enabled": false
+          }
+        }
+      },
+      {
+        "address": 79,
+        "name": "frequency",
+        "label": "Grid frequency",
+        "unit": "Hz",
+        "data_type": "uint16",
+        "register_type": "holding",
+        "access": "RD",
+        "category": "grid",
+        "poll_group": "fast",
+        "scale": 100,
+        "description": "79 (0x004F). Grid frequency, 0.01 Hz. Source: ha-solarman deye_hybrid.yaml + kellerza/sunsynk single-phase map. Checked on hardware (SG05LP1, 2026-10-27): 49.98 Hz.",
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": true
+          }
+        }
+      },
+      {
+        "address": 80,
+        "name": "grid_import_total_high",
+        "label": "Grid import total (high word)",
+        "unit": "",
+        "data_type": "uint16",
+        "register_type": "holding",
+        "access": "RD",
+        "category": "energy",
+        "poll_group": "energy",
+        "description": "80 (0x0050). High word of the total energy bought; see 78. Read for energy_active_import, not published. Source: ha-solarman deye_hybrid.yaml + kellerza/sunsynk single-phase map. Checked on hardware (SG05LP1, 2026-10-27): the lifetime totals balance within 2 % (load 39 814.5 kWh vs import 22 800.8 + PV 19 045.8 - export 25.3 - net battery charge 1 420.9 kWh), which confirms the low-word-first order. The inverter display (2026-10-27 09:31) confirmed it (the purchased total matches the display).",
+        "entity_category": "diagnostic",
+        "defaults": {
+          "mqtt": {
+            "enabled": false
+          },
+          "influxdb": {
+            "enabled": false
+          }
+        }
+      },
+      {
+        "address": 81,
+        "name": "energy_active_export",
+        "label": "Grid export (total)",
+        "unit": "Wh",
+        "data_type": "uint32",
+        "register_type": "holding",
+        "access": "RD",
+        "category": "energy",
+        "poll_group": "energy",
+        "scale": 0.01,
+        "description": "81 (0x0051). Total energy sold to the grid, 0.1 kWh, 81-82 low word first. Source: ha-solarman deye_hybrid.yaml + kellerza/sunsynk single-phase map. Checked on hardware (SG05LP1, 2026-10-27): the lifetime totals balance within 2 % (load 39 814.5 kWh vs import 22 800.8 + PV 19 045.8 - export 25.3 - net battery charge 1 420.9 kWh), which confirms the low-word-first order.",
+        "monotonic": true,
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": true
+          }
+        }
+      },
+      {
+        "address": 84,
+        "name": "load_energy_today",
+        "label": "Load today",
+        "unit": "Wh",
+        "data_type": "uint16",
+        "register_type": "holding",
+        "access": "RD",
+        "category": "energy",
+        "poll_group": "energy",
+        "scale": 0.01,
+        "description": "84 (0x0054). Daily load consumption, 0.1 kWh. Source: ha-solarman deye_hybrid.yaml + kellerza/sunsynk single-phase map. Checked on hardware (SG05LP1, 2026-10-27): plausible daily figures; today's import (6.7 kWh) matches today's load (6.6 kWh).",
+        "daily": true,
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": true
+          }
+        }
+      },
+      {
+        "address": 85,
+        "name": "load_energy_total",
+        "label": "Load (total)",
+        "unit": "Wh",
+        "data_type": "uint32",
+        "register_type": "holding",
+        "access": "RD",
+        "category": "energy",
+        "poll_group": "energy",
+        "scale": 0.01,
+        "description": "85 (0x0055). Total load consumption, 0.1 kWh, 85-86 low word first. Source: ha-solarman deye_hybrid.yaml + kellerza/sunsynk single-phase map. Checked on hardware (SG05LP1, 2026-10-27): the lifetime totals balance within 2 % (load 39 814.5 kWh vs import 22 800.8 + PV 19 045.8 - export 25.3 - net battery charge 1 420.9 kWh), which confirms the low-word-first order. The inverter display (2026-10-27 09:31) confirmed it (the consumption total matches the display).",
+        "monotonic": true,
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": true
+          }
+        }
+      },
+      {
+        "address": 90,
+        "name": "temperature_transformer",
+        "label": "DC transformer temperature",
+        "unit": "°C",
+        "data_type": "uint16",
+        "register_type": "holding",
+        "access": "RD",
+        "category": "temperature",
+        "poll_group": "normal",
+        "scale": 10,
+        "offset": -100,
+        "description": "90 (0x005A). DC-side (transformer) temperature, 0.1 °C with a +100 °C offset: (raw - 1000) / 10. Source: ha-solarman deye_hybrid.yaml + kellerza/sunsynk single-phase map. Checked on hardware (SG05LP1, 2026-10-27): 48.6 °C.",
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": true
+          }
+        }
+      },
+      {
+        "address": 91,
+        "name": "temperature_heatsink",
+        "label": "Heatsink temperature",
+        "unit": "°C",
+        "data_type": "uint16",
+        "register_type": "holding",
+        "access": "RD",
+        "category": "temperature",
+        "poll_group": "normal",
+        "scale": 10,
+        "offset": -100,
+        "description": "91 (0x005B). AC-side heatsink (radiator) temperature, 0.1 °C with a +100 °C offset. Source: ha-solarman deye_hybrid.yaml + kellerza/sunsynk single-phase map. Checked on hardware (SG05LP1, 2026-10-27): 46.2 °C.",
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": true
+          }
+        }
+      },
+      {
+        "address": 92,
+        "name": "gen_energy_total_low",
+        "label": "GEN port energy total (low word)",
+        "unit": "",
+        "data_type": "uint16",
+        "register_type": "holding",
+        "access": "RD",
+        "category": "energy",
+        "poll_group": "energy",
+        "description": "92 (0x005C). Low word of the GEN port's total energy, 0.1 kWh; the high word is 95 (93-94 between them are other values). Read only to build the calculated gen_energy_total. Source: ha-solarman deye_hybrid.yaml and the Deye single-phase Modbus document (not in the kellerza/sunsynk single-phase map). Not yet checked on hardware: the inverter display read Total Production MI 3.07240 MWh (raw 30724 here, 0 at 95) on 2026-10-27 09:31; compare with a register read.",
+        "entity_category": "diagnostic",
+        "defaults": {
+          "mqtt": {
+            "enabled": false
+          },
+          "influxdb": {
+            "enabled": false
+          }
+        }
+      },
+      {
+        "address": 95,
+        "name": "gen_energy_total_high",
+        "label": "GEN port energy total (high word)",
+        "unit": "",
+        "data_type": "uint16",
+        "register_type": "holding",
+        "access": "RD",
+        "category": "energy",
+        "poll_group": "energy",
+        "description": "95 (0x005F). High word of the GEN port's total energy (low word 92). Read only to build the calculated gen_energy_total. Source: ha-solarman deye_hybrid.yaml and the Deye single-phase Modbus document (not in the kellerza/sunsynk single-phase map). Not yet checked on hardware: the inverter display read Total Production MI 3.07240 MWh (high word 0) on 2026-10-27 09:31; compare with a register read.",
+        "entity_category": "diagnostic",
+        "defaults": {
+          "mqtt": {
+            "enabled": false
+          },
+          "influxdb": {
+            "enabled": false
+          }
+        }
+      },
+      {
+        "address": 96,
+        "name": "energy_active_generated",
+        "label": "PV production (total)",
+        "unit": "Wh",
+        "data_type": "uint32",
+        "register_type": "holding",
+        "access": "RD",
+        "category": "energy",
+        "poll_group": "energy",
+        "scale": 0.01,
+        "description": "96 (0x0060). Total PV production, 0.1 kWh, 96-97 low word first. Source: ha-solarman deye_hybrid.yaml + kellerza/sunsynk single-phase map. Checked on hardware (SG05LP1, 2026-10-27): the lifetime totals balance within 2 % (load 39 814.5 kWh vs import 22 800.8 + PV 19 045.8 - export 25.3 - net battery charge 1 420.9 kWh), which confirms the low-word-first order. The inverter display (2026-10-27 09:31) confirmed it: PV cumulative 19.04590 MWh.",
+        "monotonic": true,
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": true
+          }
+        }
+      },
+      {
+        "address": 101,
+        "name": "warning_word_1",
+        "label": "Warning word 1",
+        "unit": "",
+        "data_type": "uint16",
+        "register_type": "holding",
+        "access": "RD",
+        "category": "alarms",
+        "poll_group": "normal",
+        "description": "101 (0x0065). Warning bits W01-W16 (bit 0 = W01). Source: ha-solarman deye_hybrid.yaml + kellerza/sunsynk single-phase map. Not yet checked on hardware: verify on site against the inverter display.",
+        "bits": {
+          "0": "W01",
+          "1": "W02",
+          "2": "W03",
+          "3": "W04",
+          "4": "W05",
+          "5": "W06",
+          "6": "W07",
+          "7": "W08",
+          "8": "W09",
+          "9": "W10",
+          "10": "W11",
+          "11": "W12",
+          "12": "W13",
+          "13": "W14",
+          "14": "W15",
+          "15": "W16"
+        },
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": true
+          }
+        }
+      },
+      {
+        "address": 102,
+        "name": "warning_word_2",
+        "label": "Warning word 2",
+        "unit": "",
+        "data_type": "uint16",
+        "register_type": "holding",
+        "access": "RD",
+        "category": "alarms",
+        "poll_group": "normal",
+        "description": "102 (0x0066). Warning bits W17-W32 (bit 0 = W17). Source: ha-solarman deye_hybrid.yaml + kellerza/sunsynk single-phase map. Not yet checked on hardware: verify on site against the inverter display.",
+        "bits": {
+          "0": "W17",
+          "1": "W18",
+          "2": "W19",
+          "3": "W20",
+          "4": "W21",
+          "5": "W22",
+          "6": "W23",
+          "7": "W24",
+          "8": "W25",
+          "9": "W26",
+          "10": "W27",
+          "11": "W28",
+          "12": "W29",
+          "13": "W30",
+          "14": "W31",
+          "15": "W32"
+        },
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": true
+          }
+        }
+      },
+      {
+        "address": 103,
+        "name": "fault_word_1",
+        "label": "Fault word 1",
+        "unit": "",
+        "data_type": "uint16",
+        "register_type": "holding",
+        "access": "RD",
+        "category": "alarms",
+        "poll_group": "normal",
+        "description": "103 (0x0067). Fault bits F01-F16 (bit 0 = F01); the Fxx number is the code on the inverter display. Source: ha-solarman deye_hybrid.yaml + kellerza/sunsynk single-phase map. Not yet checked on hardware: verify on site against the inverter display.",
+        "bits": {
+          "0": "F01 DC inversed",
+          "1": "F02",
+          "2": "F03",
+          "3": "F04",
+          "4": "F05",
+          "5": "F06",
+          "6": "F07 DC start failure",
+          "7": "F08 GFDI failure",
+          "8": "F09",
+          "9": "F10 Auxiliary power board",
+          "10": "F11",
+          "11": "F12",
+          "12": "F13 Working mode change",
+          "13": "F14",
+          "14": "F15 AC over current (SW)",
+          "15": "F16 AC leakage current (GFCI)"
+        },
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": true
+          }
+        }
+      },
+      {
+        "address": 104,
+        "name": "fault_word_2",
+        "label": "Fault word 2",
+        "unit": "",
+        "data_type": "uint16",
+        "register_type": "holding",
+        "access": "RD",
+        "category": "alarms",
+        "poll_group": "normal",
+        "description": "104 (0x0068). Fault bits F17-F32 (bit 0 = F17); the Fxx number is the code on the inverter display. Source: ha-solarman deye_hybrid.yaml + kellerza/sunsynk single-phase map. Not yet checked on hardware: verify on site against the inverter display.",
+        "bits": {
+          "0": "F17",
+          "1": "F18 AC over current (HW)",
+          "2": "F19",
+          "3": "F20 DC over current (HW)",
+          "4": "F21",
+          "5": "F22 Remote emergency stop",
+          "6": "F23 AC leakage current transient",
+          "7": "F24 DC insulation impedance",
+          "8": "F25",
+          "9": "F26 DC busbar unbalanced",
+          "10": "F27",
+          "11": "F28",
+          "12": "F29 Parallel CAN bus",
+          "13": "F30",
+          "14": "F31",
+          "15": "F32"
+        },
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": true
+          }
+        }
+      },
+      {
+        "address": 105,
+        "name": "fault_word_3",
+        "label": "Fault word 3",
+        "unit": "",
+        "data_type": "uint16",
+        "register_type": "holding",
+        "access": "RD",
+        "category": "alarms",
+        "poll_group": "normal",
+        "description": "105 (0x0069). Fault bits F33-F48 (bit 0 = F33); the Fxx number is the code on the inverter display. Source: ha-solarman deye_hybrid.yaml + kellerza/sunsynk single-phase map. Not yet checked on hardware: verify on site against the inverter display.",
+        "bits": {
+          "0": "F33",
+          "1": "F34 AC overload",
+          "2": "F35 No AC grid",
+          "3": "F36",
+          "4": "F37",
+          "5": "F38",
+          "6": "F39",
+          "7": "F40",
+          "8": "F41 Parallel system stopped",
+          "9": "F42 AC line low voltage",
+          "10": "F43",
+          "11": "F44",
+          "12": "F45",
+          "13": "F46 Backup battery fault",
+          "14": "F47 AC over frequency",
+          "15": "F48 AC under frequency"
+        },
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": true
+          }
+        }
+      },
+      {
+        "address": 106,
+        "name": "fault_word_4",
+        "label": "Fault word 4",
+        "unit": "",
+        "data_type": "uint16",
+        "register_type": "holding",
+        "access": "RD",
+        "category": "alarms",
+        "poll_group": "normal",
+        "description": "106 (0x006A). Fault bits F49-F64 (bit 0 = F49); the Fxx number is the code on the inverter display. Source: ha-solarman deye_hybrid.yaml + kellerza/sunsynk single-phase map. Not yet checked on hardware: verify on site against the inverter display.",
+        "bits": {
+          "0": "F49",
+          "1": "F50",
+          "2": "F51",
+          "3": "F52",
+          "4": "F53",
+          "5": "F54",
+          "6": "F55 DC busbar voltage too high",
+          "7": "F56 DC busbar voltage too low",
+          "8": "F57",
+          "9": "F58 BMS communication",
+          "10": "F59",
+          "11": "F60",
+          "12": "F61",
+          "13": "F62",
+          "14": "F63 Arc fault",
+          "15": "F64 Heatsink high temperature"
+        },
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": true
+          }
+        }
+      },
+      {
+        "address": 108,
+        "name": "energy_today",
+        "label": "PV production today",
+        "unit": "Wh",
+        "data_type": "uint16",
+        "register_type": "holding",
+        "access": "RD",
+        "category": "energy",
+        "poll_group": "energy",
+        "scale": 0.01,
+        "description": "108 (0x006C). Daily PV production, 0.1 kWh. Source: ha-solarman deye_hybrid.yaml + kellerza/sunsynk single-phase map. Checked on hardware (SG05LP1, 2026-10-27): plausible daily figures; today's import (6.7 kWh) matches today's load (6.6 kWh).",
+        "daily": true,
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": true
+          }
+        }
+      },
+      {
+        "address": 109,
+        "name": "voltage_dc_mppt1",
+        "label": "PV1 voltage",
+        "unit": "V",
+        "data_type": "uint16",
+        "register_type": "holding",
+        "access": "RD",
+        "category": "pv",
+        "poll_group": "fast",
+        "scale": 10,
+        "description": "109 (0x006D). PV1 voltage, 0.1 V. Source: ha-solarman deye_hybrid.yaml + kellerza/sunsynk single-phase map. Checked on hardware (SG05LP1, 2026-10-27): 245.5 V.",
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": true
+          }
+        }
+      },
+      {
+        "address": 110,
+        "name": "current_dc_mppt1",
+        "label": "PV1 current",
+        "unit": "A",
+        "data_type": "uint16",
+        "register_type": "holding",
+        "access": "RD",
+        "category": "pv",
+        "poll_group": "fast",
+        "scale": 10,
+        "description": "110 (0x006E). PV1 current, 0.1 A. Source: ha-solarman deye_hybrid.yaml + kellerza/sunsynk single-phase map. Checked on hardware (SG05LP1, 2026-10-27): 0.4 A.",
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": true
+          }
+        }
+      },
+      {
+        "address": 111,
+        "name": "voltage_dc_mppt2",
+        "label": "PV2 voltage",
+        "unit": "V",
+        "data_type": "uint16",
+        "register_type": "holding",
+        "access": "RD",
+        "category": "pv",
+        "poll_group": "fast",
+        "scale": 10,
+        "description": "111 (0x006F). PV2 voltage, 0.1 V. Source: ha-solarman deye_hybrid.yaml + kellerza/sunsynk single-phase map. Checked on hardware (SG05LP1, 2026-10-27): 245.5 V.",
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": true
+          }
+        }
+      },
+      {
+        "address": 112,
+        "name": "current_dc_mppt2",
+        "label": "PV2 current",
+        "unit": "A",
+        "data_type": "uint16",
+        "register_type": "holding",
+        "access": "RD",
+        "category": "pv",
+        "poll_group": "fast",
+        "scale": 10,
+        "description": "112 (0x0070). PV2 current, 0.1 A. Source: ha-solarman deye_hybrid.yaml + kellerza/sunsynk single-phase map. Checked on hardware (SG05LP1, 2026-10-27): 0.7 A.",
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": true
+          }
+        }
+      },
+      {
+        "address": 150,
+        "name": "voltage_l1_n",
+        "label": "Grid voltage",
+        "unit": "V",
+        "data_type": "uint16",
+        "register_type": "holding",
+        "access": "RD",
+        "category": "grid",
+        "poll_group": "fast",
+        "scale": 10,
+        "description": "150 (0x0096). Grid voltage L1, 0.1 V. Source: ha-solarman deye_hybrid.yaml + kellerza/sunsynk single-phase map. Checked on hardware (SG05LP1, 2026-10-27): 231.3 V.",
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": true
+          }
+        }
+      },
+      {
+        "address": 157,
+        "name": "load_voltage",
+        "label": "Load voltage",
+        "unit": "V",
+        "data_type": "uint16",
+        "register_type": "holding",
+        "access": "RD",
+        "category": "inverter",
+        "poll_group": "fast",
+        "scale": 10,
+        "description": "157 (0x009D). Voltage on the inverter's LOAD port, 0.1 V ('Load L1 Voltage' in ha-solarman). Source: ha-solarman deye_hybrid.yaml and the Deye single-phase Modbus document (not in the kellerza/sunsynk single-phase map). Not yet checked on hardware: the inverter display read 228.90 V on 2026-10-27 09:31; compare with a register read.",
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": true
+          }
+        }
+      },
+      {
+        "address": 160,
+        "name": "current_l1",
+        "label": "Grid current",
+        "unit": "A",
+        "data_type": "int16",
+        "register_type": "holding",
+        "access": "RD",
+        "category": "grid",
+        "poll_group": "fast",
+        "scale": 100,
+        "description": "160 (0x00A0). Grid-side current L1, 0.01 A (signed as the inverter reports it). Source: ha-solarman deye_hybrid.yaml + kellerza/sunsynk single-phase map. Checked on hardware (SG05LP1, 2026-10-27): 7.51 A at 1572 W.",
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": true
+          }
+        }
+      },
+      {
+        "address": 164,
+        "name": "inverter_current",
+        "label": "Inverter output current",
+        "unit": "A",
+        "data_type": "int16",
+        "register_type": "holding",
+        "access": "RD",
+        "category": "inverter",
+        "poll_group": "fast",
+        "scale": 100,
+        "description": "164 (0x00A4). Inverter output current L1, 0.01 A. Source: ha-solarman deye_hybrid.yaml + kellerza/sunsynk single-phase map. Not yet checked on hardware: verify on site against the inverter display.",
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": true
+          }
+        }
+      },
+      {
+        "address": 166,
+        "name": "gen_power",
+        "label": "GEN port power (microinverter)",
+        "unit": "W",
+        "data_type": "int16",
+        "register_type": "holding",
+        "access": "RD",
+        "category": "gen",
+        "poll_group": "fast",
+        "description": "166 (0x00A6). Power through the GEN port, W, signed ('Gen power' / 'AUX power'; the negative factor in kellerza marks a signed register). With an AC-coupled microinverter on the GEN port this is its output ('MI Power' on the display), + while it produces; the sign is still to be confirmed in daylight. Source: ha-solarman deye_hybrid.yaml + kellerza/sunsynk single-phase map. Not yet checked on hardware: the inverter display read 0 W on 2026-10-27 09:31; compare with a register read.",
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": true
+          }
+        }
+      },
+      {
+        "address": 169,
+        "name": "power_grid",
+        "label": "Grid power (inverter GRID port)",
+        "unit": "W",
+        "data_type": "int16",
+        "register_type": "holding",
+        "access": "RD",
+        "category": "grid",
+        "poll_group": "fast",
+        "description": "169 (0x00A9). Power through the inverter's GRID port, W, measured inside the inverter. Deye: + buying, - selling, already the gateway's power_grid convention (negative = exporting): no inversion. This is the grid exchange the inverter itself sees; on a site with an external CT at the meter, grid_ct_power (172) is the exchange of the whole site. Source: ha-solarman deye_hybrid.yaml + kellerza/sunsynk single-phase map. Checked on hardware (SG05LP1, 2026-10-27): +1572 W while importing, equal to the load fed through the inverter. The inverter display (2026-10-27 09:31) confirmed it: 169 is the GRID-port power ('Grid Tie Power' 0 W at 09:31), not the external CT.",
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": true
+          }
+        }
+      },
+      {
+        "address": 172,
+        "name": "grid_ct_power",
+        "label": "Grid power (external CT)",
+        "unit": "W",
+        "data_type": "int16",
+        "register_type": "holding",
+        "access": "RD",
+        "category": "grid",
+        "poll_group": "fast",
+        "description": "172 (0x00AC). Power at the external CT ('Grid CT power' in the Sunsynk map), W, same sign as power_grid (+ import). Without an external CT it reads noise near 0 (24 W on the bench, which has none). Source: ha-solarman deye_hybrid.yaml + kellerza/sunsynk single-phase map. Checked on hardware (SG05LP1, 2026-10-27): 24 W on the bench with no CT fitted; the inverter display's 'Total CT Power' (30 W at 09:31) is this register, so 172 is the external CT.",
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": true
+          }
+        }
+      },
+      {
+        "address": 175,
+        "name": "power_active_total",
+        "label": "Inverter power",
+        "unit": "W",
+        "data_type": "int16",
+        "register_type": "holding",
+        "access": "RD",
+        "category": "inverter",
+        "poll_group": "fast",
+        "description": "175 (0x00AF). Inverter AC output power, W (+ = the inverter delivers AC). Source: ha-solarman deye_hybrid.yaml + kellerza/sunsynk single-phase map. Not yet checked on hardware: verify on site against the inverter display.",
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": true
+          }
+        }
+      },
+      {
+        "address": 178,
+        "name": "power_load",
+        "label": "Load power (− consuming)",
+        "unit": "W",
+        "data_type": "int16",
+        "register_type": "holding",
+        "access": "RD",
+        "category": "inverter",
+        "poll_group": "fast",
+        "scale": -1,
+        "description": "178 (0x00B2). Total load power on the inverter's LOAD port, W ('Load power' / 'Total Load Power' in the published maps; Deye reports it + while consuming). Published inverted, negative while consuming, as the canonical power_load (canonical_fields: 'House load (negative = consuming)', the Fronius P_Load convention). Loads wired between an external CT and the inverter are not in it. Source: ha-solarman deye_hybrid.yaml + kellerza/sunsynk single-phase map. Checked on hardware (SG05LP1, 2026-10-27): 1573 W of load, published -1573.",
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": true
+          }
+        }
+      },
+      {
+        "address": 181,
+        "name": "gen_voltage",
+        "label": "GEN port voltage",
+        "unit": "V",
+        "data_type": "uint16",
+        "register_type": "holding",
+        "access": "RD",
+        "category": "gen",
+        "poll_group": "fast",
+        "scale": 10,
+        "description": "181 (0x00B5). Voltage on the GEN port, 0.1 V ('MI Voltage' on the display with a microinverter there). Source: ha-solarman deye_hybrid.yaml and the Deye single-phase Modbus document (not in the kellerza/sunsynk single-phase map). Not yet checked on hardware: the inverter display read 226.60 V on 2026-10-27 09:31; compare with a register read.",
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": true
+          }
+        }
+      },
+      {
+        "address": 182,
+        "name": "battery_temperature",
+        "label": "Battery temperature",
+        "unit": "°C",
+        "data_type": "uint16",
+        "register_type": "holding",
+        "access": "RD",
+        "category": "battery",
+        "poll_group": "normal",
+        "scale": 10,
+        "offset": -100,
+        "description": "182 (0x00B6). Battery temperature, 0.1 °C with a +100 °C offset: (raw - 1000) / 10. Raw 0 (which would read -100 °C) means no BMS or no sensor and is published as absent. Source: ha-solarman deye_hybrid.yaml + kellerza/sunsynk single-phase map. Not yet checked on hardware: verify on site against the inverter display.",
+        "nan": 0,
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": true
+          }
+        }
+      },
+      {
+        "address": 183,
+        "name": "pack_voltage",
+        "label": "Battery voltage",
+        "unit": "V",
+        "data_type": "uint16",
+        "register_type": "holding",
+        "access": "RD",
+        "category": "battery",
+        "poll_group": "fast",
+        "scale": 100,
+        "description": "183 (0x00B7). Battery voltage, 0.01 V. Source: ha-solarman deye_hybrid.yaml + kellerza/sunsynk single-phase map. Checked on hardware (SG05LP1, 2026-10-27): 52.27 V.",
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": true
+          }
+        }
+      },
+      {
+        "address": 184,
+        "name": "soc",
+        "label": "Battery SOC",
+        "unit": "%",
+        "data_type": "uint16",
+        "register_type": "holding",
+        "access": "RD",
+        "category": "battery",
+        "poll_group": "fast",
+        "description": "184 (0x00B8). Battery state of charge, %, as the BMS reports it. Reads 0 with no BMS connected (see the notes). Source: ha-solarman deye_hybrid.yaml + kellerza/sunsynk single-phase map. Not yet checked on hardware: verify on site against the inverter display.",
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": true
+          }
+        }
+      },
+      {
+        "address": 186,
+        "name": "power_dc_mppt1",
+        "label": "PV1 power",
+        "unit": "W",
+        "data_type": "uint16",
+        "register_type": "holding",
+        "access": "RD",
+        "category": "pv",
+        "poll_group": "fast",
+        "description": "186 (0x00BA). PV1 power, W. Source: ha-solarman deye_hybrid.yaml + kellerza/sunsynk single-phase map. Checked on hardware (SG05LP1, 2026-10-27): 115 W.",
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": true
+          }
+        }
+      },
+      {
+        "address": 187,
+        "name": "power_dc_mppt2",
+        "label": "PV2 power",
+        "unit": "W",
+        "data_type": "uint16",
+        "register_type": "holding",
+        "access": "RD",
+        "category": "pv",
+        "poll_group": "fast",
+        "description": "187 (0x00BB). PV2 power, W. Source: ha-solarman deye_hybrid.yaml + kellerza/sunsynk single-phase map. Checked on hardware (SG05LP1, 2026-10-27): 181 W.",
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": true
+          }
+        }
+      },
+      {
+        "address": 190,
+        "name": "battery_power",
+        "label": "Battery power",
+        "unit": "W",
+        "data_type": "int16",
+        "register_type": "holding",
+        "access": "RD",
+        "category": "battery",
+        "poll_group": "fast",
+        "scale": -1,
+        "description": "190 (0x00BE). Battery power, W, signed. Deye: + discharging, - charging. Inverted (scale -1) to the gateway's battery_power convention (+ charging). Source: ha-solarman deye_hybrid.yaml + kellerza/sunsynk single-phase map. Checked on hardware (SG05LP1, 2026-10-27): raw -189 and -244 while PV charged the battery, published +189 / +244. The inverter display (2026-10-27 09:31) confirmed it: charging is raw negative.",
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": true
+          }
+        }
+      },
+      {
+        "address": 191,
+        "name": "battery_current",
+        "label": "Battery current",
+        "unit": "A",
+        "data_type": "int16",
+        "register_type": "holding",
+        "access": "RD",
+        "category": "battery",
+        "poll_group": "fast",
+        "scale": -100,
+        "description": "191 (0x00BF). Battery current, 0.01 A, signed. Deye: + discharging, - charging. Inverted (scale -100) to the gateway's battery_current convention (+ charging). Source: ha-solarman deye_hybrid.yaml + kellerza/sunsynk single-phase map. Checked on hardware (SG05LP1, 2026-10-27): raw -362 and -467 while charging, published +3.62 / +4.67 A. The inverter display (2026-10-27 09:31) confirmed it: charging is raw negative.",
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": true
+          }
+        }
+      },
+      {
+        "address": 200,
+        "name": "battery_type",
+        "label": "Battery type",
+        "unit": "",
+        "data_type": "uint16",
+        "register_type": "holding",
+        "access": "RD",
+        "category": "battery",
+        "poll_group": "static",
+        "description": "200 (0x00C8). Battery type / control mode setting: 0 lead-acid (four-stage charging), 1 lithium (charging under the BMS). A setting, read only. Source: ha-solarman deye_hybrid.yaml and the Deye single-phase Modbus document (not in the kellerza/sunsynk single-phase map). Not yet checked on hardware: the inverter display read lithium on 2026-10-27 09:31; compare with a register read.",
+        "enum": {
+          "0": "Lead-acid",
+          "1": "Lithium"
+        },
+        "entity_category": "diagnostic",
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": true
+          }
+        }
+      },
+      {
+        "address": 204,
+        "name": "battery_rated_capacity",
+        "label": "Battery rated capacity",
+        "unit": "Ah",
+        "data_type": "uint16",
+        "register_type": "holding",
+        "access": "RD",
+        "category": "battery",
+        "poll_group": "static",
+        "description": "204 (0x00CC). Battery capacity setting, Ah ('Battery Rated Capacity' on the display). The value set on the inverter, not a BMS measurement. A setting, read only. Source: ha-solarman deye_hybrid.yaml and the Deye single-phase Modbus document (not in the kellerza/sunsynk single-phase map). Not yet checked on hardware: the inverter display read 500 Ah on 2026-10-27 09:31; compare with a register read.",
+        "entity_category": "diagnostic",
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": true
+          }
+        }
+      },
+      {
+        "address": 312,
+        "name": "charge_voltage_limit",
+        "label": "BMS charge voltage",
+        "unit": "V",
+        "data_type": "uint16",
+        "register_type": "holding",
+        "access": "RD",
+        "category": "bms",
+        "poll_group": "normal",
+        "scale": 100,
+        "description": "312 (0x0138). Charge voltage the BMS asks for, as the inverter receives it, 0.01 V ('Battery charging voltage' / 'BMS Charging Voltage'). Raw 0 (no BMS) is absent. Source: ha-solarman deye_hybrid.yaml + kellerza/sunsynk single-phase map. Not yet checked on hardware: the inverter display read 0 (BMS disconnected) on 2026-10-27 09:31; compare with a register read.",
+        "nan": 0,
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": true
+          }
+        }
+      },
+      {
+        "address": 313,
+        "name": "discharge_voltage_limit",
+        "label": "BMS discharge voltage",
+        "unit": "V",
+        "data_type": "uint16",
+        "register_type": "holding",
+        "access": "RD",
+        "category": "bms",
+        "poll_group": "normal",
+        "scale": 100,
+        "description": "313 (0x0139). Discharge cut-off voltage the BMS sends, as the inverter receives it, 0.01 V. Raw 0 (no BMS) is absent. Source: ha-solarman deye_hybrid.yaml and the Deye single-phase Modbus document (not in the kellerza/sunsynk single-phase map). Not yet checked on hardware: the inverter display read 0 (BMS disconnected) on 2026-10-27 09:31; compare with a register read.",
+        "nan": 0,
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": true
+          }
+        }
+      },
+      {
+        "address": 314,
+        "name": "charge_current_limit",
+        "label": "BMS charge current limit",
+        "unit": "A",
+        "data_type": "uint16",
+        "register_type": "holding",
+        "access": "RD",
+        "category": "bms",
+        "poll_group": "normal",
+        "description": "314 (0x013A). Charge current limit the BMS sends, A ('Battery charge limit current' / 'BMS Charging Current'). 0 is a valid limit (a full battery), so it is kept. Source: ha-solarman deye_hybrid.yaml + kellerza/sunsynk single-phase map. Not yet checked on hardware: the inverter display read 0 (BMS disconnected) on 2026-10-27 09:31; compare with a register read.",
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": true
+          }
+        }
+      },
+      {
+        "address": 315,
+        "name": "discharge_current_limit",
+        "label": "BMS discharge current limit",
+        "unit": "A",
+        "data_type": "uint16",
+        "register_type": "holding",
+        "access": "RD",
+        "category": "bms",
+        "poll_group": "normal",
+        "description": "315 (0x013B). Discharge current limit the BMS sends, A ('Battery discharge limit current' / 'BMS Discharging Current'). 0 is a valid limit, so it is kept. Source: ha-solarman deye_hybrid.yaml + kellerza/sunsynk single-phase map. Not yet checked on hardware: the inverter display read 0 (BMS disconnected) on 2026-10-27 09:31; compare with a register read.",
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": true
+          }
+        }
+      },
+      {
+        "address": 316,
+        "name": "bms_soc",
+        "label": "BMS SOC",
+        "unit": "%",
+        "data_type": "uint16",
+        "register_type": "holding",
+        "access": "RD",
+        "category": "bms",
+        "poll_group": "fast",
+        "description": "316 (0x013C). State of charge as the BMS sends it, %. Kept at 0 with no BMS (as 184 is); read it together with bms_voltage absent as 'BMS lost'. Source: ha-solarman deye_hybrid.yaml and the Deye single-phase Modbus document (not in the kellerza/sunsynk single-phase map). Not yet checked on hardware: the inverter display read 0 (BMS disconnected) on 2026-10-27 09:31; compare with a register read.",
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": true
+          }
+        }
+      },
+      {
+        "address": 317,
+        "name": "bms_voltage",
+        "label": "BMS voltage",
+        "unit": "V",
+        "data_type": "uint16",
+        "register_type": "holding",
+        "access": "RD",
+        "category": "bms",
+        "poll_group": "fast",
+        "scale": 100,
+        "description": "317 (0x013D). Pack voltage as the BMS sends it, 0.01 V (pack_voltage, 183, is the inverter's own measurement). Raw 0 (no BMS) is absent. Source: ha-solarman deye_hybrid.yaml and the Deye single-phase Modbus document (not in the kellerza/sunsynk single-phase map). Not yet checked on hardware: the inverter display read 0 (BMS disconnected) on 2026-10-27 09:31; compare with a register read.",
+        "nan": 0,
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": true
+          }
+        }
+      },
+      {
+        "address": 318,
+        "name": "bms_current",
+        "label": "BMS current",
+        "unit": "A",
+        "data_type": "int16",
+        "register_type": "holding",
+        "access": "RD",
+        "category": "bms",
+        "poll_group": "fast",
+        "description": "318 (0x013E). Pack current as the BMS sends it, A, signed, published as received (its sign convention is the BMS's; battery_current, 191, is the inverter's own measurement in the canonical + charging). Source: ha-solarman deye_hybrid.yaml and the Deye single-phase Modbus document (not in the kellerza/sunsynk single-phase map). Not yet checked on hardware: the inverter display read 0 (BMS disconnected) on 2026-10-27 09:31; compare with a register read.",
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": true
+          }
+        }
+      },
+      {
+        "address": 319,
+        "name": "bms_temperature",
+        "label": "BMS temperature",
+        "unit": "°C",
+        "data_type": "uint16",
+        "register_type": "holding",
+        "access": "RD",
+        "category": "bms",
+        "poll_group": "normal",
+        "scale": 10,
+        "offset": -100,
+        "description": "319 (0x013F). Battery temperature as the BMS sends it, 0.1 °C with a +100 °C offset: (raw - 1000) / 10. Raw 0 (no BMS) would read -100 °C and is published as absent. Source: the Deye single-phase Modbus document (not in the ha-solarman or kellerza/sunsynk maps); the display's -100 with the BMS disconnected agrees with raw 0 through the same +100 degC offset as 182. Not yet checked on hardware: the inverter display read -100 (BMS disconnected) on 2026-10-27 09:31; compare with a register read.",
+        "nan": 0,
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": true
+          }
+        }
+      },
+      {
+        "address": 320,
+        "name": "bms_max_charge_current",
+        "label": "BMS max charge current",
+        "unit": "A",
+        "data_type": "uint16",
+        "register_type": "holding",
+        "access": "RD",
+        "category": "bms",
+        "poll_group": "normal",
+        "description": "320 (0x0140). Maximum charge current the BMS reports, A ('BMS Max Charging Current'). Source: ha-solarman deye_hybrid.yaml and the Deye single-phase Modbus document (not in the kellerza/sunsynk single-phase map). Not yet checked on hardware: the inverter display read 0 (BMS disconnected) on 2026-10-27 09:31; compare with a register read.",
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": true
+          }
+        }
+      },
+      {
+        "address": 321,
+        "name": "bms_max_discharge_current",
+        "label": "BMS max discharge current",
+        "unit": "A",
+        "data_type": "uint16",
+        "register_type": "holding",
+        "access": "RD",
+        "category": "bms",
+        "poll_group": "normal",
+        "description": "321 (0x0141). Maximum discharge current the BMS reports, A ('BMS Max Discharging Current'). Source: ha-solarman deye_hybrid.yaml and the Deye single-phase Modbus document (not in the kellerza/sunsynk single-phase map). Not yet checked on hardware: the inverter display read 0 (BMS disconnected) on 2026-10-27 09:31; compare with a register read.",
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": true
+          }
+        }
+      }
+    ],
+    "calculated": [
+      {
+        "name": "energy_active_import",
+        "label": "Grid import (total)",
+        "unit": "Wh",
+        "expr": "(grid_import_total_high * 65536 + grid_import_total_low) * 100",
+        "poll_group": "energy",
+        "category": "energy",
+        "decimals": 0
+      },
+      {
+        "name": "gen_energy_total",
+        "label": "GEN port energy (total)",
+        "unit": "Wh",
+        "expr": "(gen_energy_total_high * 65536 + gen_energy_total_low) * 100",
+        "poll_group": "energy",
+        "category": "gen",
+        "decimals": 0
+      },
+      {
+        "name": "power_pv",
+        "label": "PV power",
+        "unit": "W",
+        "expr": "power_dc_mppt1 + power_dc_mppt2",
+        "poll_group": "fast",
+        "category": "pv",
+        "decimals": 0
+      },
+      {
+        "name": "status_text",
+        "label": "Running state",
+        "expr": "vendor_state",
+        "poll_group": "normal",
+        "topic": "status/text",
+        "influxdb": false,
+        "category": "status",
+        "enum": {
+          "0": "Standby",
+          "1": "Self-check",
+          "2": "Normal",
+          "3": "Alarm",
+          "4": "Fault",
+          "5": "Activating"
+        }
+      },
+      {
+        "name": "status_alarm",
+        "label": "Alarm",
+        "expr": "1 if (vendor_state == 3 or vendor_state == 4) else 0",
+        "poll_group": "normal",
+        "topic": "status/alarm",
+        "measurement": "status",
+        "category": "status"
+      },
+      {
+        "name": "status_active",
+        "label": "Running normally",
+        "expr": "1 if vendor_state == 2 else 0",
+        "poll_group": "normal",
+        "topic": "status/active",
+        "measurement": "status",
+        "category": "status"
+      }
+    ]
+  }
+}

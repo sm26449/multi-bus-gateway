@@ -1,5 +1,5 @@
 # Multi-Bus Gateway — multi-protocol Modbus/HTTP/MQTT acquisition gateway.
-# Copyright (C) 2024-2026 Stefan Maldaianu <sm26449@diysolar.ro>  — AGPL-3.0-or-later
+# Copyright (C) 2024-2026 Stefan Maldaianu <stefan@multibus.dev>  — AGPL-3.0-or-later
 """Serial-bridge supervisor: pure helpers (serial params, ser2net config,
 token check, portmap migration, routing) and the control API over a real
 socket with a fake adapter inventory — no /dev, no ser2net."""
@@ -90,7 +90,7 @@ def test_render_per_adapter_params(sv):
 
 
 def test_render_empty(sv):
-    assert sv.render_ser2net_config([]) == "%YAML 1.1\n---\n"
+    assert sv.render_ser2net_config([], admin_port=0) == "%YAML 1.1\n---\n"
 
 
 # ---- token -----------------------------------------------------------------
@@ -209,6 +209,9 @@ def api(monkeypatch, tmp_path):
         m = _load(monkeypatch, tmp_path, BRIDGE_HOSTNAME="pi-bus", BRIDGE_VERSION="9.9.9", **env)
         proc = _FakeProc()
         monkeypatch.setattr(m, "enumerate_adapters", lambda: [dict(a) for a in _FAKE])
+        # the fake adapters have no /dev node: every one opens fine
+        monkeypatch.setattr(m, "probe_access", lambda _a: {"status": "ok", "reason": "",
+                                                           "fix": "", "needs_major": None})
         monkeypatch.setattr(m, "_ser2net", proc)
         monkeypatch.setattr(m, "_clear_dead_pid_locks", lambda: None)
         m.reconcile()

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # Multi-Bus Gateway — multi-protocol Modbus/HTTP/MQTT acquisition gateway.
-# Copyright (C) 2024-2026 Stefan Maldaianu <sm26449@diysolar.ro>
+# Copyright (C) 2024-2026 Stefan Maldaianu <stefan@multibus.dev>
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU Affero General Public License as published by
@@ -117,6 +117,7 @@ class GatewayApp:
                 registers=self.config.selected_registers,
                 publish_mode=self.config.mqtt.publish_mode,
                 heartbeat_interval=getattr(self.config.mqtt, 'heartbeat_interval', 0),
+                has_primary=self.config.primary_device is not None,
             )
             logger.info("MQTT publisher initialized (connecting in background)")
 
@@ -219,7 +220,7 @@ class GatewayApp:
 
         self.vmeter_manager = VirtualMeterManager(self.app.state.current_values,
                                                   device_values=self.app.state.device_values,
-                                                  primary_device_id=self.config.primary_device.id,
+                                                  primary_device_id=self.config.primary_id,
                                                   mqtt_publisher=self.mqtt_publisher,
                                                   modbus_client=self.modbus_client,
                                                   bounds_for=_device_stale_bound,
@@ -412,6 +413,11 @@ class GatewayApp:
                 _lm.stop(revert_now=True)
             except Exception:  # noqa: BLE001
                 logger.exception("write-lease shutdown revert failed")
+        # then what still waits for a bus: cancelled, never written while the
+        # devices disconnect (ADR-0018 D12); an intent does not survive a restart
+        _cd = getattr(getattr(getattr(self, 'app', None), 'state', None), 'command_dispatch', None)
+        if _cd is not None:
+            _cd.stop()
         if self.vmeter_manager:
             self.vmeter_manager.stop_all()
         if getattr(self, 'endpoint_aggregator', None):

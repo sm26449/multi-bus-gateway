@@ -1,5 +1,5 @@
 # Multi-Bus Gateway — multi-protocol Modbus/HTTP/MQTT acquisition gateway.
-# Copyright (C) 2024-2026 Stefan Maldaianu <sm26449@diysolar.ro>  — AGPL-3.0-or-later
+# Copyright (C) 2024-2026 Stefan Maldaianu <stefan@multibus.dev>  — AGPL-3.0-or-later
 """Lifecycle hardening (external audit, backlog §I 'mărunte'):
 
 - start_polling is serialized + idempotent — a boot racing an Apply (or a
@@ -12,9 +12,9 @@
 - vmeters routes stay sync `def` so manager joins run in the threadpool,
   not on the event loop.
 """
-import time
 from types import SimpleNamespace
 
+from multibus import modbus_client as mc
 from multibus.config import PollGroup, SelectedRegister
 from multibus.modbus_client import ModbusClient, ModbusConfig, ModbusConnection
 
@@ -159,7 +159,7 @@ def test_connect_refused_backoff_uses_retry_delay(monkeypatch):
     conn._new_client = lambda: _Refuses()
 
     slept = []
-    monkeypatch.setattr(time, "sleep", lambda s: slept.append(s))
+    monkeypatch.setattr(mc, "_sleep", lambda s: slept.append(s))   # the client's own sleeps only (FLK-3)
     assert conn.read_registers(0, 1) is None
     assert 7.5 in slept and 0.1 not in slept
     slept.clear()

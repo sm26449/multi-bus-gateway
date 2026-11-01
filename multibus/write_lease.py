@@ -1,5 +1,5 @@
 # Multi-Bus Gateway — multi-protocol Modbus/HTTP/MQTT acquisition gateway.
-# Copyright (C) 2024-2026 Stefan Maldaianu <sm26449@diysolar.ro>
+# Copyright (C) 2024-2026 Stefan Maldaianu <stefan@multibus.dev>
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU Affero General Public License as published by
@@ -32,6 +32,7 @@ import logging
 import os
 import threading
 import time
+import weakref
 from pathlib import Path
 from typing import Callable, Dict, List, Optional, Tuple
 
@@ -39,11 +40,30 @@ logger = logging.getLogger(__name__)
 
 _Key = Tuple[str, str, int]   # (device_id, register_type, address)
 
+# the shutdown revert's budget, for the thread running it (RC-5): a revert
+# that waits for a bus asks how long it may (None: no deadline, the sweeper)
+_budget = threading.local()
+
+
+def revert_budget_s() -> Optional[float]:
+    """Seconds left of the clean-shutdown revert budget on this thread, or
+    None outside a shutdown revert. A revert that waits for a bus lock waits
+    at most this long and raises past it: the lease stays on disk for boot
+    recovery."""
+    deadline = getattr(_budget, 'deadline', None)
+    return None if deadline is None else max(0.0, deadline - time.monotonic())
+
 
 class WriteLeaseManager:
+    JOIN_S = 2.0          # how long one sweep waits for the reverts it fired
+    # every manager made in this process: a test harness stops the sweepers
+    # of apps it no longer uses, whose leases would otherwise fire minutes
+    # later into the next tests (tests/conftest.py)
+    _instances: "weakref.WeakSet[WriteLeaseManager]" = weakref.WeakSet()
     def __init__(self, tick_s: float = 1.0, persist_path=None):
         self._leases: Dict[_Key, dict] = {}
         self._failing: set = set()        # keys whose revert failed at least once (F-59)
+        self._inflight: set = set()       # keys whose revert runs now (the sweep does not join)
         self._lock = threading.Lock()
         self._tick = tick_s
         self._gen = 0                 # monotonic generation; bumps on every arm()
@@ -54,6 +74,7 @@ class WriteLeaseManager:
         # persisted (device/addr/safe-value), never the callable — on boot the API
         # rebuilds the revert and fires the dead-man immediately.
         self._persist_path: Optional[Path] = Path(persist_path) if persist_path else None
+        WriteLeaseManager._instances.add(self)
 
     def start(self) -> None:
         if self._thread and self._thread.is_alive():
@@ -87,6 +108,13 @@ class WriteLeaseManager:
                     v['expiry'] = now
             pending = [(k, dict(v)) for k, v in self._leases.items()]
         deadline = time.monotonic() + max(0.0, timeout_s)
+        _budget.deadline = deadline
+        try:
+            self._revert_all(pending, deadline)
+        finally:
+            _budget.deadline = None
+
+    def _revert_all(self, pending: List[Tuple[_Key, dict]], deadline: float) -> None:
         for key, lease in pending:
             if time.monotonic() > deadline:
                 logger.warning("write-lease: shutdown revert budget spent; %d lease(s) left for boot recovery",
@@ -231,18 +259,33 @@ class WriteLeaseManager:
                    if v['expiry'] <= now]
         if not due:
             return
-        # Fire each due revert in its OWN thread and join. A revert does blocking
-        # Modbus I/O (a connect() to an offline device can burn the full timeout),
-        # so running them concurrently stops one stuck device from delaying another
-        # device's safety revert (head-of-line blocking). Joining keeps _sweep
-        # serial with itself, so the next tick can't double-fire the same lease.
-        threads = [threading.Thread(target=self._do_revert, args=(k, gen, revert),
-                                    name=f"lease-revert-{k[0]}", daemon=True)
-                   for k, gen, revert in due]
-        for t in threads:
+        # Fire each due revert in its OWN thread. A revert does blocking I/O
+        # (a connect() to an offline device can burn the full timeout) and
+        # now waits for its device's lane, so they run concurrently: one stuck
+        # device never delays another device's safety revert. The sweep waits
+        # for them only a moment (JOIN_S), never for a stuck lane (ADR-0018
+        # D4): a revert still running at the next tick is in flight and
+        # skipped, never fired twice, and re-checked once it has ended.
+        threads = []
+        for k, gen, revert in due:
+            with self._lock:
+                if k in self._inflight:
+                    continue
+                self._inflight.add(k)
+            t = threading.Thread(target=self._revert_in_flight, args=(k, gen, revert),
+                                 name=f"lease-revert-{k[0]}", daemon=True)
             t.start()
+            threads.append(t)
+        end = time.monotonic() + self.JOIN_S
         for t in threads:
-            t.join()
+            t.join(max(0.0, end - time.monotonic()))
+
+    def _revert_in_flight(self, key: _Key, gen: int, revert: Callable) -> None:
+        try:
+            self._do_revert(key, gen, revert)
+        finally:
+            with self._lock:
+                self._inflight.discard(key)
 
     def _do_revert(self, key: _Key, gen: int, revert: Callable) -> None:
         if not self._is_current(key, gen):

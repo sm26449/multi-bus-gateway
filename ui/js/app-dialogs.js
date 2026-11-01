@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-// Copyright (C) 2024-2026 Stefan Maldaianu <sm26449@diysolar.ro>
+// Copyright (C) 2024-2026 Stefan Maldaianu <stefan@multibus.dev>
 //
 // dialogs — augments JanitzaMonitor.prototype
 //

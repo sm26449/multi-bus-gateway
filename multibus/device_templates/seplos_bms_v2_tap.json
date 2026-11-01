@@ -1,0 +1,661 @@
+{
+  "device_template": {
+    "schema_version": 1,
+    "id": "seplos_bms_v2_tap",
+    "name": "Seplos BMS V2 pack (inter-pack tap, listen-only)",
+    "vendor": "Seplos",
+    "model": "BMS V2",
+    "version": "0.1.0",
+    "author": "Stefan Maldaianu",
+    "description": "One Seplos V2 slave pack of a parallel bank, HEARD on the inter-pack RS485 bus, where the master pack asks each slave for a summary (CID2 0x5A) about once a second. protocol seplos_v2 (a serial port here) or seplos_v2-tcp (a bridge's raw TCP port) with connection.mode listen: the template refuses poll, and the gateway never transmits on that bus. Set unit_id to the pack's ADR (1, 2, ...). The master pack is not on this bus: read it from the CAN link with pylontech_can_inverter. The 0x5A layout is in no published document: it was read off a bench capture (3 x 280 Ah packs, 2026-10-26) and checked against the CAN link of the same bank; each row's description says verified or ASSUMED. The summary carries no per-cell voltages, no cycles and no alarms. Names are the canonical battery names (docs/canonical-fields.md).",
+    "source_document": "No published layout for CID2 0x5A: the Seplos 'BMS communication protocol V2.0' covers 0x42/0x44/0x47/0x51, and no community decoder handled 0x5A (searched 2026-10-26). Layout from the passive capture tests/fixtures/seplos_v2/ttySC0-interpack-20261026.capture (mbg-bench, listen-only), cross-checked with the CAN 0x355/0x356/0x370 frames of the same bank.",
+    "kind": "battery",
+    "protocol": {
+      "transports": [
+        "seplos_v2",
+        "seplos_v2-tcp"
+      ],
+      "listen_only": true,
+      "byte_order": "big",
+      "default_unit_id": 1,
+      "default_register_type": "input"
+    },
+    "poll_groups": {
+      "tap": {
+        "interval": 1,
+        "description": "informational: the master asks each slave about once a second"
+      }
+    },
+    "notes": [
+      {
+        "level": "warning",
+        "text": "Listen only. The master pack polls this bus, and a question from the gateway collides with it (seen on the bench). Saving refuses mode poll."
+      },
+      {
+        "level": "info",
+        "text": "Freshness: values arrive on each master poll (about 1 s). Set the connection's stale_after_s (10 s suits) so a pack the master stops asking shows stale, not frozen."
+      },
+      {
+        "level": "info",
+        "text": "Raw words kept for the bench: their meaning is not known yet.",
+        "fields": [
+          "summary_head",
+          "summary_word_11",
+          "summary_word_14",
+          "summary_word_15"
+        ]
+      },
+      {
+        "level": "warning",
+        "text": "ASSUMED, not verified: the port voltage word, and which sensors the temperature extremes cover.",
+        "fields": [
+          "port_voltage",
+          "temp_max"
+        ]
+      }
+    ],
+    "categories": {
+      "battery": {
+        "label": "Battery",
+        "icon": "battery-half"
+      },
+      "cells": {
+        "label": "Cells",
+        "icon": "grid-3x3"
+      },
+      "temperature": {
+        "label": "Temperature",
+        "icon": "thermometer-half"
+      },
+      "diagnostics": {
+        "label": "Diagnostics",
+        "icon": "wrench"
+      }
+    },
+    "display": {
+      "unit_label": "Battery pack",
+      "unit_label_plural": "Battery packs",
+      "icon": "battery-half",
+      "glance": [
+        "battery_power",
+        "soc",
+        "pack_voltage",
+        "temp_max"
+      ],
+      "hero": [
+        "soc",
+        "battery_power"
+      ]
+    },
+    "registers": [
+      {
+        "address": 1031,
+        "name": "pack_voltage",
+        "label": "Pack voltage",
+        "unit": "V",
+        "data_type": "uint16",
+        "register_type": "input",
+        "category": "battery",
+        "poll_group": "tap",
+        "description": "0x5A word 6, 0.01 V. Verified on the bench capture (2026-10-26): 52.35 / 52.31 V; the CAN link said 52.24 V for the bank.",
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": true,
+            "measurement": "seplos_battery"
+          },
+          "ui": {
+            "show_on_dashboard": true,
+            "widget": "value"
+          }
+        },
+        "scale": 100
+      },
+      {
+        "address": 1030,
+        "name": "battery_current",
+        "label": "Current (+ charging)",
+        "unit": "A",
+        "data_type": "int16",
+        "register_type": "input",
+        "category": "battery",
+        "poll_group": "tap",
+        "description": "0x5A word 5, int16 0.01 A, + charging. Verified on the bench capture (2026-10-26): -0.48 / -0.45 A in the evening, discharging like the bank on the CAN link. The sign follows 0x42; a capture while charging is still to come.",
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": true,
+            "measurement": "seplos_battery"
+          },
+          "ui": {
+            "show_on_dashboard": true,
+            "widget": "chart"
+          }
+        },
+        "scale": 100
+      },
+      {
+        "address": 1034,
+        "name": "soc",
+        "label": "State of charge",
+        "unit": "%",
+        "data_type": "uint16",
+        "register_type": "input",
+        "category": "battery",
+        "poll_group": "tap",
+        "description": "0x5A word 9, 0.1 %. Verified on the bench capture (2026-10-26): 33.4 / 20.5 %, exactly remaining / full truncated to 0.1 % on all 120 answers.",
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": true,
+            "measurement": "seplos_battery"
+          },
+          "ui": {
+            "show_on_dashboard": true,
+            "widget": "value"
+          }
+        },
+        "scale": 10
+      },
+      {
+        "address": 1032,
+        "name": "remaining_capacity",
+        "label": "Remaining capacity",
+        "unit": "Ah",
+        "data_type": "uint16",
+        "register_type": "input",
+        "category": "battery",
+        "poll_group": "tap",
+        "description": "0x5A word 7, 0.01 Ah. Verified on the bench capture (2026-10-26): 93.71 / 57.41 Ah (x 100 / full = SOC).",
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": true,
+            "measurement": "seplos_battery"
+          },
+          "ui": {
+            "show_on_dashboard": false,
+            "widget": "value"
+          }
+        },
+        "scale": 100
+      },
+      {
+        "address": 1033,
+        "name": "total_capacity",
+        "label": "Full capacity",
+        "unit": "Ah",
+        "data_type": "uint16",
+        "register_type": "input",
+        "category": "battery",
+        "poll_group": "tap",
+        "description": "0x5A word 8, 0.01 Ah. Verified on the bench capture (2026-10-26): 280.00 Ah per pack (840 Ah for the three).",
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": true,
+            "measurement": "seplos_battery"
+          },
+          "ui": {
+            "show_on_dashboard": false,
+            "widget": "value"
+          }
+        },
+        "scale": 100
+      },
+      {
+        "address": 1025,
+        "name": "max_cell_voltage",
+        "label": "Highest cell",
+        "unit": "V",
+        "data_type": "uint16",
+        "register_type": "input",
+        "category": "cells",
+        "poll_group": "tap",
+        "description": "0x5A word 1, mV. Verified on the bench capture (2026-10-26): 3.274 / 3.278 V, inside the 3.23-3.29 V of CAN 0x370 that evening.",
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": true,
+            "measurement": "seplos_battery"
+          },
+          "ui": {
+            "show_on_dashboard": true,
+            "widget": "value"
+          }
+        },
+        "scale": 1000
+      },
+      {
+        "address": 1026,
+        "name": "min_cell_voltage",
+        "label": "Lowest cell",
+        "unit": "V",
+        "data_type": "uint16",
+        "register_type": "input",
+        "category": "cells",
+        "poll_group": "tap",
+        "description": "0x5A word 2, mV. Verified on the bench capture (2026-10-26): 3.269 / 3.241 V.",
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": true,
+            "measurement": "seplos_battery"
+          },
+          "ui": {
+            "show_on_dashboard": true,
+            "widget": "value"
+          }
+        },
+        "scale": 1000
+      },
+      {
+        "address": 1028,
+        "name": "temp_max",
+        "label": "Highest temperature",
+        "unit": "°C",
+        "data_type": "int16",
+        "register_type": "input",
+        "category": "temperature",
+        "poll_group": "tap",
+        "description": "0x5A word 3, 0.1 K (offset 2731). Verified on the bench capture (2026-10-26): 24.5 °C, exactly the bank maximum in CAN 0x370. Which sensors it covers (cells only, or ambient and MOSFET too) is ASSUMED.",
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": true,
+            "measurement": "seplos_battery"
+          },
+          "ui": {
+            "show_on_dashboard": true,
+            "widget": "value"
+          }
+        },
+        "scale": 10
+      },
+      {
+        "address": 1029,
+        "name": "temp_min",
+        "label": "Lowest temperature",
+        "unit": "°C",
+        "data_type": "int16",
+        "register_type": "input",
+        "category": "temperature",
+        "poll_group": "tap",
+        "description": "0x5A word 4, 0.1 K. Verified on the bench capture (2026-10-26): 22.7 °C on pack 2, exactly the bank minimum in CAN 0x370.",
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": true,
+            "measurement": "seplos_battery"
+          },
+          "ui": {
+            "show_on_dashboard": false,
+            "widget": "value"
+          }
+        },
+        "scale": 10
+      },
+      {
+        "address": 1035,
+        "name": "port_voltage",
+        "label": "Port voltage",
+        "unit": "V",
+        "data_type": "uint16",
+        "register_type": "input",
+        "category": "battery",
+        "poll_group": "tap",
+        "description": "0x5A word 10, 0.01 V. ASSUMED: read as the port voltage of 0x42 because it sits 0.06 V above the pack voltage; being above it while discharging is not explained.",
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": true,
+            "measurement": "seplos_battery"
+          },
+          "ui": {
+            "show_on_dashboard": false,
+            "widget": "value"
+          }
+        },
+        "scale": 100
+      },
+      {
+        "address": 1024,
+        "name": "summary_head",
+        "label": "Summary word 0",
+        "unit": "",
+        "data_type": "uint16",
+        "register_type": "input",
+        "category": "diagnostics",
+        "poll_group": "tap",
+        "description": "0x5A word 0, raw. ASSUMED: DATAFLAG and a group byte as in 0x42; 0x0001 on both packs.",
+        "defaults": {
+          "mqtt": {
+            "enabled": false
+          },
+          "influxdb": {
+            "enabled": false
+          },
+          "ui": {
+            "show_on_dashboard": false,
+            "widget": "value"
+          }
+        }
+      },
+      {
+        "address": 1051,
+        "name": "summary_word_11",
+        "label": "Summary word 11",
+        "unit": "",
+        "data_type": "uint16",
+        "register_type": "input",
+        "category": "diagnostics",
+        "poll_group": "tap",
+        "description": "0x5A word 11, raw, not understood yet (0 on the bench: an alarm or status word?).",
+        "defaults": {
+          "mqtt": {
+            "enabled": false
+          },
+          "influxdb": {
+            "enabled": false
+          },
+          "ui": {
+            "show_on_dashboard": false,
+            "widget": "value"
+          }
+        }
+      },
+      {
+        "address": 1052,
+        "name": "summary_word_12",
+        "label": "Summary word 12",
+        "unit": "",
+        "data_type": "uint16",
+        "register_type": "input",
+        "category": "diagnostics",
+        "poll_group": "tap",
+        "description": "0x5A word 12, raw, not understood yet (0 on the bench).",
+        "defaults": {
+          "mqtt": {
+            "enabled": false
+          },
+          "influxdb": {
+            "enabled": false
+          },
+          "ui": {
+            "show_on_dashboard": false,
+            "widget": "value"
+          }
+        }
+      },
+      {
+        "address": 1053,
+        "name": "summary_word_13",
+        "label": "Summary word 13",
+        "unit": "",
+        "data_type": "uint16",
+        "register_type": "input",
+        "category": "diagnostics",
+        "poll_group": "tap",
+        "description": "0x5A word 13, raw, not understood yet (0 on the bench).",
+        "defaults": {
+          "mqtt": {
+            "enabled": false
+          },
+          "influxdb": {
+            "enabled": false
+          },
+          "ui": {
+            "show_on_dashboard": false,
+            "widget": "value"
+          }
+        }
+      },
+      {
+        "address": 1054,
+        "name": "summary_word_14",
+        "label": "Summary word 14",
+        "unit": "",
+        "data_type": "uint16",
+        "register_type": "input",
+        "category": "diagnostics",
+        "poll_group": "tap",
+        "description": "0x5A word 14, raw, not understood yet (0x0302 on both packs).",
+        "defaults": {
+          "mqtt": {
+            "enabled": false
+          },
+          "influxdb": {
+            "enabled": false
+          },
+          "ui": {
+            "show_on_dashboard": false,
+            "widget": "value"
+          }
+        }
+      },
+      {
+        "address": 1055,
+        "name": "summary_word_15",
+        "label": "Summary word 15",
+        "unit": "",
+        "data_type": "uint16",
+        "register_type": "input",
+        "category": "diagnostics",
+        "poll_group": "tap",
+        "description": "0x5A word 15, raw, not understood yet (0x8010 on pack 1, 0x8001 on pack 2).",
+        "defaults": {
+          "mqtt": {
+            "enabled": false
+          },
+          "influxdb": {
+            "enabled": false
+          },
+          "ui": {
+            "show_on_dashboard": false,
+            "widget": "value"
+          }
+        }
+      },
+      {
+        "address": 1087,
+        "name": "summary_length",
+        "label": "Summary length",
+        "unit": "B",
+        "data_type": "uint16",
+        "register_type": "input",
+        "category": "diagnostics",
+        "poll_group": "tap",
+        "description": "Bytes of INFO in the 0x5A answer (32 on the bench).",
+        "defaults": {
+          "mqtt": {
+            "enabled": false
+          },
+          "influxdb": {
+            "enabled": false
+          },
+          "ui": {
+            "show_on_dashboard": false,
+            "widget": "value"
+          }
+        }
+      },
+      {
+        "address": 3840,
+        "name": "response_ms",
+        "label": "Response time",
+        "unit": "ms",
+        "data_type": "uint16",
+        "register_type": "input",
+        "category": "diagnostics",
+        "poll_group": "tap",
+        "description": "The master's request to this pack's answer, as heard.",
+        "defaults": {
+          "mqtt": {
+            "enabled": false
+          },
+          "influxdb": {
+            "enabled": false
+          },
+          "ui": {
+            "show_on_dashboard": false,
+            "widget": "value"
+          }
+        }
+      },
+      {
+        "address": 3841,
+        "name": "checksum_errors",
+        "label": "Checksum errors",
+        "unit": "",
+        "data_type": "uint16",
+        "register_type": "input",
+        "category": "diagnostics",
+        "poll_group": "tap",
+        "description": "Corrupted frames charged to this pack (the one whose answer was awaited).",
+        "defaults": {
+          "mqtt": {
+            "enabled": false
+          },
+          "influxdb": {
+            "enabled": false
+          },
+          "ui": {
+            "show_on_dashboard": false,
+            "widget": "value"
+          }
+        }
+      },
+      {
+        "address": 3843,
+        "name": "rtn_errors",
+        "label": "Error answers",
+        "unit": "",
+        "data_type": "uint16",
+        "register_type": "input",
+        "category": "diagnostics",
+        "poll_group": "tap",
+        "description": "Answers with a return code other than 0.",
+        "defaults": {
+          "mqtt": {
+            "enabled": false
+          },
+          "influxdb": {
+            "enabled": false
+          },
+          "ui": {
+            "show_on_dashboard": false,
+            "widget": "value"
+          }
+        }
+      },
+      {
+        "address": 3845,
+        "name": "good_answers",
+        "label": "Good answers",
+        "unit": "",
+        "data_type": "uint16",
+        "register_type": "input",
+        "category": "diagnostics",
+        "poll_group": "tap",
+        "description": "Decoded answers, mod 65536.",
+        "defaults": {
+          "mqtt": {
+            "enabled": false
+          },
+          "influxdb": {
+            "enabled": false
+          },
+          "ui": {
+            "show_on_dashboard": false,
+            "widget": "value"
+          }
+        }
+      },
+      {
+        "address": 3846,
+        "name": "decode_errors",
+        "label": "Undecodable answers",
+        "unit": "",
+        "data_type": "uint16",
+        "register_type": "input",
+        "category": "diagnostics",
+        "poll_group": "tap",
+        "description": "Answers whose INFO was too short to decode.",
+        "defaults": {
+          "mqtt": {
+            "enabled": false
+          },
+          "influxdb": {
+            "enabled": false
+          },
+          "ui": {
+            "show_on_dashboard": false,
+            "widget": "value"
+          }
+        }
+      }
+    ],
+    "calculated": [
+      {
+        "name": "battery_power",
+        "label": "Power (+ charging)",
+        "unit": "W",
+        "decimals": 0,
+        "expr": "battery_current * pack_voltage",
+        "measurement": "seplos_battery",
+        "ui": {
+          "show_on_dashboard": true,
+          "widget": "chart"
+        }
+      },
+      {
+        "name": "cell_delta",
+        "label": "Cell delta",
+        "unit": "mV",
+        "decimals": 0,
+        "expr": "max(0, (max_cell_voltage - min_cell_voltage) * 1000)",
+        "measurement": "seplos_battery",
+        "ui": {
+          "show_on_dashboard": true,
+          "widget": "value"
+        }
+      },
+      {
+        "name": "energy_remaining",
+        "label": "Energy stored",
+        "unit": "Wh",
+        "decimals": 0,
+        "expr": "remaining_capacity * pack_voltage",
+        "measurement": "seplos_battery"
+      },
+      {
+        "name": "energy_to_full",
+        "label": "Energy to full",
+        "unit": "Wh",
+        "decimals": 0,
+        "expr": "(total_capacity - remaining_capacity) * pack_voltage",
+        "measurement": "seplos_battery"
+      }
+    ]
+  }
+}

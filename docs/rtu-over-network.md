@@ -68,8 +68,10 @@ register both ways and tells you how the box is actually set up.
 4. **Buses** lists one bus per adapter, each with its stable TCP port
    (kept across replug; serial-less CH340 clones are tied to the physical USB
    socket). Set each bus's **baud / parity / stop bits** there. The change
-   applies to that bus only, within a second.
-5. On a bus, press **+ Device** and choose the template and unit ID.
+   applies to that bus only, within a second. Once devices are on a bus,
+   **Edit bus line…** (below) changes the line and its devices together.
+5. On a bus, press **+ Device**: Add Device opens on its **Connection** step
+   with that bus and the next free unit ID filled in.
 
 **Several Pis** are several bridges. Add each one with its own name, IP and
 token. **The bridge next to the gateway** (the `rtu-bridge` profile in the
@@ -110,11 +112,12 @@ The control API is described in [serial-bridge-api.md](serial-bridge-api.md).
    - *It speaks the way this bridge is set up* means you are good.
    - *TRANSPARENT mode* / *GATEWAY mode* means the box is set the other way.
      Change the bridge type, or change the box.
-4. **+ Device** on the bus. On a gateway's bus the wizard opens as
-   **Modbus TCP**, *reached through* that gateway: only the unit ID is left.
-   From **Add Device**, the same is **Modbus TCP → Reached → Through the
-   gateway …**. **Modbus RTU → Over network** lists only the bridges that
-   carry RTU.
+4. **+ Device** on the bus. Add Device opens on its **Connection** step
+   with that bus filled in; on a gateway's bus only the unit ID is left.
+   From **Add Device**, a gateway's bus is **Port: Ethernet → How it is
+   reached: Through a Modbus TCP gateway**; a transparent converter or our
+   bridge is **Port: RS-485 / serial → Where the bus is: Through a bridge or
+   converter**, which lists only the bridges that carry RTU.
 
 > A transparent converter usually serves **one** client. That client is the
 > gateway: its devices on that bus share one connection (§4). Any other
@@ -133,9 +136,18 @@ added to the same bus:
   A converter that accepts one client is never fought over.
 - **The unit ID must differ.** Adding a second device with a unit ID already
   used on that bus is refused, with the name of the device that has it.
-- **The line settings must agree.** On a directly attached port, every
-  device uses the same baud and parity. Through a bridge, they belong to the
-  bus anyway.
+- **The line settings must agree.** A bus has one line. When a device is
+  added to a bus that already has devices, its line is the bus's, shown as
+  *Set by the bus: <device> reads it at 9600 8N1* and not editable there.
+  Through a converter the line is *set on the box*.
+- **Edit bus line…** (a bus's connection in a device's **Setup** tab, or the
+  line in the Edit device dialog; admin) sets one line for every device on a
+  serial bus. It first lists the devices that change and restart, then
+  writes the configuration once, with one audit record, and restarts them.
+  On a port of our serial bridge it sets the bridge port's line too, in the
+  same step. On a converter or a Modbus TCP gateway it is refused (*set on
+  the box*: change it in the box's web page), and so is a change while a
+  write to one of the bus's devices is in flight.
 - **Test connection** for a new slave on a busy bus goes through that same
   connection, in turn, so it does not disturb the devices already reading.
 - **Bus time is shared.** At 9600 baud, reading 40 registers takes about
@@ -149,7 +161,11 @@ The same holds for a bus attached **directly** to the gateway's host
 ## 5. Finding the slaves, watching the bus, moving things
 
 **Scan a bus.** The **Scan** button on a bus asks unit IDs 1–247 one by one,
-through the bus's own connection. The devices already on it keep reading
+through the bus's own connection. On a bus some device of this gateway
+listens to, Scan is refused: it would transmit. When the converter cannot
+say whether another program is connected to it, the gateway asks before it
+opens a connection of its own (*Open it and scan*); nothing is sent until
+you agree. The devices already on it keep reading
 between the questions, and a single-client converter is never fought over.
 The whole range takes about a minute and a quarter. Closing the panel stops
 the scan. For every slave that answers it shows:
@@ -158,8 +174,12 @@ the scan. For every slave that answers it shows:
   - else the device's own Modbus identification (FC43: vendor and product);
   - else *SunSpec*, if it carries the SunSpec marker;
   - else *not recognised*;
-- **which device already reads it**, or an **Add** button that opens the
-  wizard on that bus and unit, with the recognised template selected.
+- **which device already reads it**, or an **Add** button that opens Add
+  Device on that bus and unit, with the recognised template selected (or on
+  *start from the connection* when none was recognised).
+
+The same scan is in Add Device → **Many of the same on one bus**, where it
+adds several slaves at once ([MANUAL.md §5.2](MANUAL.md#52-add-a-device)).
 
 A template recognises its device through an `identify` block: registers
 that must read given values, and/or an FC43 pattern. See
@@ -173,8 +193,9 @@ each device's share. Above 70% the pill turns amber: another device or a
 faster group will make readings late. At 100% it turns red: requests queue.
 The pill suggests what to do then.
 
-**Move a device** to another bus or another bridge with the ⇄ button on its
-row (or Edit). It keeps its id, so its MQTT topics and its history continue.
+**Move a device** to another bus or another bridge from its ⋯ → **Edit
+connection…**: the Edit device dialog lists the move for review before
+**Save**. It keeps its id, so its MQTT topics and its history continue.
 Renumbering a bus in the bridge's form takes its devices along. Dropping a
 bus while devices use it is refused.
 
@@ -201,8 +222,9 @@ listening adapter can sit on another host, behind a bridge:
 
 1. Put a bridge on the bus: our serial bridge with its own adapter, or a
    **transparent** converter wired A/B in parallel like any node.
-2. **Add Device → Modbus RTU → Listen only (tap)**. In *Where the bus is*,
-   choose the bridge's bus, then the unit ID of the slave to follow.
+2. **Add Device → Connection**: **Port: RS-485 / serial → Where the bus is:
+   Through a bridge or converter** (the bridge's bus) → **Role on the bus:
+   Listen-only**, then the unit ID of the slave to follow.
 3. Add one listening device per slave you want, on the same bus. They share
    one connection to the bridge.
 
@@ -212,7 +234,7 @@ connection: { protocol: rtu_tap, bridge: pi-garage, bridge_port: 7001, unit_id: 
 
 Good to know:
 - **A Modbus TCP gateway cannot be listened through.** It turns the bus into
-  answers to *its* questions and passes nothing else on. The wizard offers
+  answers to *its* questions and passes nothing else on. Add Device offers
   only transparent bridges, and the API refuses a gateway.
 - **A bus is polled or tapped, never both.** On a tapped bus the gateway does
   not add a polled device and refuses **Scan** and **Check mode**: they would

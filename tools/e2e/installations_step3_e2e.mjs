@@ -1,5 +1,5 @@
 // Multi-Bus Gateway — multi-protocol Modbus/HTTP/MQTT acquisition gateway.
-// Copyright (C) 2024-2026 Stefan Maldaianu <sm26449@diysolar.ro>  — AGPL-3.0-or-later
+// Copyright (C) 2024-2026 Stefan Maldaianu <stefan@multibus.dev>  — AGPL-3.0-or-later
 //
 // The installation pages as a user meets them (UI audit 2026-10-21, section
 // C, lot b): Add group offers the gateway's own ways of reading and says a
@@ -244,12 +244,18 @@ try {
   await page.waitForTimeout(1500);
   const pqInfo = await page.locator('#pqInfo').innerText().catch(() => '');
   check('PQ tab: another device\'s counters are never shown', !/4242/.test(pqInfo) && /No recorder status|status/i.test(pqInfo), pqInfo);
-  const pqHint = await page.locator('#ddvPqBaseUrlHint').innerText().catch(() => '');
-  check('PQ tab: a blank Base URL says the device\'s own address', /http:\/\/127\.0\.0\.1/.test(pqHint), pqHint);
+  // the recorder's settings are an output now (⋯ → Outputs…, L3.3)
+  await page.evaluate(() => window.app.ddvEdit('outputs'));
+  await page.waitForTimeout(600);
+  const pqHint = await page.locator('#devEditPq-base_url-hint').innerText().catch(() => '');
+  check('PQ recorder (⋯ → Outputs…): a blank Base URL says the device\'s own address', /http:\/\/127\.0\.0\.1/.test(pqHint), pqHint);
+  await page.evaluate(() => window.app.closeModal('devEditModal'));   // the Edit device modal (L3.4), closed
+  await page.evaluate(() => window.app._switchDeviceTab('pq'));
+  await page.waitForTimeout(800);
   await page.route('**/api/pq/status', r => r.fulfill({ json: { devices: [{ device: 'pq1', enabled: false }] } }));
   await page.evaluate(() => window.app._loadPqStatus());
   await page.waitForTimeout(500);
-  check('PQ tab: "off" points at the switch on this tab', /above|mai sus/.test(await page.locator('#pqInfo').innerText()),
+  check('PQ tab: "off" points at the switch (⋯ → Outputs…)', /Outputs|Ieșiri/.test(await page.locator('#pqInfo').innerText()),
         await page.locator('#pqInfo').innerText());
   });
 
@@ -321,8 +327,10 @@ try {
   check('wizard: an inverter group offers the inverter template',
         invOpts.some(o => o.v === 'fronius_sunspec_inverter' && o.grp === 'SELECT'));
   check('wizard: never a template of another declared kind', !invOpts.some(o => o.v === 'eastron_sdm630'));
-  check('wizard: a template of no declared kind only under its own heading',
-        invOpts.some(o => o.v === 'delta_vfd_el' && o.grp === 'OPTGROUP') && !invOpts.some(o => o.v === 'delta_vfd_el' && o.grp === 'SELECT'));
+  // since L2 (631983d) every bundled template declares its kind: delta_vfd_el
+  // is a drive now, so it is another kind — never offered, not even folded
+  check('wizard: a drive template is not offered to an inverter group, not even folded',
+        !invOpts.some(o => o.v === 'delta_vfd_el'));
   check('wizard: a battery group offers no meter', !opts.some(o => o.v === 'eastron_sdm630'));
   await page.evaluate(() => window.app.closeModal('plantWizardModal'));
 

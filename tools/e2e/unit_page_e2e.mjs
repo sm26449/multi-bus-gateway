@@ -12,7 +12,7 @@
  * read over solar_api (http) AND sunspec (tcp), on hosts that REFUSE.
  */
 import { chromium } from 'playwright';
-import { openDeviceTab } from './lib/device-page.mjs';
+import { openDeviceTab, editorSection, saveDeviceEditor, closeDeviceEditor } from './lib/device-page.mjs';
 
 const BASE = process.env.MBG_URL || 'http://localhost:18087';
 const EP = process.env.ENDPOINT || 'sunfield';
@@ -45,7 +45,8 @@ try {
   // ---- 1. the list row says how the unit is read, not the fallback ----------
   const row = page.locator(`.device-row[data-args*="${UNIT}"]`).first();
   const rowText = await row.innerText();
-  check('the unit row names its sources and rhythms', /solar_api HTTP 5 s/.test(rowText) && new RegExp(`sunspec Modbus TCP ${SS} s`).test(rowText), rowText.slice(0, 90));
+  // the device's one line (the header's, L3.3): read via <source> (<protocol> <every>) + …
+  check('the unit row names its sources and rhythms', /solar_api \(HTTP 5 s\)/.test(rowText) && new RegExp(`sunspec \\(Modbus TCP ${SS} s\\)`).test(rowText), rowText.slice(0, 120));
   check('the unit row does not describe a bare TCP :9', !/TCP · 127|:9 · unit/.test(rowText));
   const epRow = await page.locator('.endpoint-row').first().innerText();
   check('the installation row says what it holds and how it is read', /Inverters/.test(epRow) && /Read via/.test(epRow), epRow.slice(0, 90));
@@ -67,31 +68,44 @@ try {
   check('the footer states this unit\'s rhythm', /read every[\s\S]*solar_api/.test(await page.locator('#pollGroupsStatus').innerText()));
 
   // ---- 4. the Edit tab is "Read via": no form for a connection that is not -----
-  const tab = page.locator('#deviceWsTabs [data-dtab="connection"]');
-  check('the tab is named Read via', /Read via/.test(await tab.innerText()));
+  // (L3.3) not a tab any more: the unit's ⋯ → Rename… opens it
+  await page.click('#ddvActions');
+  check('its ⋯ offers Rename…; Edit connection… is held: the installation sets it (L3.10)',
+        await page.locator('#ddvActionsMenu [data-ddv-act="rename"]').isVisible()
+        && (await page.getAttribute('#ddvActionsMenu [data-ddv-act="connection"]', 'aria-disabled')) === 'true'
+        && /installation/i.test(await page.locator('#ddvActionsMenu [data-ddv-act="connection"] .mbg-menu-why').innerText()));
+  await page.keyboard.press('Escape');
+  // (L3.11b) Rename… is the Edit device modal: its Identity holds the name;
+  // its Connection says "set on the installation" and lists the sources
   await openDeviceTab(page, 'connection'); await page.waitForTimeout(600);
-  const rv = page.locator('[data-dpanel="connection"]');
-  check('no host / port / timeout fields', await rv.locator('#ddvHost, #ddvPort, #ddvTimeout, #ddvTemplate').count() === 0);
+  await editorSection(page, 'connection');
+  const rv = page.locator('#devEditPanel-connection');
+  check('no host / port / timeout fields', await page.locator('#devEditModal #ddvHost, #devEditModal #ddvPort, #devEditModal #ddvTimeout, #devEditModal #ddvTemplate').count() === 0);
   check('no Save intervals, no Test connection', !/Save intervals|Test connection/.test(await rv.innerText()));
   check('both sources listed with template and interval',
         await rv.locator('[data-src-row="solar_api"]').count() === 1 && await rv.locator('[data-src-row="sunspec"]').count() === 1
         && /fronius_solar_api_inverter/.test(await rv.innerText()) && new RegExp(`\\b${SS} s`).test(await rv.innerText()));
-  check('the name is the one editable thing and has a label', await rv.locator('label[for="ddvName"]').count() === 1 && await rv.locator('#ddvName').count() === 1);
+  check('its connection: set on the installation, with the way there', /set on the installation/i.test(await rv.innerText())
+        && await rv.locator('[data-de-way="installation"]').count() === 1);
+  await editorSection(page, 'identity');
+  const idp = page.locator('#devEditPanel-identity');
+  check('the name is editable and has a label', await idp.locator('label[for="ddvName"]').count() === 1 && await idp.locator('#ddvName').count() === 1);
 
   // rename round-trip
-  await rv.locator('#ddvName').fill('East inverter');
-  await rv.locator('button[data-action="saveUnitName"]').click();
-  await page.waitForTimeout(2500);
+  await idp.locator('#ddvName').fill('East inverter');
+  await saveDeviceEditor(page);
+  await page.waitForTimeout(1500);
   const api = await (await fetch(`${BASE}/api/endpoints/${EP}`)).json();
   check('the rename landed on the installation', api.units.find(u => u.device_id === UNIT).name === 'East inverter');
   check('and every source survived it', api.groups[0].sources.map(s => s.id).join(',') === 'solar_api,sunspec');
   check('the crumb shows the new name', (await h2.innerText()).includes('East inverter'));
 
-  // ---- 5. Outputs point to the installation, not to a destructive dialog -------
+  // ---- 5. Outputs: the installation's, said so, with the way there --------------
   await openDeviceTab(page, 'outputs'); await page.waitForTimeout(600);
-  const outs = page.locator('[data-dpanel="outputs"]');
-  check('Outputs say routing is set on the installation', /set on its installation/.test(await outs.innerText()));
-  check('and offer Open installation, not Edit endpoint', await outs.locator('button:has-text("Open installation")').count() === 1 && !/Edit endpoint/.test(await outs.innerText()));
+  const outs = page.locator('#devEditPanel-outputs');
+  check('Outputs say they are the installation\'s, for every unit', /every unit/.test(await outs.innerText()));
+  check('and offer Open installation, not Edit endpoint', await outs.locator('[data-de-way="installation"]').count() >= 1 && !/Edit endpoint/.test(await outs.innerText()));
+  await closeDeviceEditor(page);
 
   // ---- 6. back goes to the installation --------------------------------------
   await page.locator('#deviceDetailView .section-header h2 button[aria-label]').first().click();

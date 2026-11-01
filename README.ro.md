@@ -12,8 +12,9 @@
 > rutare de date. Retrofit, nu înlocuire.**
 
 Multi-Bus Gateway citește echipamentele pe care le ai deja — contoare de
-energie, invertoare PV, senzori — prin **Modbus TCP**, **Modbus RTU**,
-**HTTP/JSON** (Fronius Solar API, Shelly, Tasmota…) sau **MQTT** și rutează
+energie, invertoare PV, baterii, senzori — prin **Modbus TCP**, **Modbus
+RTU**, **HTTP/JSON** (Fronius Solar API, Shelly, Tasmota…), **MQTT**, **CAN**
+(doar ascultare) sau protocolul BMS **Seplos V2** și rutează
 datele către **MQTT, InfluxDB/Grafana, Home Assistant și feed-uri
 REST/JSON**. Poate re-servi orice sursă ca **meter Modbus virtual** (Carlo
 Gavazzi EM24, Fronius Smart Meter, SunSpec), astfel încât un Victron GX, un
@@ -35,8 +36,9 @@ serială pentru RS-485 la distanță și înregistratorul PQ, care are un singur
   (topic MQTT, bucket InfluxDB, ieșiri opt-in), pipeline-uri independente.
 - 🪞 **Un meter, mai mulți consumatori** — metere virtuale emulate, cu
   politici explicite de staleness și bloc de calitate in-band.
-- 🛠️ **UI de operator** — wizard cu discovery, diagnostice la nivel de
-  cadru, snapshot-uri de configurație cu rollback, roluri și audit.
+- 🛠️ **UI de operator** — Adaugă dispozitiv cu o verificare prin citire
+  înainte de salvare, scanarea magistralei, diagnostice la nivel de cadru,
+  snapshot-uri de configurație cu rollback, roluri și audit.
 - ⚡ **Recorder de evenimente PQ (Janitza)** — arhivează permanent ring-ul
   de evenimente de calitate a energiei al aparatului (dip/întrerupere/RVC
   + forme de undă RMS), cu tab dedicat, alerte și istoric interogabil —
@@ -96,34 +98,70 @@ montabil pe șină DIN la fel de bine. Fără lock-in, fără cost per cutie.
 - **Modbus RTU tap (doar ascultare)** — observă un bus care are deja un master
   (pachetul master al unui BMS, un datalogger de vendor) fără să transmită
   vreodată: framing pe CRC, împerechere cerere/răspuns, decodare FC01/03/04,
-  scrierile se văd; configurabil din wizard-ul de dispozitiv
+  scrierile se văd; configurabil din Adaugă dispozitiv
   ([rtu-serial.md §7](docs/rtu-serial.md)).
+- **CAN, doar ascultare** — SocketCAN (un adaptor USB, un HAT), semnale
+  decodate din șablon cu semantica DBC (id de cadru, bit de start, lungime,
+  ordinea octeților); nu există cale de transmisie, iar indicatorul
+  listen-only al interfeței e verificat și afișat. Prima hartă: legătura
+  BMS → invertor pe protocolul Pylontech.
+- **BMS Seplos V2** — protocolul ASCII RS485 al pachetelor, doar citire prin
+  construcție: interoghează un pachet sau ascultă pe o magistrală pe care o
+  interoghează deja un pachet master (rezumatul inter-pachet al unei bănci
+  în paralel), pe un port local sau printr-un bridge serial.
 - **HTTP/JSON** — orice endpoint JSON, cu `json_path` per registru și gardă
   SSRF (doar LAN privat, implicit).
 - **MQTT-in** — abonare la un broker; valoare din payload JSON (`json_path`)
   sau payload brut; topic per registru cu wildcard-uri `+`/`#`.
 - **Șabloane de dispozitiv** — harta de registre ca fișier JSON portabil;
-  24 de hărți incluse, cu proveniență documentată
+  31 de hărți incluse, cu proveniență documentată
   ([catalog](docs/device-catalog.md)): Janitza UMG 512-PRO (4.126 registre),
   ABB B21/B23, Carlo Gavazzi EM24, Eastron SDM120/SDM630, Schneider iEM3000,
   Fronius Smart Meter 65A-3, invertor și contor Fronius SunSpec, trei hărți
   Fronius Solar API (invertor, invertor pe faze, amplasament, contor),
-  Seplos BMS V3 (tap RTU per pachet, MQTT pachet și bancă), un Victron GX
-  prin MQTT, o pompă de căldură Samsung, un variator Delta VFD-EL și hărți
-  MQTT (Zigbee2MQTT, Theengs BLE, Tasmota, JSON generic). Proveniența și gradul de
+  Huawei SUN2000 cu contorul DTSU666 și bateria LUNA2000, un invertor hibrid
+  monofazat Deye, Seplos BMS V2 (un pachet și tap-ul inter-pachet al unei
+  bănci în paralel) și V3 (tap RTU per pachet, MQTT pachet și bancă), o
+  legătură CAN BMS → invertor pe protocolul Pylontech, un Victron GX prin
+  MQTT, o pompă de căldură Samsung, un variator Delta VFD-EL și hărți MQTT
+  (Zigbee2MQTT, Theengs BLE, Tasmota, JSON generic). Proveniența și gradul de
   încredere sunt scrise în catalog, la fiecare hartă. Editor + upload + export + **import CSV**
   ([ghid](docs/csv-import.md)).
 - **Nume canonice de câmpuri** — nume uniforme de registre pe orice dispozitiv
   (`voltage_l1_n` peste tot), deci topicele MQTT și field-urile InfluxDB sunt
   predictibile. **Auto-canonicalize** dintr-un click le deduce pentru o hartă
   criptică importată, conservator ([dicționar](docs/canonical-fields.md)).
-- **Wizard cu discovery** — scanare CIDR pe portul Modbus, sweep de unit-ID
-  (TCP și RTU), **SunSpec model walk**, răsfoire de topicuri MQTT cu preview,
-  Fronius Solar API discover, **scanare noduri ESPHome** (API nativ 6053,
-  merge din Docker fără mDNS); „Use" pre-completează wizard-ul.
-- **Restaurarea unui dispozitiv șters** — ștergerea păstrează definiția
-  completă; un card „Deleted devices" oferă restore cu un click (conexiune +
-  template + registre) sau „forget" definitiv.
+- **Adaugă dispozitiv** — alegi modelul (căutare, filtre pe tip) sau pornești
+  de la conexiune; conexiunea e întrebată în ordine (port, unde e magistrala,
+  **Master / Listen-only**, protocol, linie, adresă), porturile seriale se
+  aleg din lista host-ului, interfețele CAN la fel; o **verificare prin
+  citire** înainte de salvare (valorile cu calitatea lor, identitatea pe care
+  o raportează dispozitivul, componentele găsite, încărcarea adăugată — doar
+  citiri, niciodată o scriere); apoi nume, tip, atribute și ieșiri pe o
+  singură pagină. Un dispozitiv nou pornește **blocat la scriere**.
+- **Mai multe la fel pe o magistrală** — scanezi o linie serială, un port de
+  bridge sau un gateway TCP după unitățile care răspund (sau le *asculți* pe
+  o magistrală interogată de alt master), bifezi ce adaugi și le creezi
+  dintr-o dată.
+- **Discovery** — scanare CIDR pe portul Modbus, sweep de unit-ID (TCP și
+  RTU), **SunSpec model walk**, răsfoire de topicuri MQTT cu preview, Fronius
+  Solar API discover, **scanare noduri ESPHome** (API nativ 6053, merge din
+  Docker fără mDNS); „Use" deschide Adaugă dispozitiv cu datele completate.
+- **Tipuri de dispozitiv și identitate** — un catalog de tipuri (contor,
+  invertor, baterie, pompă de căldură, variator, convertor… și tipurile tale)
+  și atribute de identitate per dispozitiv: descriere, unde e montat,
+  etichete, plăcuța (producător, model, număr de serie — publicat doar dacă
+  permiți —, firmware, data instalării).
+- **Pagina dispozitivului** — o linie tehnică ce spune cum e accesat, un
+  singur meniu ⋯ pe orice suprafață (fiecare acțiune indisponibilă spune de
+  ce), taburile Live / Date / Configurare / Diagnostic și **un singur dialog de
+  editare** cu un singur Salvează (un dry run spune ce va face, o modificare
+  făcută între timp în altă parte e îmbinată, nu suprascrisă); măsurătorile
+  și comenzile se editează pe tot ecranul.
+- **Anulare și restaurare** — o ștergere se încheie cu **Anulează** timp de
+  10 s; dispozitivele șterse își păstrează definiția și revin dintr-un
+  dialog **Restaurare** (blocate la scriere, legăturile oprite) sau sunt
+  uitate definitiv.
 
 **Măsurători**
 - Registre selectate per dispozitiv, **grupuri de poll**
@@ -143,11 +181,18 @@ montabil pe șină DIN la fel de bine. Fără lock-in, fără cost per cutie.
 - **Comenzi** — scrieri cu nume, păzite, declarate de șablon
   (`power_limit = 60 %`): citiri de protecție, un singur cadru, verificare
   prin citire înapoi, un test care nu scrie nimic și aceleași porți din
-  interfață, API, MQTT și Home Assistant.
+  interfață, API, MQTT și Home Assistant. Orice scriere trece printr-o
+  **bandă per fir**: un dispozitiv lent întârzie doar magistrala lui, o
+  valoare nouă o înlocuiește pe cea care încă așteaptă, nimic nu se scrie
+  târziu, iar fiecare rezultat MQTT / HA e publicat pe `cmd/result`. Ritmul
+  unui canal (interval minim, timpi pornit/oprit, porniri pe oră) se poate
+  seta per dispozitiv.
 - **Reguli** — un controler declarativ: trepte, condiții, ajustări și
   programări cu temporizări, mai multe reguli pe o țintă ca straturi,
   secvențe de comenzi; regulile noi rulează în **shadow** (decid și scriu în
-  jurnal, nu scriu în echipament) până le armezi ([ghidul regulilor](docs/rules.md)).
+  jurnal, nu scriu în echipament) până le armezi; scrierea unei reguli e
+  verificată încă o dată chiar înainte să ajungă pe magistrală, iar
+  corecțiile ei respectă ritmul canalului ([ghidul regulilor](docs/rules.md)).
 - **Server OPC UA** — fiecare dispozitiv și fiecare valoare pentru SCADA și
   panouri HMI, cu calitatea și momentul citirii ([ghid](docs/opcua.md)).
 - **Componente** — bateriile și senzorii pe care îi ține un Victron GX,
@@ -173,10 +218,16 @@ montabil pe șină DIN la fel de bine. Fără lock-in, fără cost per cutie.
   scriabile devin entități **`number`/`select`** cu limite din template).
 - **InfluxDB** — bucket per dispozitiv (auto-creat), timestamp = ora citirii,
   **buffer store-and-forward persistat pe disc** (zero pierderi la pană,
-  replay idempotent cu timestamp-urile originale). Tag-uri statice per
+  replay idempotent cu timestamp-urile originale); o valoare neschimbată e
+  rescrisă la fiecare 10 minute (`heartbeat_interval`), ca o stare constantă
+  să nu arate ca o gaură. Tag-uri statice per
   dispozitiv/unitate (`battery_id = ${unit_id}`), iar totalurile unei instalații
   se pot scrie și sub o măsurare și nume de câmpuri alese de tine — așa
   supraviețuiește schimbării sursei un dashboard care își citește propria schemă.
+- **Identitatea gateway-ului** — o instalare nouă numește dispozitivele noi
+  sub id-ul propriu al gateway-ului (`mbg/<gateway>/devices/<id>`, bucket
+  `<gateway>-<id>`), ca mai multe gateway-uri să împartă un broker și un
+  InfluxDB; o instalare existentă își păstrează toate numele.
 - **REST push** — POST periodic de telemetrie JSON către un URL/webhook,
   format `native`/`flat`, headere de auth mascate, fără redirecturi.
 - **HTTP/JSON output** — valorile live ca feed read-only la
@@ -231,7 +282,13 @@ publică prin MQTT e aici un dispozitiv MQTT obișnuit.
   **redirect spre adresa canonică** (`ui.canonical_url`, portiță `?local`).
 - **Scrieri Modbus gated** — oprite implicit, allowlist din template cu
   `write_min`/`write_max`, **lease-uri dead-man crash-safe** (revert automat
-  la `write_safe`), dispozitivul primar mereu read-only.
+  la `write_safe`), dispozitivul primar blocat implicit; orice dispozitiv nou
+  pornește blocat la scriere, o scriere cere o autentificare sau o cheie API,
+  iar pe o magistrală pe care un dispozitiv doar ascultă nu se transmite
+  niciodată.
+- **Două taburi nu se mai suprascriu** — orice scriere pe un dispozitiv
+  poartă `ETag`-ul lui (`If-Match`); o modificare făcută între timp în altă
+  parte e refuzată (412) și arătată, nu pierdută în tăcere.
 
 **Observabilitate & UX**
 - **`/metrics` Prometheus** (serii device/sink/vmeter), pagina **Status** cu
@@ -524,7 +581,7 @@ verificată). Fiecare versiune de atunci este în [changelog](CHANGELOG.md).
 
 ## Autori
 
-Construit de **Stefan Maldaianu** ([sm26449@diysolar.ro](mailto:sm26449@diysolar.ro)),
+Construit de **Stefan Maldaianu** ([stefan@multibus.dev](mailto:stefan@multibus.dev)),
 cu asistență la dezvoltare din partea Claude (Anthropic).
 
 ## License
@@ -532,7 +589,7 @@ cu asistență la dezvoltare din partea Claude (Anthropic).
 **GNU Affero General Public License v3.0 sau ulterioară (AGPL-3.0-or-later)**
 — software liber și open source.
 
-Copyright (c) 2024-2026 Stefan Maldaianu <sm26449@diysolar.ro>
+Copyright (c) 2024-2026 Stefan Maldaianu <stefan@multibus.dev>
 
 Poți folosi, studia, modifica și distribui acest software, **inclusiv
 comercial**. Condiția AGPL: dacă distribui versiuni modificate — sau le

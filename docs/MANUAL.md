@@ -167,21 +167,145 @@ Open `http://<host>:8080`. The top navigation:
   install skips the overview and opens straight on the device view.
 - **Devices** — every southbound source with its live health, grouped by
   installation. Find one with the search box (`/` jumps to it) and the
-  filters: *kind* (meter, inverter, battery, heat pump…, derived from the
-  template and the device's role), *state*, *protocol*. The **Add Device**
-  wizard, **Add Installation** (§5b), **Discover devices** and the
+  filters: *type* (meter, inverter, battery, heat pump… and your own types,
+  §5c), *label*, *state*, *protocol*. **Add Device** (§5.2), **Add
+  Installation** (§5b), **Discover devices** and the
   **bridges** (the boxes a serial bus is reached through) live here.
-  Opening a device gives its workspace, its tabs in three groups:
+  Opening a device gives its page — it **observes and operates; it does not
+  edit**. Its header says the device in one technical line, the same line
+  its row on the list and its bridge card say, e.g.
+  `Modbus RTU · /dev/ttySC1 · 9600 8E1 · unit 1 · Master · 2 s/10 s`
+  (an MQTT device: its broker, port and TLS — the topic stays ••••). Beside
+  it: the write lock (*writes locked* / *writes allowed*), each output on or
+  off in words, and *via* links to the bridge, the parent device or the
+  installation it is reached through. The header's buttons only operate:
+  **Test**, **Preview** (operator and up), and, where the device has them,
+  **Run command…** and **Write…**. One that cannot run now stays, disabled,
+  and says why (for example *Writes locked — Unlock writes… first*).
+  Its tabs, in four groups:
   - *Live* — *Overview* (what it reads now, data health, last read),
     *History*, *Energy*, and *Power Quality* on a meter that records it;
-  - *Configure* — *Connection* (address, template, how often it reads; a
-    unit of an installation shows *Read via* instead, set on its
-    installation), *Measurements* (what is read), *Calculated*, *Commands*
-    (§14b), *Meters* (§5.4), *Outputs*, *Attributes* (§5c);
+  - *Data* — *Measurements* (what is read, with live values),
+    *Calculated*, *Commands* (§14b: run and test them);
+  - *Setup* — what the device is told, **read-only and for every role**,
+    viewers included: its connection (with what cannot be changed and
+    why), polling, identity and attributes, outputs, writes, meters; a
+    value equal to its default says *(default)*;
   - *Diagnose* — *Monitor* (its frames on the wire) and *Logs* (its
     acquisition events).
 
-  The ⋯ menu holds what is done *to* the device: its kind, Disable, Delete.
+  Everything that changes the device is in the **⋯ menu**. It is one menu,
+  the same on the device page, on its row in the list, on a bridge card and
+  on an installation's unit row, and every role sees it. Its groups are
+  fixed and always in this order, separated by a line:
+
+  | Group | Items |
+  |---|---|
+  | Operate | **Test**, **Preview**, **Reconnect**, **Run a command…**, **Write a value…** |
+  | Edit | **Edit device…**, **Edit connection…**, **Polling…**, **Outputs…**, **Edit bus line…** (a device on a serial bus), **Rename…** (a unit or a component) |
+  | Data | **Measurements…**, **Download map**, **Calculated…**, **Commands & bindings…**, **Meters…** (§5.4), **Components…**, **Update from template…** |
+  | Device | **Type: <type>…**, **About (attributes)…** (§5c), **Duplicate…**, **Open installation** (a unit) / **Open device** (a component), **Show settings** |
+  | Safety | **Unlock writes…** (it asks first) / **Lock writes** (at once), **Disable…** / **Enable** |
+  | Danger | **Delete…** (a component: **Remove…**) |
+  | — | **Deleted devices: restore…** (the closing line, §5.2) |
+
+  A viewer sees **Download map**, **Show settings** and the *Open* items; an
+  operator also **Test**, **Preview**, **Run a command…** and **Write a
+  value…**; an administrator sees everything. An item your role may use is
+  always there for that kind of device. When it cannot run now it is
+  disabled, with one line of why — the same facts the gateway checks — and
+  choosing it takes you to where that changes: *Writes locked — Unlock
+  writes… first*, *It is off: Enable it first*, *Set on the installation
+  X*, *Used by 2 — see Used by*, *The primary meter always polls*. While the
+  gateway is still being asked (what uses the device, whether its template
+  changed) the item says *checking…*; the menu never reflows. The menu is a
+  keyboard menu: arrows, Home/End, Esc back to ⋯.
+
+  The **E** key (an administrator, nothing focused in a field) opens the
+  editor of what is in view, and the menu marks that item with *E*: a data
+  tab's own editor (Measurements, Calculated, Commands), a *Setup* section's
+  own, else **Edit connection…** (a device measured by its meters: its
+  identity).
+
+  **The Edit device dialog.** **Edit device…**, **Edit connection…**,
+  **Polling…**, **Type: <type>…**, **Outputs…** and **Rename…** open one dialog, at
+  the section they name (**E**: the section in view). Its sections, in a
+  rail on the left (a list to pick from on a phone): *Model* (the template;
+  a change restarts acquisition), *Connection* (the same form as Add Device;
+  a field the bus, the bridge or the template decides is shown, marked, with
+  the reason, and keeps its value), *Polling* (acquisition on/off and each
+  poll group's interval — an interval applies at once), *Identity* (name,
+  type with **+ Add type…**, the fixed id, and the description, where it
+  is, labels and nameplate) and *Outputs* (below).
+  Nothing is sent while you edit: every change, output switches included,
+  is staged, and the rail marks the sections that changed. The footer says
+  what one **Save** would do, checked with the gateway (a dry run) as you
+  type: *2 changes · applies live*, or *1 change · restarts acquisition* —
+  and then the button reads **Save & restart acquisition**. **Show changes**
+  lists each setting, stored → after Save (secrets masked). A refusal is
+  said at its field and listed at the top, each line a link to the field.
+  Before a change that matters on a bus or to a consumer — Master ↔
+  Listen-only, a move to another bus (serial port, bridge, adapter, CAN link,
+  the address of a Modbus TCP/UDP device, a tap or a converter), a template
+  change, an output going off, acquisition off — the page asks first,
+  listing them. If the device was changed elsewhere since the dialog opened
+  (another tab, the API), nothing is saved: the dialog says so, reads the
+  stored version, puts your edits back over it, marks each field both of
+  you changed (*Your edit, kept. Stored now: …*) and waits for **Save**
+  again; the dry run usually finds this before you press **Save**. **Esc**, **✕**, **Cancel**, **Back**, a link and a reload ask before
+  dropping unsaved edits; while it saves the dialog cannot be changed or
+  closed, and a value changed meanwhile keeps it open (*Saved.* — Save again).
+  The write lock is never part of it (its own dialog). Every kind of device
+  is edited in this dialog. The gateway's own meter (the primary) shows the
+  sections its edit takes — Connection (its Modbus TCP address only),
+  Polling (its intervals; it always polls), Identity and Outputs — each
+  fixed field held with its reason and, where there is one, the way to it
+  (the gateway's Home Assistant switch: Settings → MQTT). **Identity** holds,
+  beside the name and the type, the device's description, where it is,
+  labels and nameplate (its attributes): one **Save** writes them all. When a
+  Save writes more than one place (the device, its attributes, a unit's
+  installation outputs, the PQ recorder) and one of them refuses, the dialog
+  says what was saved and what was not, keeps what was not, and marks the
+  refused field.
+
+  A unit of an installation is edited in the same dialog: its name and its
+  attributes are its own; its connection and polling say *set on the
+  installation X*, with the way there. Its **Outputs** are shared: HTTP/JSON
+  and REST push are set on the installation (every unit of it), OPC UA and
+  the publishing rhythm on its group — edited here, staged, and the summary
+  names the units a change reaches. A component is edited there too: its
+  name and its on/off (held, saying why, while its device is off); the rest
+  is its device's.
+
+  **Edit bus line…** (⋯, or the line lock in the *Connection* section, or
+  the *Setup* tab's connection) sets one line — baud rate, parity, data bits,
+  stop bits — for **every** device on a serial bus at once; a bus has one
+  line. **Check…** lists the devices that change and restart (a short gap in
+  their readings), then **Apply and restart N devices** writes the
+  configuration once, with one audit record. On a port of the MBG serial
+  bridge the bridge port's own line is set through its API in the same step.
+  A converter, a transparent bridge or a Modbus TCP gateway keeps its own
+  line (*Set on the box*); a bus whose line is set by an installation or by a
+  device's component says so and points there. It is refused while a write to
+  one of its devices is running. Administrator only.
+
+  **Measurements…** (with its *Calculated* part and the map's tools: Import
+  CSV, Upload map, Download map, Raw JSON) and **Commands & bindings…** open
+  full screen: an edit bar on top (*Editing: …*) with **Save** and **Done**,
+  nothing written until Save, the page behind out of reach. **Esc** is
+  **Done**. **Done** with edits not saved asks first (*Discard your
+  changes?* — **Keep editing** / **Discard**), and so does every way of
+  leaving — Back, a link, a navigation tab, another device, a reload; one
+  move asks one question. A Save that writes several parts (the selection,
+  calculated values, command bindings) and fails on one says what was saved
+  and what was not, and keeps what was not. If the selection was changed elsewhere
+  meanwhile, Save reads it again, puts your changes back over it, says which
+  rows both changed, and waits for Save again. The dashboard's shortcut to a
+  device's measurements opens this same editor. **Meters…** and **About…**
+  stay editors of the page, each with its own Save. A link to a tab
+  that is no longer one (`#/devices/<id>/connection`, `…/outputs`,
+  `…/attributes`, `…/meters`, `…/edit`) opens *Setup* at that section. A
+  dialog with unsaved edits asks before **Esc** or **✕** closes it.
   A device something uses — a rule, a virtual meter, a device it measures,
   a formula that names it — cannot be deleted: the page lists what uses it (*Used by*) and
   offers **Disable** instead. Remove those uses first; that is the
@@ -191,27 +315,35 @@ Open `http://<host>:8080`. The top navigation:
   where it goes (topic, bucket, how many values); on the right, the chosen
   one's settings. MQTT and InfluxDB also say **when** a value goes out —
   on change or at every reading, how often an unchanged one is resent (MQTT),
-  at most how often a point is written (InfluxDB) — as in Settings or the
-  device's own (an installation's units share their group's). Each switch
-  applies at once, with no poller restart;
-  what has fields to type (REST push, the OPC UA values) saves them from
-  its own panel. The arrow keys move along the list; the open output is
-  remembered. The **write lock** is with the device's *Commands* (or in
-  *Connection* when it has none); the **PQ event recorder** is on its *Power
-  Quality* tab.
+  at most how often a point is written and how often an unchanged one is
+  rewritten (InfluxDB, its heartbeat: *gateway: N s* beside an empty field)
+  — as in Settings or the
+  device's own (an installation's units share their group's). They are the
+  Edit device dialog's *Outputs* section (⋯ → **Outputs…**): each switch and
+  setting is staged and sent with its one **Save**, applied with no poller
+  restart; **Test push** tries the saved REST push, from *Setup*. The arrow
+  keys move along the list; the open output is remembered. *Setup* shows
+  them read-only. The gateway's own meter and an installation's unit are
+  edited there too (a unit's outputs are its installation's or its group's,
+  said so). The **write lock** is a pill in the device's header, switched
+  from ⋯ (**Unlock writes…** / **Lock writes**); the **PQ event recorder** is
+  with the outputs, staged and saved with the same **Save** (its interval:
+  seconds, at least 30), its events on the *Power Quality* tab.
 - **Rules** — the declarative controller: one card per rule with its state,
   want → actual, decisions, Arm / To shadow (see §14c).
 - **Templates** — the catalog behind your devices: **device maps** (how a
   real device is read) and **meter emulations** (the virtual-meter templates
-  of §11) — bundled, uploaded, imported from CSV/YAML, edited.
+  of §11) — bundled, uploaded, imported from CSV/YAML, edited — and
+  **Device types** (§5c).
 - **Status** — pipeline health, error taxonomy, events, alerts, resource
   footprint (see §17).
 - **Settings** — the gateway's own settings, one tab each: *MQTT*,
-  *InfluxDB*, *OPC UA* (§11d), *Backup & Restore* (snapshots, rollback, export —
+  *InfluxDB* (with the heartbeat, §9), *OPC UA* (§11d), *Modbus* (the **Read
+  preview budget**, §5.2), *Backup & Restore* (snapshots, rollback, export —
   §15), *Security* (login, roles, passkeys, HTTPS, Modbus writes — §16),
-  *Alerts* (§12), *General* (timezone, colors), *Site* (its
-  location and attributes — §5c) and, when a companion service is set up,
-  *Modules*.
+  *Alerts* (§12), *General* (timezone, colors, and the **Gateway identity**,
+  §8), *Site* (its location, its attributes and the privacy choices — §5c)
+  and, when a companion service is set up, *Modules*.
 - **Virtual Meters** — serve the live values as standard Modbus meters
   (see §11).
 - **Diagnostics** — the commissioning toolbox: bus monitor, register probe,
@@ -251,110 +383,251 @@ Devices → *Discover devices*:
 - **Fronius Solar API discover** — enumerates inverters/meters behind a
   DataManager, with the hint that the meter sits at Modbus unit 240.
 
-*Use* on any result prefills the Add Device wizard.
+*Use* on any result opens Add Device on its Check step, pre-filled.
 
-### 5.2 Add a device (wizard)
+### 5.2 Add a device
 
-1. **Connection** — pick the protocol:
-   - **Modbus TCP**: host, port, unit ID, timeout. A slave behind a
-     converter in *Modbus TCP to RTU* (gateway) mode is reached here too:
-     **Reached → Through the gateway …** picks the gateway's bus, and only
-     the unit ID is left to type. **Over UDP** is for the few devices whose
-     manual says Modbus over UDP.
-   - **Modbus RTU**, three modes ([rtu-serial.md](rtu-serial.md)):
-     - **Over network (recommended)**: a bus behind a **bridge** (our
-       serial bridge on a Raspberry Pi or server, or a transparent
-       RS-485-to-Ethernet converter), picked by bridge and bus. Add
-       bridges with **Add bridge** on the Devices page
-       ([rtu-over-network.md](rtu-over-network.md)).
-     - **Direct serial**: serial port (e.g. `/dev/ttyUSB0`), baud, parity,
-       stop bits, with the adapter mapped into the container. **Framing**:
-       RTU, or ASCII for the older devices that speak Modbus ASCII
-       ([rtu-serial.md §5.1](rtu-serial.md#51-modbus-ascii)).
-     - **Listen only (tap)**: for a bus that already has a master (a BMS
-       master pack, a vendor datalogger). The gateway never transmits; it
-       decodes the answers the observed unit gives, at the master's rhythm.
-       The bus can be a local serial port or a transparent bridge's bus.
-       There is no *Test connection*; after saving, *Test* on the device
-       says what the tap has heard ([rtu-serial.md §7](rtu-serial.md)).
+**Add Device** is one dialog in four steps: **What is it? · Connection ·
+Check · Name & save**. Every way in opens it, at the step that fits:
 
-     Several slaves on one bus are several devices with different unit IDs:
-     they share one connection and take turns. A bus is either polled or
-     tapped. Each bus on a bridge's card says how busy its wire was in the
-     last minute — *busy 37 % · capacity left ~63 %* — measured
-     on the wire (time spent waiting for a turn is not counted). When the
-     bus cannot keep up it says *over capacity*: slow the poll groups that
-     need no speed, raise the baud rate, or split the slaves over two buses.
-     Hover the bar for each device's share.
-   - **Changing it later:** on the device's page, **Configure → Connection**
-     is this same form. A Modbus device can move between Modbus TCP, UDP,
-     RTU, ASCII, over the network and listen-only, because its register map
-     reads by address either way. Its id, topics and history stay. HTTP and
-     MQTT maps read by path, so going to or from them needs a new device. The
-     primary meter stays on Modbus TCP (its address may change), and a device
-     that holds components keeps how it is reached.
-   - **Saving it:** Save sends only what you changed — an untouched form
-     sends nothing. Changing *how* it is reached is said beside the choice.
-     Another protocol (UDP or ASCII on or off, TCP to RTU) starts the
-     connection afresh: settings the form does not show (retries, tuning)
-     go back to their defaults. Moving onto or off a bridge keeps them:
-     onto a bridge, its own address and serial line are cleared (the bridge
-     has them); off one, it gets the address you type (port 502 unless you
-     change it). A device on a bridge leaves it only when you choose another
-     way (a direct address, a serial port on this host, or *Take it off the
-     bridge…*); picking another bus moves it and keeps its topics and
-     history. A Modbus timeout is 1–30 s; one stored outside that range
-     (written by hand) is kept until you change it. A refusal from the
-     gateway is said under the field it is about.
-   - **HTTP/JSON**: a URL returning JSON; each register extracts its value
-     with a `json_path` (e.g. `Body.Data.PowerReal_P_Sum`). URLs must point
-     at a private LAN host unless `security.allow_nonlan_http_devices` is
-     set (SSRF guard).
-   - **MQTT**: broker, port, credentials/TLS, a subscribe topic; each
-     register reads from the JSON payload by `json_path` or takes the bare
-     payload as the number, and may use its own topic with `+`/`#`
-     wildcards.
+| Way in | Opens at |
+|---|---|
+| Devices → **Add Device** (and, on a gateway with no device yet, the first-run offer) | What is it? |
+| A bridge bus's **+ Device**, a bus scan's **Add** | Connection — the bus filled in, the next free address taken (the model too, when the scan recognised it) |
+| *Use* on a discovery result, **Found (n)** → **Use** | Check — the model and the connection filled in (What is it? when the model is not known) |
+| A meter's **Meters** editor → **Add equipment this meter measures…** | the measured path, that meter on its first row |
+| A device's ⋯ → **Duplicate…** | Connection — the copy list below, the next free address |
 
-   Press **Test connection**: for Modbus, *any* protocol-level answer — even
-   an exception — proves a live device; for HTTP with a template chosen the
-   test reports how many `json_path`s resolved; for MQTT it connects and
-   waits briefly for a sample message. On a saved device, Test asks the
-   device as it runs while nothing is changed; once something is changed, it
-   tries the connection as the form holds it — the edited unit and bus on a
-   bridge, the typed address after leaving one, topic variables and keepalive
-   included — with the stored password when the field is left blank. Nothing
-   is saved by Test. A changed listen-only tap is not probed (it never
-   transmits): save it, then Test reports what it hears.
-2. **Template** — choose from the library (the bundled maps are in
-   [device-catalog.md](device-catalog.md)). To write your own from the
-   manufacturer's register list, follow **[device-templates.md](device-templates.md)**:
-   addresses, word order, scale, the editor, CSV/YAML and testing, with
-   examples. You can **upload** a `.json` template
-   (validated row by row; id conflicts ask before overwriting), **create**
-   one in the editor, or **import a CSV or YAML** register map
-   ([csv-import.md](csv-import.md), [yaml-import.md](yaml-import.md)). Built-ins are read-only — *Duplicate to
-   edit*. A template used by a device cannot be deleted.
-3. **Data routing** — the device **id** becomes the routing key: values
-   publish under the device's MQTT topic prefix (live preview) and land in
-   its InfluxDB bucket (auto-created, 90-day retention) tagged with its
-   device tag. **Pitfall:** the routing identity is fixed after creation —
-   changing it would orphan history and Home Assistant entities.
+Every answer is kept on **Back**, on the step rail and when you take another
+way; **Esc**, ✕ and **Cancel** ask before dropping them.
+
+1. **What is it?** — search by model, brand or type (English or Romanian
+   words, synonyms, with or without diacritics), or narrow with the type
+   chips; pick the model card (↑/↓ move, Space picks, Enter picks and goes
+   on). A card shows the ports the model has and its marks: *Only listens*,
+   *Needs setup writes*, *Has parts*, *Note* (its notes are shown under the
+   list when you pick it). The bundled maps are in
+   [device-catalog.md](device-catalog.md); to write your own from the
+   manufacturer's register list follow **[device-templates.md](device-templates.md)**.
+   **Upload template**, **New template**, and for the model picked **Duplicate
+   to edit** (a built-in) or **Edit**, and **Export**, are under the list
+   ([csv-import.md](csv-import.md), [yaml-import.md](yaml-import.md)).
+   Three other ways sit above the model cards: *I don't know the model — start from the
+   connection* (the first two steps swapped; the model step then offers the
+   models that speak what the connection chose), *It doesn't communicate —
+   measured by other meters* (§5.4), *Many of the same on one bus*. **Found
+   (n)** lists what the gateway already heard of without asking anything
+   (devices announcing themselves on MQTT, bridges *Find on the LAN*
+   answered); network searches never start from here. A type chip counts
+   what its list shows now, after the search and the connection chosen.
+
+2. **Connection** — the questions come in order, each answer narrowing the
+   next: **port** (RS-485 · Ethernet · CAN · Web API · MQTT; a model with one
+   port says it as a fact, with *Change model*) → **where the bus is** (a
+   port on this host, a bridge's bus, an address) → **role on the bus:
+   Master** (the gateway polls) **or Listen-only** (another master polls; the
+   gateway is a passive monitor) → **protocol** → **line** → **address**.
+   An option that cannot be taken stays listed, its reason beside it.
+   - **Role.** On a bus nobody claims there is no default — say it. A bus
+     another device of this gateway already polls or listens to pre-fills
+     it, with its reason, and the other role is refused there (never two
+     masters, never a poll on a listened bus). A model that only listens
+     pre-fills Listen-only; Ethernet pre-selects Master, with its reason. A
+     Seplos V2 role is never chosen for you, nor kept when you change the
+     bus (§5.6).
+   - **Line.** On a bus that already has devices the line is the bus's,
+     inherited and locked ("set by the bus: deye reads it at 9600 8N1");
+     change it for every device with **Edit bus line…**. On an empty bus the
+     model's line is proposed, else 9600 8N1 (a common default — check the
+     device). A converter keeps its own line.
+   - **Address.** The model's default when free, else the next free one on
+     that bus ("1 is deye; 2 is free").
+   - **CAN.** The host's interfaces are listed; **listen-only on the
+     interface is a hard gate** — Next waits, with the exact `ip link`
+     command, until the interface is up and listen-only (§5.5).
+   - **Web API.** Host and device id; the call's path is the model's.
+   - **MQTT.** Broker, port, credentials/TLS, the subscribe topic, the topic
+     variables; presets for zigbee2mqtt and Theengs/BTHome.
+   - **Modbus TCP** at an address, or **through a Modbus TCP gateway** (a
+     converter in *Modbus TCP to RTU* mode: only the unit is typed); **Over
+     UDP** for the few devices whose manual says so. **Modbus RTU / ASCII**
+     on a serial port of this host (picked from a list, below), a bridge's
+     bus ([rtu-over-network.md](rtu-over-network.md)), or a converter's
+     address. Several slaves on one bus are several devices with
+     different addresses: they share one connection and take turns. Each bus
+     on a bridge's card says how busy its wire was in the last minute.
+
+   **The serial port picker.** A serial port of this host (Modbus RTU or
+   ASCII, the listen-only tap, Seplos V2) is picked from a list, not typed:
+   each port with its name, kind (USB, RS-485 HAT, board UART), model and
+   state (*Free*, *Polled*, *Listened to*, *In use*, *Console*, *Unknown*, or not mapped). A port is
+   stored by the path the container has it under: its `/dev/serial/by-id`
+   link when the container sees one, else its node, else a mapped alias
+   (`/dev/ttyMETER`). A USB port without a stable link says that its
+   `ttyUSB` name can change on a replug, and to map its by-id link or a udev
+   alias. A port that cannot be taken stays listed with why: polling a port
+   another device only listens to, or listening on one another device polls,
+   names that device; a port another program holds names the program; a
+   port not mapped into the container shows the compose `devices:` line and
+   the `docker run --device` flag to add. **Refresh** reads the list again;
+   a path the list cannot see is typed under **Advanced**.
+
+   **Test connection** asks the device once (for Modbus any protocol-level
+   answer — even an exception — proves a live device; for HTTP the
+   `json_path`s found; for MQTT a sample message). A tap has no Test: it
+   never transmits. **Next** asks the gateway about the connection alone
+   (`dry_run=true&only=connection`): a refusal is said at its field, and
+   nothing is ever stored.
+
+3. **Check** — a read preview on the server starts as you arrive: reads only
+   (Modbus FC3/FC4), through the bus's own connection when a device of this
+   gateway already polls it — with that bus's line and timeout, said so —
+   within the budget of Settings → *Modbus* → **Read preview budget**
+   (**Reads per preview**, default 4, 1–20; **Listen for (s)**, default 10,
+   1–60; `preview:` in `config.yaml`).
+   On a listened bus it joins the listener and says **heard n of m groups**.
+   It shows the values with their unit and a quality pill (*ok · no answer ·
+   illegal address · out of range · looks byte-swapped · no value
+   (sentinel)*), what the device says it is (SunSpec, FC43) against the model
+   chosen — on a mismatch **Use <the model it answers as>** goes back to
+   What is it? with the connection kept —, what it holds inside (a GX's
+   batteries and sensors: **ticked**, renamable, created with it in the same
+   request), the bus load it would add, and, for a model with setup writes,
+   why some values stay empty (a new device is write-locked). A refusal is
+   said with what can be done: a converter nobody can vouch for (tick **Open
+   the connection anyway**, audited, then **Run again**), a busy bus (try
+   again), a listened bus (choose Listen-only). **Run again**, **Change
+   model**. The check never blocks: when it failed or was skipped, Next says
+   **Next — without a check**.
+
+4. **Name & save** — one page:
+   - **Name** and **id** (from the model and the address until you type;
+     the id is **fixed after creation**: it names the topics and the
+     history). **Type** (the model's, changeable, **+ Add type…**).
+   - **Where it is**, **labels**, **description**; **Nameplate** (folded;
+     pre-filled from what the check read, each value saying from where; the
+     serial number is shown to signed-in users and published only when the
+     privacy settings allow it); **Recommended for <type>** (folded,
+     optional).
+   - **Outputs** as chips that open in place: **MQTT** (on; the prefix the
+     gateway's pattern gives, fixed after creation), **InfluxDB** (on; the
+     bucket, created if missing, and the heartbeat "gateway: N s"),
+     **Home Assistant** (on; only with MQTT), **OPC UA off** (a new device is
+     not served until you turn it on: ⋯ → **Outputs…**).
+   - **Writes**: *Created write-locked: nothing is written to the device
+     until an admin unlocks it from its ⋯ → Unlock writes…*; a model's setup
+     writes wait for that unlock too.
+   - **Start reading now**.
+   - **What will be created** — the review strip, from the gateway's dry
+     run of the whole create: identity, the wire and the bus it joins (who
+     is on it already), the model, what comes with it, outputs (prefix,
+     bucket and tag, HA node, OPC UA), writes — each with **Change**.
+     **Create** waits (aria-disabled) while the gateway refuses, the reason
+     beside it.
+
+   **Create** shows **Created · reading · write-locked**, with **Open it** ·
+   **Add another like this (unit N)** · **Done**. **Create and add another
+   like this** goes straight to the next one. *Create another* and ⋯
+   **Duplicate** copy: the model, its type, the connection (the same bus, its
+   line and role), the outputs, *Start reading now*, where it is, labels,
+   manufacturer and model, recommended attributes. Not copied: name and id
+   (the next ones are proposed), the address (the next free on the bus),
+   description, serial, firmware, installed on, a meter's grid connection,
+   components. A Seplos bus mode is copied only on the same bus. Nothing is
+   ever unlocked.
+
+**The measured path** (*It doesn't communicate*): what it is (its type,
+**+ Add type…**) · the meters that measure it · Name & save (§5.4).
+
+**Many of the same on one bus** (*Scan the bus, tick the units, add them in
+one go*) has two steps, **Many of the same** and **Units** (a model picked
+first is proposed for every unit; **Choose a model instead** goes back).
+- **Many of the same** is the Connection step — how the bus is reached
+  (RS-485 or a Modbus TCP gateway) and the role on it — with *Find the units
+  on this bus* in its address question:
+  - **Scan this bus** when the gateway is the master: it asks each address,
+    reads only (FC3/FC4, and FC43 device identification), one address at a
+    time through the bus's own connection, so the devices on it keep reading
+    in between. **Addresses** 1–32 by default, up to 1–247; a silent address
+    costs half a second. A scan is refused on a bus any device listens on.
+    When armed rules read or drive a device on the bus, it asks first
+    (*Slow down a bus that armed rules depend on?* — **Scan anyway**). Where
+    nobody can say who else holds the port (a converter), it asks before it
+    opens a connection (**Open it and scan**).
+  - **Listen for addresses** when the gateway only listens: it joins the
+    bus's listener for up to **Listen for (s)** of the read preview budget,
+    lists the addresses heard, what the master asks them and how often, and
+    transmits nothing. Seplos packs are never scanned with questions: listen
+    while the master pack polls, or type each pack's DIP-switch address.
+  - Each row: the unit, what it says it is, the suggested model, and
+    *already: <device>* when a device of this gateway has that address (not
+    asked). Tick the units (**Tick every free unit**), then **Add N
+    selected**.
+- **Units**: one row per unit — name, id (`<model>-u<unit>`, made unique,
+  fixed after creation) and model — and one block *For every unit*: **Start
+  reading now**, **Home Assistant discovery**, the **InfluxDB bucket**.
+  **Create N devices** first checks every row with the gateway (a dry run);
+  if one is refused, nothing is created and the row says why. Then the
+  devices are created one by one, each row with its status (*creating…*,
+  *created*, *failed*); a failed row keeps its reason, a created row is
+  never sent again. Each is created write-locked.
+
+**Changing it later:** on the device's page, ⋯ → **Edit connection…** (or
+**E**) opens the same Connection step as the Edit device dialog's
+*Connection* section, saved with the dialog's one **Save** (§4); *Setup*
+shows it read-only. A Modbus device can move between Modbus TCP, UDP, RTU,
+ASCII, over the network and listen-only, because its register map reads by
+address either way; its id, topics and history stay. HTTP and MQTT maps read
+by path, so going to or from them needs a new device. Save sends only what
+you changed. **Preview** (the page's header, operator and up) reads the
+device once through its own connection, as the Check step does; the Edit
+dialog's Connection section has **Preview** too, for the connection as
+edited, before Save — nothing is stored.
 
 After creation the device polls immediately: curated templates auto-select
 their recommended register subset (the Janitza map selects 58 of 4,126); an
 uncurated template with more than 300 registers selects none, to avoid
 flooding MQTT/InfluxDB with thousands of series in one click.
 
-**Existing installs:** the original meter appears automatically as device #1
-with its routing identity locked — topics, bucket, tags and HA entities stay
-byte-identical.
+**A fresh install starts with no device**: the first-run offer opens **Add
+Device**. An install from before 3.96 keeps its original meter as device #1
+(the *primary*), with its routing identity locked — topics, bucket, tags and
+HA entities stay byte-identical.
 
-**Deleting a device** keeps its register file on disk (data safety) and is
-refused while anything uses it — a rule that commands or reads it, a
-sequence step, another device's calculated field, a device it measures, a
-virtual meter it feeds, a template formula that names it. Its page lists
-them under **Used by**; change those first, or **Disable** the device
-instead (every reference stays intact).
+**A new device is write-locked.** Every device created — from Add Device,
+the API, an MQTT announcement adopted, a new installation — is stored with
+`write_locked: true`, whatever the request says. Nothing is written to it
+(raw writes, commands, a model's setup writes) until an administrator
+chooses ⋯ → **Unlock writes…** and confirms. **Lock writes** takes effect at
+once. The device's header says *writes locked* / *writes allowed*. The
+gateway-wide switch (Settings → Security → *Modbus writes*) must be on as
+well (§14).
+
+**Deleting a device** (⋯ → **Delete…**, administrator) is refused while
+anything uses it — a rule that commands or reads it, a sequence step,
+another device's calculated field, a device it measures, a virtual meter it
+feeds, a template formula that names it. Its page lists them under **Used
+by**; change those first, or **Disable** the device instead (every
+reference stays intact). The dialog says what goes with it (its components,
+its attributes, the bus it leaves). Its polling stops and it leaves the
+configuration; its measurement selection stays on disk.
+
+After a delete a toast offers **Undo** for 10 s (Undo takes the keyboard
+focus; Esc dismisses the toast). Undo restores the device and reopens the
+page it was deleted from. A restore brings the device back as it was except
+for what a restore always sets safe, and the toast says it before you click:
+a device that was unlocked comes back **write-locked**, command bindings
+that were on come back **off**, and its components come back write-locked.
+A REST push the device had starts again (the toast names the host).
+
+Later, the ⋯ menu's closing line **Deleted devices: restore…** (on any
+device's menu, on the page or the list) opens the **Deleted devices
+(restorable)** dialog: every deleted device whose settings were kept, when it
+was deleted, how many measurements it had and what it comes back as. A
+device that cannot come back as it was says why before you click (*Cannot be
+restored as it was: …*, the restore's own checks); fix what it names, or
+delete what took its place, then open the list again. **Restore** per row; **Forget**
+deletes the kept settings for good (it asks first).
 
 ### 5.3 How a unit is shown — the template decides
 
@@ -386,7 +659,7 @@ page; a standalone device is refreshed through the API
 
 A heat pump, a boiler or a charger often has no meter of its own; a meter on
 its supply measures it. A UPS or a converter has one meter on its input and
-one on its output. **Device → Meters** names those meters, each in a role:
+one on its output. The device's ⋯ → **Meters…** names those meters (its *Setup* lists them), each in a role:
 
 | Role | When | What the device gets |
 |---|---|---|
@@ -414,8 +687,8 @@ them: the Samsung MIM-B19N map derives `cop_estimated =
 heat_output_estimated / power_electric`.
 
 **A device with no connection at all** — a UPS without communication, a
-load you only meter — is added with **Add Device → No connection: measured
-by meters**: it reads nothing itself, and its meters are how it is measured.
+load you only meter — is added with **Add Device → It doesn't communicate —
+measured by other meters**: it reads nothing itself, and its meters are how it is measured.
 
 A device that measures itself (an inverter, a heat pump with a built-in
 meter) needs nothing here. Not available for an installation's units.
@@ -423,6 +696,124 @@ API: `GET /api/meter-roles` (the roles and settings), `PUT
 /api/devices/{id}/meters` with `{meters: [{role, device, power, energy?,
 sign?}], options?}`; `[]` removes every link. The earlier `PUT
 /api/devices/{id}/energy-meter` still sets a single consumption meter.
+
+### 5.5 CAN, listen-only
+
+The gateway reads a CAN bus by **listening**: frames arrive, the template's
+signal rows decode them, and the values go to MQTT, InfluxDB, Home
+Assistant, the UI and the rules like any other device's. It never transmits:
+the CAN driver has no transmit path, and a CAN device cannot be written. The
+bundled map is `pylontech_can_inverter`, the Pylontech-protocol link between
+a battery's BMS and its inverter (Seplos 0x370/0x371 frames included).
+
+**What you need.** A CAN interface the gateway process can see — `can0` from
+a USB adapter (gs_usb / candleLight) or a HAT (MCP2515), or `vcan0` for
+tests — set up **by the host**, listen-only, at the bus's bitrate:
+
+```sh
+ip link set can0 down && ip link set can0 type can bitrate 500000 listen-only on && ip link set can0 up
+```
+
+`listen-only on` makes the controller itself silent (no ACK, no error
+frames). The gateway never sets it; it reads the flag from the kernel each
+time it opens the interface and shows it (*listen-only* / *not listen-only*,
+with a warning). Check it on the host with `ip -details link show can0`.
+
+> **Docker.** In Docker, a container sees the host's CAN interfaces only with host
+> networking (Compose: `network_mode: host`; `docker run --network host`). No
+> capability is needed to read. Host networking means the container's ports are
+> the host's ports: published `ports:` are ignored, and the UI, the virtual
+> meters, :502 and OPC UA bind directly on the host — check for port clashes.
+> The container stays on the host network for everything else too. Listen-only
+> is set on the host (`ip link … listen-only on`).
+
+**Adding it.** Add Device → **CAN** port: the host's interfaces are listed
+with up/down, bitrate and listen-only. **Listen-only is a hard gate**: an
+interface that is down or can transmit cannot be picked, and the step shows
+the exact command above to run on the host, then **Refresh**. The fields:
+*Carrier* (SocketCAN; the serial-bridge carrier is listed, not yet
+selectable), *Interface* (default `can0`), *Bitrate* (shown only — set by the
+host; 10000–1000000, default 500000), *Stale after (s)* (1–3600; quiet this
+long = stale; 30 s when the key is absent). Only templates whose transport is CAN are offered. **Test**
+says whether the interface exists, is up and listen-only, and what it heard
+in 2 s.
+
+In `config.yaml`:
+
+```yaml
+devices:
+  - id: bms-can
+    template: pylontech_can_inverter
+    connection:
+      protocol: can
+      carrier: socketcan
+      channel: can0
+      bitrate: 500000        # what the bus runs at — set by the host
+      stale_after_s: 5
+```
+
+There is no polling: a value's time is when its frame arrived. The interface
+may be missing at start, go down or be unplugged: the driver says so once,
+retries every 3 s and resumes by itself. The device list, the Overview and
+the Status page show the counters: frames, unknown frames and ids, decode
+errors, error frames, listen-only. A row wholly past a shorter frame is
+absent, not an error. Template rows for CAN: [device-templates.md](device-templates.md).
+The full guide, with every counter and the bundled map's frames: [can.md](can.md).
+
+### 5.6 Seplos V2 BMS
+
+Seplos **V2** packs (the 10E / 16S generation) do not speak Modbus on their
+RS-485 port; they speak the Seplos V2 ASCII protocol. The gateway reads it
+with a driver of its own and lays every answer out as a fixed virtual
+register map, which the template `seplos_bms_v2` reads like any map. Seplos
+**V3** packs speak Modbus RTU: use `seplos_bms_v3_rtu_tap` ([rtu-serial.md](rtu-serial.md)).
+
+- **Read-only.** The driver only encodes the read commands (telemetry,
+  alarms, identity); nothing on a pack can be changed from the gateway.
+- **Connection.** Protocol **Seplos V2** on a serial port of this host
+  (`seplos_v2`), or through a transparent TCP ↔ RS-485 bridge
+  (`seplos_v2-tcp`, its host and port). A Modbus TCP gateway does not work:
+  it only forwards Modbus. Packs talk 9600 8N1 by default. The address
+  (`unit_id`) is the pack's address, its DIP switch.
+- **Role: a choice, never a default.** **Master** (`mode: poll`) only on a
+  bus with no other master: a single pack's RS-485 port, or a port where
+  nothing else asks. **Listen-only** (`mode: listen`) on a multi-pack bank's
+  inter-pack bus, where the master pack already polls the others: two masters
+  collide. A new device must say the role (the form pre-selects nothing; the
+  API refuses a create or a Test without it); a stored device without one
+  reads as poll.
+- **Listening never drives the bus.** A listened port is opened with RTS and
+  DTR low; one device per pack address (a second is refused, it never
+  displaces the first). Values arrive as the master asks them.
+- **A parallel bank.** A V2 master pack asks its slaves only for a short
+  summary (once a second, 19200 Bd on the inter-pack bus). Read each slave
+  with the template `seplos_bms_v2_tap` (Listen-only; saving it as Master is
+  refused): cell and temperature extremes, current, pack voltage, remaining
+  and full capacity, SOC, and calculated `battery_power`, `cell_delta`,
+  `energy_remaining`, `energy_to_full`. The bank as a whole (the master
+  included) comes from the battery's CAN link to the inverter (§5.5);
+  bank totals across devices are calculated fields that read other devices
+  (§7).
+
+```yaml
+devices:
+  - id: bms-pack-1
+    template: seplos_bms_v2
+    connection:
+      protocol: seplos_v2          # or seplos_v2-tcp with host + port
+      serial_port: /dev/ttyBMS     # mapped into the container
+      baudrate: 9600
+      unit_id: 1                   # the pack's address (DIP switch)
+      mode: listen                 # poll | listen — required for a new device
+```
+
+> The V2 telemetry, alarm and identity decode follows the published V2.0
+> protocol and is not yet verified on hardware; each row of the bundled
+> templates says whether it was checked. Verify against your pack before
+> relying on a value.
+
+The full guide — the protocol, the virtual register map, the modes, the
+wiring and the inter-pack tap: [seplos-v2.md](seplos-v2.md).
 
 ---
 
@@ -529,7 +920,8 @@ field: [config-reference.md](config-reference.md).
   field supplies it, a later one fills in only after the earlier has been
   silent past its *stale after*. **Test units** asks every unit over every
   source; units, sources and topics are edited on the group cards.
-- **A unit's page**: **Read via** replaces *Connection*; **Measurements** shows a
+- **A unit's page**: its one line says how it is read (*read via sunspec (Modbus TCP
+  5 s) + solarapi (HTTP 10 s)*); ⋯ → **Rename…** shows **Read via** and its name; **Measurements** shows a
   source picker when the unit is read more than one way (each source has
   its own map and ticks); **Commands** (§14b). A unit read two ways is `ok`
   only while every source is: one source down → `degraded` (*"read fine
@@ -621,7 +1013,7 @@ changes nothing. A malformed entry is refused with the field named. The same thr
 | Modbus latency climbs, then reads fail in bursts | the datalogger collapses above ~26 transactions a minute: slow the Modbus groups, set `endpoint_min_gap_s` (0.3 s), read the fast fields over HTTP |
 | `units_online` < `units_total` at night | expected: sleeping inverters are `down`; counters keep their last-known value, the total says `partial` / `offline` |
 | A total never appears | the group has one unit (no total by design), or an energy counter is missing on one enabled unit — the sum is withheld rather than published short |
-| A unit has no *Connection* tab | correct: its connection lives on its sources — use *Read via* and the group card's source editor |
+| A unit has no *Edit connection…* | correct: its connection lives on its sources — use ⋯ → *Rename…* (Read via) and the group card's source editor |
 
 ---
 
@@ -631,7 +1023,7 @@ Facts no measurement carries, for the systems that read the gateway (an EMS,
 an HMI, a SCADA):
 - **where the site is**: Settings → **Site**;
 - **a meter is the grid connection** with its import and export limits: the
-  device's **Attributes** tab;
+  device's ⋯ → **About (attributes)…** (shown in its *Setup*);
 - **an inverter's PV inputs**: panels, kWp, facing, tilt, one row per
   orientation;
 - **a battery's usable energy and limits**;
@@ -641,6 +1033,34 @@ You press **+** and pick from the gateway's catalog; nothing is required.
 Coordinates are shown coarse to anyone but an admin, and are left out of a
 sanitised backup. An EMS can set them all through the API with an admin
 service token. Full guide: [attributes.md](attributes.md).
+
+**Identity.** Every device and installation also has an *identity*
+category: **description** (up to 500 characters), **where it is** (where it
+is mounted), **labels** (up to 16 short slugs, for filters and Find),
+**manufacturer**, **model**, **serial number**, **firmware** and **installed
+on** (a date). Add Device's *Name & save* asks them (the nameplate pre-filled
+from what the Check read); later they are in the Edit device dialog's
+*Identity* section, saved with its one **Save**. They are published in the
+device's `meta` under `attributes.identity`. Two of them follow the privacy
+choices on Settings → **Site** → *Privacy*: *where it is* is not published
+while the coordinates choice is off, and the serial number goes out only with **Publish serial
+numbers** on (off by default; it is always shown to signed-in users, and in
+the audit log and the backup diff).
+
+**Device types.** A device has a **type**, from one catalog for every list,
+filter and menu. The built-in kinds — meter, inverter, battery, site, heat
+pump, drive, UPS, charger, sensor, converter, other — carry behaviour (site
+totals, meter-only devices, dashboards). Add your own under **Templates →
+Device types** → **Add type**: an id (fixed later), its name in English and
+Romanian, an icon, and what it **behaves like** (one of the built-in kinds:
+what it counts as for site totals and on MQTT). **+ Add type…** wherever a
+type is picked creates one in place. A type still used by a device, a
+restorable deleted device, a template or an installation group cannot be
+deleted (it names them). A template may list the types of your own it suits
+(template editor: *Also suits these types*). The type is set in Add Device
+and in the Edit device dialog (⋯ → **Type: <type>…**); the device list
+filters by type and by label. A device stored with `kind:` keeps it as its
+type, and the `kind` it publishes is unchanged.
 
 ---
 
@@ -835,9 +1255,23 @@ for mutual TLS — put the files under `config/` and reference their
 in-container paths; "skip verification" is for testing only).
 
 - **Topics**: `<device prefix>/<register topic or derived name>`. Device #1
-  keeps its historical prefix; new devices default to the
-  `mqtt.default_topic_pattern` (`mbg/devices/{device}`); installation
-  units use their group's prefix (§5b).
+  keeps its historical prefix; new devices take `mqtt.default_topic_pattern`
+  (empty = the identity scope's default, below); installation units use
+  their group's prefix (§5b). A device's prefix is fixed once it is created,
+  and a prefix that equals, sits inside or holds another device's,
+  component's, installation's or the gateway's own is refused.
+- **Gateway identity** (Settings → General → *Gateway identity*): the
+  **Gateway id** (lowercase letters, digits and `-`, 2–32) and **How new
+  devices are named**. *Per gateway* (`identity_scope: gateway`, a fresh
+  install, with a generated id `mbg-xxxxxx`): topic `mbg/<gateway>/devices/<device>`,
+  bucket `<gateway>-<device>`, Home Assistant ids `mbg_<gateway>_dev_<device>_…`
+  — so two gateways can share one broker and one InfluxDB. *As before*
+  (`legacy`, every install from before 3.97): `mbg/devices/<device>`,
+  bucket `<device>`. `{gateway}` may be used in both default patterns.
+  Either choice names **new devices only**: an existing device keeps its
+  topic, bucket and Home Assistant entities (each device stores its HA node,
+  `mqtt.ha_node`). A snapshot restore or a backup import keeps this
+  gateway's id and scope.
 - **Publish mode**: `changed` (default — only values that changed publish;
   the change cache confirms only after a successful publish, so a broker
   outage loses nothing) or `all` (every reading).
@@ -858,15 +1292,18 @@ in-container paths; "skip verification" is for testing only).
   at subscribe.
 - **Home Assistant discovery**: on by default. Each device becomes an HA
   device with its selected registers as sensors (`unique_id`
-  `mbg_dev_<device>_<addr>_<name>` for non-primary devices), with sensible
+  `mbg_dev_<device>_<addr>_<name>` for non-primary devices, or
+  `mbg_<gateway>_dev_…` under the per-gateway scope), with sensible
   device/state classes from the units, plus a per-device **connectivity
   `binary_sensor`** (availability). Registers the template marks writable
   become HA **`number`/`select` entities** (bounds from the template,
   double-gated by `mqtt.allow_write_entities` + `security.allow_writes` —
   see §14); the write-aware discovery is registered at boot, so control
   survives a restart. Virtual meters publish their own diagnostic entities
-  (serving state, request rate, errors, freshness…). Deleting a device
-  clears its retained discovery so HA drops the entities.
+  (serving state, request rate, errors, freshness…). Discovery is published
+  for a device only while its MQTT output is on: turning MQTT or discovery
+  off takes its entities back, once. Deleting a device clears its retained
+  discovery so HA drops the entities.
 - **Topic-prefix migrations** — `mqtt.compat_aliases` dual-publishes old
   topic names alongside the new ones so consumers can be flipped without a
   gap (see [config-reference.md](config-reference.md)); remove the aliases
@@ -888,6 +1325,20 @@ the Measurements tab. Point Grafana at the same bucket. Both ship in the
 default compose stack — InfluxDB self-configures on first boot and Grafana
 listens on `:3000` (see §2); this page is only about wiring the gateway to
 them (or to your own instances).
+
+**Heartbeat.** In `changed` mode a value is written only when it changes; a
+steady one would then leave a state timeline or a "last value" panel empty
+for hours. **Rewrite an unchanged value every (s)** (`influxdb.heartbeat_interval`)
+writes it again once it has not been written for that long: an ordinary
+point with the reading's own timestamp, written on the next reading — a
+device that stops reading stops writing. Whole seconds 0–86400; `0` turns it
+off; `write_interval` stays the minimum gap; `all` mode is unchanged. A
+`config.yaml` without the key gets `heartbeat_interval: 600` written into it
+on its first load (one INFO line; like any save from the UI, that rewrite
+drops the file's comments). A device, an installation or a group may set its
+own (its Outputs → InfluxDB, which shows *gateway: N s* beside an empty
+field); an installation's totals use the installation's value, else the
+gateway's.
 
 **Data guarantees.** Every point is stamped with the *read* time, not the
 flush time. If InfluxDB becomes unreachable, points go to a
@@ -925,8 +1376,8 @@ back.
 
 ## 10. REST push & the HTTP/JSON feed
 
-Device workspace → **Outputs** — two additional per-device sinks, both
-opt-in:
+The device's ⋯ → **Outputs…** (the Edit device dialog's *Outputs*: set,
+then **Save**) — two additional per-device sinks, both opt-in:
 
 - **HTTP/JSON output** — serve the device's live values as read-only JSON at
   `GET /api/meters/<id>` (Solar-API style, keyed by register name, with a
@@ -939,7 +1390,7 @@ opt-in:
   sends `{name: value}`. Auth goes in `headers` (stored masked, preserved on
   save). Push targets *may* be external (unlike HTTP device inputs), but
   redirects are refused so your credentials can't be replayed elsewhere.
-  Delivery is fire-and-forget; the card shows the last status and **Test**
+  Delivery is fire-and-forget; *Setup* shows the last status and **Test push**
   pushes once immediately.
 
 ---
@@ -1303,14 +1754,21 @@ default**.
    scale, and `offset` — inverted on write, `raw = (value − offset) ×
    scale`, including on the safety revert) always comes from the template
    row, never from the caller.
-4. The **primary device is write-locked by default**
-   (`security.primary_write_locked`; unlock it on purpose, from its
-   Commands tab, or Connection when it has no commands); HTTP/JSON devices and input/discrete registers can't be written.
+4. **Every new device is write-locked** (§5.2), and so is the primary by
+   default (`security.primary_write_locked`). An administrator unlocks one
+   on purpose: ⋯ → **Unlock writes…**, confirmed. HTTP/JSON devices, a
+   device that only listens (a tap, Seplos V2 in listen mode, CAN) and
+   input/discrete registers can't be written.
 5. Per-IP rate limit (`security.write_rate_limit_per_s`, default 10/s).
 
-`POST /api/devices/<id>/write` with `{"address": ..., "value": ...}` writes
-FC6/FC16 (holding) or FC5 (coil), verifies by read-back, and logs every
-attempt to the audit trail.
+`POST /api/devices/<id>/write` with `{"address": ..., "value": ...}` (the
+device page's **Write…**) writes FC6/FC16 (holding) or FC5 (coil), verifies
+by read-back, and logs every attempt to the audit trail. A raw write waits
+its turn on the device's bus like a command (§14b.3): a newer value for the
+same register replaces one still waiting, and a write that waited more than
+30 s expires unwritten. **A register any command of the device writes is
+never written raw** — not from the API, not from Home Assistant, not by an
+admin: use the command, which writes the whole recipe.
 
 **Dead-man leases.** Add `"lease_ms": 5000` and the write arms a lease: if
 it is not renewed (by another leased write) within 5 s, the gateway reverts
@@ -1344,7 +1802,8 @@ gates, one audit record and one verdict vocabulary.
    A template without `commands` offers nothing.
 3. **Tick it**: installation page → group card → *Edit group* → **Commands
    this group accepts** (applies to every unit). On a standalone device:
-   its page → **Commands** → **Enabled on this device**. Unticked = refused
+   ⋯ → **Commands & bindings…** (full screen) → **Enabled on this device**,
+   then **Save**. Unticked = refused
    everywhere. **Test** (a dry run) works before you tick it: it reads the
    device and shows what would be written, without writing.
 4. **Run it**: the group card's **Commands…** button — the command, its
@@ -1397,7 +1856,19 @@ at expiry, at a clean shutdown, and after a crash at the next boot):
 commands:
   - { name: power_limit }
   - { name: restore, faces: { api: true, mqtt: true, ha: false }, confirm: true, lease_s: 0 }
+  - { name: ess_setpoint, enabled: true, lease_s: 90, safe: { value: 0 } }   # a release value of the site's
+channels:                     # this device's pace, over the template's channel settings
+  ess_setpoint: { min_interval_s: 5 }
 ```
+
+`safe` is checked against the command's bounds when it is saved; a `lease_s`
+without any safe value never fires and is refused by
+`PUT /api/devices/{id}/commands/{name}`. A channel override is keyed by a
+channel's name or a command's name and may set `min_interval_s`, `min_on_s`,
+`min_off_s`, `max_starts_per_h` and `max_age_s` (how long a command may wait
+for its bus, 30 s by default); lower than the template is allowed — the
+listing shows the template's value beside it. An installation's units take
+both from their group.
 
 A binding with its own `writes` is an inline recipe, validated like a
 template's. Expressions are deliberately tiny — literals, `${param}`, one
@@ -1424,8 +1895,39 @@ and the rules see the inverter release the limit itself. Every run is
 audited (`action: command`: who, face, unit, parameters, frames, before →
 after, verdict), logged in the unit's Logs, and published on MQTT:
 `<unit prefix>/cmd/result` (not retained) and the retained
-`<unit prefix>/cmd/<name>/state` (what the device was last told, for a
-controller that restarts). The Fronius read-back is published as
+`<unit prefix>/cmd/<name>/state` (what the device was last told — applied
+results only — for a controller that restarts). A command that came over
+MQTT gets an answer on `cmd/result` whatever happens to it: refused (with
+`held: true` and `retry_after_s` when the channel's pace holds it),
+`superseded` by a newer value of the same setting before it ran, `expired`
+after waiting longer than `max_age_s` for its bus, `cancelled`, or run; put
+an `id` in the payload to find yours; `queued_ms` says how long it waited.
+
+**How commands wait for the bus.** Every write a device is told — REST,
+MQTT, Home Assistant, OPC UA, a group, a sequence, a rule, a refresh, a
+lease revert, a raw register write — goes through one dispatcher: a **lane**
+per wire (a Modbus bus, an MQTT source), so a slow device delays only the
+devices on its own bus, never the others. On a lane, a **slot** per device
+and channel: a newer value of the same setting replaces one still waiting
+(the replaced one is told `superseded`; an HA slider dragged across its range
+writes the first value and the last), while another command or other
+parameters queue in order. At most 8 wait per slot; the 9th is refused
+(*queue full*, REST 429). `coalesce: false` in a template keeps every one (a
+pulse). A command older than its channel's `max_age_s` (30 s) when its turn
+comes is `expired`, never written late. Over REST a command may also answer
+409 `superseded` / `expired` / `cancelled`, 503 on a standby or stopping
+gateway, 504 when it is still running at the end of the wait. The Status
+page warns of a lane whose oldest command is past half its `max_age_s`.
+
+**A channel's pace.** A template may space writes on a setting (a GX keeps
+its settings in flash): `min_interval_s`, and for a motor `min_on_s`,
+`min_off_s`, `max_starts_per_h`. A write that comes too soon is refused with
+`held: true` and `retry_after_s`. A device may set its own pace over the
+template's (`channels:` above; in the UI, per channel in **Commands &
+bindings…**: *Min interval*, with *Max age* and a motor's protections under
+Advanced, the template's value beside each). A renewal that changes nothing
+(the device already holds the value) is not held and writes nothing:
+`already_set: true`. The Fronius read-back is published as
 `<unit prefix>/controls/power_limit_pct`, `…/power_limit_enabled`,
 `…/power_limit_revert_s`, `…/power_limit_ramp_s`, `…/connected` (the
 `controls` group is hourly on purpose — every run sweeps it at once).
@@ -1459,9 +1961,10 @@ controller that restarts). The Fronius read-back is published as
   `override_s` to pause it) → `security.allow_writes` → not write-locked →
   parameters parse, are within bounds and carry no unknown names (a typo is
   refused, never ignored) → a Modbus source is running (a Solar-API-only
-  unit cannot write) → the per-face, per-unit rate limit. Authentication
-  (§14) is checked by the API route before any of this. One command runs at
-  a time; a second for the same unit waits, it is never merged. **Nothing
+  unit cannot write) → the per-face, per-unit rate limit → the channel's
+  pace. Authentication (§14) is checked by the API route before any of this.
+  One write runs at a time on a bus; a newer value of the same setting
+  replaces one still waiting (`superseded`), anything else waits its turn. **Nothing
   is retried after a frame went out** (writes in a sequence are not safely
   idempotent); an unreachable device answers `error` with nothing written.
 - **Device-side revert (`revert_s`)** is the inverter's own timer: a dead
@@ -1527,7 +2030,7 @@ topic variables `portal` (the VRM portal id) and `vebus` (the
 inverter/charger's instance). On 8883, set `tls_insecure: true` (*Accept its
 own certificate* in the form) or `tls_ca`.
 
-In an MQTT device's **Configure → Connection** tab, the topic, the topic variables and the
+In an MQTT device's connection editor (⋯ → **Edit connection…**), the topic, the topic variables and the
 password show as ••••, because the topic and its variables can carry the
 GX's portal id. The eye next to each reveals it. Topic variables are
 `name=value` pairs separated by commas; a value that itself contains a
@@ -1710,10 +2213,30 @@ input's), reads the target's read-back from the store, and asks for one
    `min_interval_s` after the last command → *hold (rate limit)*. **Armed**:
    the command runs through the same path as every face (`via: rule:<id>`,
    same gates, audit and `…/cmd/result`). **Shadow**: *shadow (would run …)*.
+   **Asked again at the bus.** Just before an armed rule's write goes out,
+   under the bus lock, the gateway asks once more whether it still stands:
+   **paused** since (an `override_s` writer or an operator), **yielded**
+   (another rule won the channel meanwhile — a force, a new want, a lower
+   limit), or **held** (the channel was written since — a refresh, a
+   dead-man revert, another rule — and its pace holds it). Such a write ends
+   `cancelled` (`dropped: paused|yielded|held`), is audited, counts as no
+   failure, and the decision log reads *cancelled — held: …*; the rule sends
+   it again when it may. Urgent wants are never yielded or held; a release
+   write is never asked.
 5. **Closed loop** — with nothing new to ask, the read-back is compared to
    the want: off by more than the tolerance for longer than `reassert_s` →
    *reassert*; read-back missing or older than 3 × its poll interval →
    *sweep* (polled now, at most once a minute) rather than a blind write.
+   A reassert meets the channel's pace like any other write (§14b.3): the
+   decision log reads *drift seen — <channel>: …*, the drift is kept, and the
+   correction goes out the first tick the channel allows. **Emergency
+   wants never wait for a pace** — a `fast` step, a stale `safe` or fixed
+   value, a rest after `max_on_s`; the rule's own `min_interval_s` still
+   applies. A `steps` rule with a `fast` step may not drive a paced channel:
+   saving or arming it is refused (422), and so is giving that channel a
+   pace while the rule is armed. A drift held more than 5 minutes shows as
+   `drift_held_s` / `drift_held_long` in the rule's state and on the Status
+   page.
 
 Published: the retained **`mbg/rules/<id>/state`** `{mode, enabled, state,
 signal, units: {<unit>: {state, want, clamp, paused_until, last_action,
@@ -1775,6 +2298,8 @@ publish on your broker can do these, so keep the broker authenticated.
 | Node-RED / HA commands now return 409 | an armed rule owns the target — pass `override_s`, use *Pause…*, or put the rule back in shadow |
 | Arm is refused | `security.allow_writes` off, no login / `API_KEY`, or the rule cannot run (the reason is on its card) |
 | *reassert* every couple of minutes | the device does not hold the want (its own revert timer, a second writer) — read `…/cmd/result` and the Decisions log |
+| Decisions read *cancelled — held / yielded / paused* | the write was asked again at the bus and no longer stood (§14c.3 step 4); the rule sends it again when it may — nothing to fix unless it repeats |
+| *drift seen — <channel>: …* and the correction waits | the channel's pace (`min_interval_s`, `min_off_s`, starts per hour) holds it; the Status page names a rule held over 5 minutes |
 | Alert *rule … cannot apply …* | three failures in a row: writes off, unit write-locked, guard failing (model 123 / scale factor), no Modbus source — run the command by hand from the unit's Commands tab to see the reason |
 
 ---
@@ -2129,6 +2654,13 @@ provided.
 | Passkey enrollment fails | you're on an IP URL or plain HTTP — use `localhost` or a hostname over HTTPS |
 | Config broke after an edit | boot restores last-known-good automatically; the broken file is kept as `config.yaml.bad`; or roll back a snapshot from Settings → Backup & Restore |
 | Writes return 403 | `security.allow_writes` off, no credential (login/API key), register not declared writable, or value outside `write_min`/`write_max` |
+| A new device writes nothing / its setup values stay empty | it is write-locked, as every new device is — ⋯ → **Unlock writes…** (§5.2) |
+| *This device was changed elsewhere since you opened it* (412) | another tab or an API client saved it meanwhile — **Reload the device** keeps what you typed and marks what differs; the Edit dialog re-applies your edits by itself and waits for **Save** |
+| A serial port shows *not mapped* | the port is not in the gateway's container: add the `devices:` line (or `--device`) it shows, then recreate the container; for a USB adapter map its `/dev/serial/by-id/…` link |
+| Add Device refuses Master on a bus | another device of this gateway only listens there (or the reverse): never two masters, never a poll on a listened bus — choose Listen-only, or disable the listener first |
+| CAN interface cannot be picked | it is down or not listen-only — run the `ip link … listen-only on` command the step shows on the host, then **Refresh** (§5.5) |
+| Check says *busy* or *409* | another preview or scan runs on that bus, or the bus is starting — **Run again** after a moment; at most 4 previews run at once (429) |
+| A deleted device is missing from *Deleted devices* | its settings could not be kept at delete time (the toast said so), or it was **Forget**-ed |
 
 Still stuck? Open an issue — include `docker compose logs` and your
 (redacted) config.

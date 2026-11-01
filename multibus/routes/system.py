@@ -1,5 +1,5 @@
 # Multi-Bus Gateway — multi-protocol Modbus/HTTP/MQTT acquisition gateway.
-# Copyright (C) 2024-2026 Stefan Maldaianu <sm26449@diysolar.ro>
+# Copyright (C) 2024-2026 Stefan Maldaianu <stefan@multibus.dev>
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU Affero General Public License as published by
@@ -25,6 +25,7 @@ from typing import Dict
 
 from fastapi import APIRouter, Body, HTTPException, Request
 from ..payload import flag
+from ..bridge_diag import DEFAULT_THRESHOLDS as DEFAULT_BRIDGE_THRESHOLDS
 
 from ._shared import secrets_visible as _secrets_visible
 
@@ -131,7 +132,11 @@ def build(ctx) -> APIRouter:
             "latency_ms": a.get("latency_ms", 1000),
             "buffer_points": a.get("buffer_points", 1000),
             "signals": {"device": True, "sink": True, "latency": True, "buffer": True,
-                        "threshold": False, "alarm": True, **(a.get("signals") or {})},
+                        "threshold": False, "alarm": True, "bridge": False,
+                        **(a.get("signals") or {})},
+            # bus diagnostics thresholds (bridge_diag.py); each bridge and bus
+            # may carry its own `alerts:` over these
+            "bridge": {**DEFAULT_BRIDGE_THRESHOLDS, **(a.get("bridge") or {})},
             "threshold_deadband_pct": a.get("threshold_deadband_pct", 2.0),
             "threshold_alert_on_start": bool(a.get("threshold_alert_on_start", True)),
         }
@@ -177,6 +182,16 @@ def build(ctx) -> APIRouter:
                 a["threshold_deadband_pct"] = max(0.0, float(payload["threshold_deadband_pct"]))
             except (TypeError, ValueError):
                 errors.append("threshold_deadband_pct must be a number")
+        if "bridge" in payload:
+            from ..bridge_diag import validate_thresholds
+            bt = payload.get("bridge")
+            errs = validate_thresholds(bt, "bridge")
+            if isinstance(bt, dict) and "enabled" in bt:
+                errs.append("bridge.enabled: switch the bridge signal instead")
+            if errs:
+                errors.extend(errs)
+            else:
+                a["bridge"] = {k: float(v) for k, v in (bt or {}).items()}
         if "threshold_alert_on_start" in payload:
             a["threshold_alert_on_start"] = flag(payload, "threshold_alert_on_start")
         if errors:

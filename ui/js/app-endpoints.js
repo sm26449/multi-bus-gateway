@@ -1,5 +1,5 @@
 /* Multi-Bus Gateway — multi-protocol Modbus/HTTP/MQTT acquisition gateway.
- * Copyright (C) 2024-2026 Stefan Maldaianu <sm26449@diysolar.ro>
+ * Copyright (C) 2024-2026 Stefan Maldaianu <stefan@multibus.dev>
  * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 // endpoints domain — augments JanitzaMonitor.prototype
@@ -12,6 +12,10 @@ Object.assign(JanitzaMonitor.prototype, {
     // ── endpoint workspace (full page, in place, like a device detail) ──────────
 
     async openEndpointDetail(id) {
+        // a device page's unsaved edits are asked about first — the Edit
+        // modal's (its "Open installation" link) or an editor's (second
+        // review R2-1); Keep editing: nothing opens
+        if (this._ddvBeforeOpen && !await this._ddvBeforeOpen()) return null;
         const wasHere = this.currentPage === 'devices';
         if (!wasHere) this.navigateTo('devices', { _opening: true });
         let p = null;
@@ -190,7 +194,7 @@ Object.assign(JanitzaMonitor.prototype, {
                 return `<div style="display:flex;gap:8px;align-items:baseline;font-size:12.5px;padding:2px 0;flex-wrap:wrap;" data-read-via="${this._esc(r.id)}">
                     <span class="status-dot" style="--dot:${hc[r.status] || hc.idle}" aria-hidden="true"></span>
                     <b>${this._esc(r.id)}</b>
-                    <span style="color:var(--text-secondary);">${this._esc(r.status || 'idle')}</span>
+                    <span style="color:var(--text-secondary);">${this._esc(this.t('status.word.' + (r.status || 'idle'), r.status || 'idle'))}</span>
                     <span>${bits.join(' · ')}</span>
                 </div>`;
             }).join('');
@@ -497,7 +501,7 @@ Object.assign(JanitzaMonitor.prototype, {
             const groups = Object.entries(s.poll_groups || {})
                 .map(([k, v]) => `${this._esc(k)} ${v}s`).join(' · ') || '—';
             const fails = s.fail_pct_5m
-                ? ` <span style="color:var(--danger,#ef4444);">${s.fail_pct_5m} % ${t('endpoints.failed5m', 'failed (5 min)')}</span>` : '';
+                ? ` <span style="color:var(--danger-text,#c0392b);">${s.fail_pct_5m} % ${t('endpoints.failed5m', 'failed (5 min)')}</span>` : '';
             return `
             <tr data-src-row="${this._esc(s.id)}" style="border-top:1px solid var(--border,#2a3038);">
               <td style="padding:8px 10px 8px 0;white-space:nowrap;">
@@ -976,10 +980,11 @@ Object.assign(JanitzaMonitor.prototype, {
         if (!dryRun) this._refreshEndpointDetail(ctx.endpointId);
     },
 
-    // POST a command; a gate (403/404) comes back as `_gate` text for the feedback line
+    // POST a command; a gate (403/404) comes back as `_gate` text for the feedback line.
+    // A unit's command is a device write (its tag said, never checked: ADR-0030)
     async _postCommand(url, params, device) {
         try {
-            const r = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(params) });
+            const r = await window.DeviceStore.devWrite(device || '', 'POST', url, params);
             const d = await r.json().catch(() => ({}));
             if (r.status === 403 || r.status === 404 || r.status === 401)
                 return { device, _gate: (d.detail?.errors || [d.detail || d.reason || r.statusText]).join(' · ') };
@@ -1005,8 +1010,14 @@ Object.assign(JanitzaMonitor.prototype, {
         const proto0 = ((g?.sources || [])[0] || {}).protocol || (p.connection || {}).protocol || 'tcp';
         const tplOpts = this._srcTplOptions(proto0, g ? this._groupOwnTemplate(g) : '', role0);
         const units = (g?.units || []).map(u => u.unit_id).join(', ');
-        const roles = ['inverter', 'site', 'meter', 'battery', 'sensor'];
+        // the roles a group may hold: the device-type catalog (ADR-0027), the
+        // usual five first; a stored role the catalog does not hold is kept
+        await this._loadDeviceTypes?.();
+        const usual = ['inverter', 'site', 'meter', 'battery', 'sensor'];
+        const moreRoles = (this._KIND_ORDER || []).filter(k => k !== 'other' && !usual.includes(k));
+        const roles = [...usual, ...moreRoles, ...(role0 && ![...usual, ...moreRoles].includes(role0) ? [role0] : [])];
         const ROLE_LABEL = { inverter: 'Inverters', site: 'Site totals', meter: 'Grid meter', battery: 'Battery', sensor: 'Sensors' };
+        const roleLabel = r => usual.includes(r) ? t('plant.role.' + r, ROLE_LABEL[r]) : this._kindLabel(r);
         // the ways a group may be read, from the API (one list with the
         // validation). A tap or a serial line has no field here: it goes on
         // the installation, or on the group's "default" source afterwards
@@ -1024,7 +1035,7 @@ Object.assign(JanitzaMonitor.prototype, {
                     <input id="grpId" class="input" value="${this._esc(g?.id || '')}" ${g ? 'disabled' : ''} placeholder="inverters"></div>
                 <div class="form-group"><label class="form-label" for="grpRole">${t('endpoints.groupRole', 'Holds')}</label>
                     <select id="grpRole" class="input" data-action="_grpKindChanged" data-on="change">${roles.map(r =>
-                        `<option value="${r}" ${role0 === r ? 'selected' : ''}>${t('plant.role.' + r, ROLE_LABEL[r])}</option>`).join('')}</select></div>
+                        `<option value="${this._esc(r)}" ${role0 === r ? 'selected' : ''}>${this._esc(roleLabel(r))}</option>`).join('')}</select></div>
                 <div class="form-group flex-2"><label class="form-label" for="grpTpl">${t('devices.wizard.template', 'Template')}</label>
                     <select id="grpTpl" class="input">${tplOpts}</select>
                     <div class="field-hint">${t('endpoints.groupTplHint', 'The map for this kind of unit (offered first; other kinds are under "Other kinds") — used by any source of the group that declares none of its own.')}</div></div>
@@ -1054,7 +1065,15 @@ Object.assign(JanitzaMonitor.prototype, {
                 ${g.commands.map(c => `<label class="form-label" style="display:flex;align-items:center;gap:8px;font-weight:normal;">
                     <input type="checkbox" data-grp-cmd="${this._esc(c.name)}" ${c.enabled ? 'checked' : ''}>
                     ${this._esc(c.label || c.name)} <span class="dev-chip">${this._esc(c.name)}</span></label>`).join('')}
+            </fieldset>
+            <fieldset class="form-group cb-grp" style="margin-top:12px;border:0;padding:0;">
+                <legend class="form-label">${t('cmdb.grpTitle', 'Auto-revert and pace, for every unit of this group')}</legend>
+                <div class="field-hint" style="margin:0 0 6px;">${t('cmdb.grpHint', 'Empty fields take the template\'s values. An unticked command keeps what is set here.')}</div>
+                ${this._cbGroupHtml(g)}
             </fieldset>` : ''}`;
+        // the binding and channel fields judge themselves against these
+        this._grpCmds = g ? (g.commands || []) : [];
+        this._cbSync(document.getElementById('endpointModalBody'));
         document.getElementById('endpointFeedback').textContent = '';
         const save = document.querySelector('#endpointModal [data-endpoint-save]');
         if (save) { save.innerHTML = `<i aria-hidden="true" class="bi bi-check-lg"></i> ${this.t('common.save', 'Save')}`; this._setAction(save, 'saveGroup', [endpointId]); }
@@ -1138,13 +1157,25 @@ Object.assign(JanitzaMonitor.prototype, {
             const raw = this._rawGroup(p, id);
             if (raw.sources) out.sources = raw.sources;
             else if (raw.connection) out.connection = raw.connection;
-            // the ticked commands, each keeping its stored binding (faces, lease)
+            // the ticked commands, each keeping its stored binding (faces) with
+            // the auto-revert and safe value typed over it; an unticked one
+            // that says something stays, switched off. The channel overrides
+            // go with them (ADR-0019)
             const ticked = [...document.querySelectorAll('#endpointModal [data-grp-cmd]')];
             if (ticked.length) {
-                out.commands = ticked.filter(x => x.checked).map(x => {
-                    const c = (prev.commands || []).find(y => y.name === x.dataset.grpCmd) || {};
-                    return c.binding ? { ...c.binding, enabled: true } : { name: x.dataset.grpCmd };
-                });
+                const got = this._cbGroupRead(prev, new Set(ticked.filter(x => x.checked).map(x => x.dataset.grpCmd)));
+                if (Object.keys(got.errors).length) {
+                    // the forms say their own errors (as they do while typed);
+                    // one under a closed Advanced is opened, the first focused
+                    this._cbSync(document.getElementById('endpointModalBody'));
+                    const first = Object.keys(got.errors).map(x => document.getElementById(x)).find(Boolean);
+                    Object.keys(got.errors).forEach(x => document.getElementById(x)?.closest('details')?.setAttribute('open', ''));
+                    first?.focus();
+                    fb.textContent = this.t('cmdb.refused', 'Refused — see the fields.');
+                    return;
+                }
+                out.commands = got.commands;
+                out.channels = got.channels;
             } else if (raw.commands) out.commands = raw.commands;
         } else {
             const proto = v('grpProto') || 'tcp';
@@ -1172,7 +1203,8 @@ Object.assign(JanitzaMonitor.prototype, {
                 const m = new RegExp(`^groups\\[${at}\\]\\.(\\S+?):\\s*(.*)$`).exec(e);
                 if (m) fields[m[1]] = m[2]; else rest.push(e);
             }
-            const left = this._placeFieldErrors(document.getElementById('endpointModalBody'), fields, this._grpFieldId);
+            const left = this._placeFieldErrors(document.getElementById('endpointModalBody'), fields,
+                path => this._cbGroupFieldId(path, out, prev || {}) || this._grpFieldId(path));
             fb.textContent = rest.concat(left).join(' · ');
         });
         if (ok) this.closeModal('endpointModal');
@@ -1267,21 +1299,20 @@ Object.assign(JanitzaMonitor.prototype, {
             const age = u.staleness_age_s != null ? `${u.staleness_age_s} s` : '—';
             const live = u.live || {};
             const via = Object.entries(u.sources || {}).map(([sid, st]) =>
-                `<span class="dev-chip" title="${this._esc(sid)}: ${this._esc(st)}"><span class="status-dot" style="--dot:${hc[st] || hc.idle};width:7px;height:7px;margin-right:4px;" aria-hidden="true"></span>${this._esc(sid)}&nbsp;<span style="color:var(--text-secondary);">${this._esc(st)}</span></span>`).join(' ');
+                `<span class="dev-chip" title="${this._esc(sid)}: ${this._esc(this.t('status.word.' + st, st))}"><span class="status-dot" style="--dot:${hc[st] || hc.idle};width:7px;height:7px;margin-right:4px;" aria-hidden="true"></span>${this._esc(sid)}&nbsp;<span style="color:var(--text-secondary);">${this._esc(this.t('status.word.' + st, st))}</span></span>`).join(' ');
             return `<tr data-unit="${this._esc(u.device_id)}">
                 <td style="white-space:nowrap;">${u.unit_id} <span class="dev-chip col-wide">${this._esc(u.device_id)}</span></td>
                 <td data-unit-name class="col-wide">${this._esc(u.name || '')}</td>
                 ${cols.map((c, i) => `<td ${i > 1 ? 'class="col-wide"' : ''} style="text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap;">${
                     live[c] == null ? '<span style="color:var(--text-tertiary,#8a94a0);">—</span>'
                                     : this._endpointValue(live[c], (meta[c] || {}).unit || '')}</td>`).join('')}
-                <td style="white-space:nowrap;" title="${this._esc(u.health || 'idle')}"><span class="status-dot" style="--dot:${hc[u.health] || hc.idle}" aria-hidden="true"></span> <span class="col-wide-text">${this._esc(u.health || 'idle')}</span>${this._unitAlarmPill(u.alarms)}</td>
+                <td style="white-space:nowrap;" title="${this._esc(this.t('status.word.' + (u.health || 'idle'), u.health || 'idle'))}"><span class="status-dot" style="--dot:${hc[u.health] || hc.idle}" aria-hidden="true"></span> <span class="col-wide-text">${this._esc(this.t('status.word.' + (u.health || 'idle'), u.health || 'idle'))}</span>${this._unitAlarmPill(u.alarms)}</td>
                 <td class="col-wide" title="${this._esc(u.last_seen || '')}">${age}</td>
                 <td class="col-wide">${via || '—'}</td>
                 <td style="text-align:right;white-space:nowrap;">
-                    <button data-admin class="btn btn-ghost btn-sm col-wide" ${this._act('endpointRenameUnit', [u.device_id])}
-                            title="${t('endpoints.renameUnit', 'Rename this unit')}" aria-label="${t('endpoints.renameUnit', 'Rename this unit')}"><i aria-hidden="true" class="bi bi-pencil"></i></button>
                     <button class="btn btn-ghost btn-sm" ${this._act('openDeviceDetail', [u.device_id])}
                             title="${t('endpoints.openUnit', 'Open this unit')}" aria-label="${t('endpoints.openUnit', 'Open this unit')}"><i aria-hidden="true" class="bi bi-box-arrow-up-right"></i></button>
+                    ${this._devRowMenuHtml({ id: u.device_id, name: u.name || u.device_id }, 'installation')}
                 </td>
             </tr>`;
         }).join('') || `<tr><td colspan="${5 + cols.length}"><span class="field-hint">${this.t('endpoints.noUnits', 'No units materialized.')}</span></td></tr>`;
@@ -1379,7 +1410,7 @@ Object.assign(JanitzaMonitor.prototype, {
                     ${fact(t('devices.sink.restTitle', 'REST push'), (p.rest_push || {}).enabled ? t('common.on', 'on') : t('common.off', 'off'))}
                 </div>
                 <p class="field-hint" style="margin-top:14px;"><i aria-hidden="true" class="bi bi-lock"></i>
-                    ${t('endpoints.routingFixed', 'Topics and buckets are fixed after creation — changing them would re-route every unit and orphan their history and Home Assistant entities. Home Assistant, HTTP and REST outputs are switched on any unit’s Outputs tab and apply to the whole installation.')}</p>
+                    ${this._esc(this._roleHint('endpoints.routingFixed', 'Topics and buckets are fixed after creation — changing them would re-route every unit and orphan their history and Home Assistant entities. Home Assistant, HTTP and REST outputs are switched from any unit’s ⋯ → Outputs… and apply to the whole installation.', 'endpoints.routingFixedOther', 'Topics and buckets are fixed after creation — changing them would re-route every unit and orphan their history and Home Assistant entities. Home Assistant, HTTP and REST outputs apply to the whole installation.'))}</p>
             </div>
         </div>
         <div id="plTotals">${this._endpointTotalsHtml(p)}</div>
@@ -1707,52 +1738,6 @@ Object.assign(JanitzaMonitor.prototype, {
             })),
             ...extra,
         };
-    },
-
-    endpointRenameUnit(deviceId) {
-        const row = document.querySelector(`[data-group-units] tr[data-unit="${CSS.escape(deviceId)}"]`);
-        if (!row || row.hasAttribute('data-renaming')) return;
-        const cell = row.querySelector('[data-unit-name]');
-        const cur = (this._endpointDetail?.units || []).find(u => u.device_id === deviceId);
-        row.setAttribute('data-renaming', '1');
-        cell.innerHTML = `<div style="display:flex;gap:6px;">
-            <input class="input" id="plUnitName" style="min-width:140px;" value="${this._esc(cur?.name || '')}">
-            <button class="btn btn-primary btn-sm" ${this._act('saveEndpointUnitName', [deviceId])} ${this._ib(this.t('common.save', 'Save'), cur?.name || deviceId)}><i aria-hidden="true" class="bi bi-check-lg"></i></button>
-            <button class="btn btn-ghost btn-sm" ${this._act('cancelEndpointUnitName', [deviceId])} ${this._ib(this.t('common.cancel', 'Cancel'), cur?.name || deviceId)}><i aria-hidden="true" class="bi bi-x-lg"></i></button>
-        </div>`;
-        cell.querySelector('input')?.focus();
-    },
-
-    cancelEndpointUnitName(deviceId) {
-        const row = document.querySelector(`[data-group-units] tr[data-unit="${CSS.escape(deviceId)}"]`);
-        if (row) row.removeAttribute('data-renaming');
-        this._refreshEndpointDetail(this._endpointDetail?.id);
-    },
-
-    async saveEndpointUnitName(deviceId) {
-        const p = this._endpointDetail;
-        const input = document.getElementById('plUnitName');
-        if (!p || !input) return;
-        const name = input.value.trim();
-        const body = this._endpointPutBody(p);
-        const u = body.units.find(x => x.id === deviceId);
-        if (!u) return;
-        if (name) u.name = name; else delete u.name;
-        const rsp = await fetch(`/api/endpoints/${encodeURIComponent(p.id)}`, {
-            method: 'PUT', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(body),
-        });
-        const d = await rsp.json().catch(() => ({}));
-        const row = document.querySelector(`[data-group-units] tr[data-unit="${CSS.escape(deviceId)}"]`);
-        if (row) row.removeAttribute('data-renaming');
-        if (!rsp.ok) {
-            const errs = d.detail?.errors || [d.detail || rsp.statusText];
-            this.showToast('error', this.t('endpoints.saveFail', 'Save failed'),
-                Array.isArray(errs) ? errs.join(' · ') : String(errs));
-        } else {
-            this.showToast('success', this.t('endpoints.saved', 'Installation saved'), deviceId);
-        }
-        this._refreshEndpointDetail(p.id);
     },
 
     async testEndpointUi(id, el) {

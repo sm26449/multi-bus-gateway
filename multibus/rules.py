@@ -1,5 +1,5 @@
 # Multi-Bus Gateway — multi-protocol Modbus/HTTP/MQTT acquisition gateway.
-# Copyright (C) 2024-2026 Stefan Maldaianu <sm26449@diysolar.ro>  — AGPL-3.0-or-later
+# Copyright (C) 2024-2026 Stefan Maldaianu <stefan@multibus.dev>  — AGPL-3.0-or-later
 """Rules — the declarative controller (docs/rules-design.md).
 
 A rule decides WHEN a command runs and with WHAT parameters. This module is
@@ -243,6 +243,11 @@ TUNING_RULE_KEYS = ('resume_on_boot',)
 BOOT_WAIT_MAX_S = 600.0
 URGENT_RETRIES_MAX = 5
 URGENT_RETRY_GAP_S = 5.0          # a resend of an urgent want, at the earliest
+# a channel's pace that keeps a rule's drift from being corrected longer than
+# this is said: on the rule's state, the listing and the status page (ADR-0022)
+DRIFT_HELD_WARN_S = 300.0
+# a channel's pace: what makes the referee hold a write by time (ADR-0019)
+PACE_KEYS = ('min_interval_s', 'min_on_s', 'min_off_s', 'max_starts_per_h')
 
 
 def _is_steps(raw: Dict) -> bool:
@@ -735,6 +740,21 @@ class RuleState:
         self._sent_want: Optional[Dict[str, Any]] = None
         self._urgent_resends: int = 0                    # resends of that want so far
         self._urgent_retry: bool = False                 # the pending want is a resend
+        # every send is numbered, and keeps what it changed: a write the
+        # gateway drops at the head of the bus (paused, yielded, held) is taken
+        # back — but only while no later send owns the state (ADR-0021 D4)
+        self.send_no: int = 0
+        self._last_undo: Optional[Dict[str, Any]] = None
+        # the channel's pace holds a reassert (ADR-0022 D1) — set by the
+        # runtime each tick (a pace on the channel);
+        # a bare state keeps 3.94's behaviour. Never mirrored
+        self.pace_reassert: bool = False
+        # how long the current drift has been held by the channel's pace, and
+        # how many drifts were held longer than DRIFT_HELD_WARN_S (starvation)
+        self.drift_held_s: Optional[float] = None
+        self.drift_held_long: int = 0
+        self._drift_held_since: Optional[float] = None
+        self._drift_tick: bool = False             # this tick is in the drift branch
 
     # ── to a partner gateway (high availability) ──
     # Instants on the monotonic clock (this process's own) travel as ages,
@@ -786,6 +806,11 @@ class RuleState:
                 'failures': self.failures, 'ignored': self.ignored, 'guarded': self.guarded,
                 'stale_since': self.stale_since, 'forced': dict(self.forced) if self.forced else None,
                 'yielding_to': self.yielding_to,
+                # only once a pace held a drift (ADR-0022): a rule on a channel
+                # without one keeps 3.94's state, key for key
+                **({'drift_held_s': None if self.drift_held_s is None else round(self.drift_held_s, 1),
+                    'drift_held_long': self.drift_held_long}
+                   if (self.drift_held_s is not None or self.drift_held_long) else {}),
                 **self.counters()}
 
     # ── on / off and the counters ──
@@ -1323,8 +1348,56 @@ class RuleState:
                                 f'(max step {ms:g}) — waiting for the next sample')
         return self._suspect_reason
 
-    def _act(self, now: float, forced: Optional[str], reason: str, signal, actual, *, changed: bool = False,
-             actual_age_s: Optional[float] = None, actual_stale_s: Optional[float] = None) -> Decision:
+    def emergency_want(self) -> bool:
+        """The want is the fail-closed path (ADR-0022 D3), derived from the
+        rule and its state: resting after max_on_s; stale with a safe or fixed
+        value; a `steps` rule at a `fast` step. A forced want is not one."""
+        r = self.rule
+        if self.state == 'forced':
+            return False
+        if self._rest_until is not None:
+            return True
+        if self.state == STALE:
+            return r.on_stale != 'hold'
+        if r.kind == 'steps':
+            return any(s.fast and s.label == self.state for s in r.steps)
+        return False
+
+    def _pace_hold(self, now: float) -> Optional[str]:
+        """Why the channel's pace holds this drift's reassert now, or None
+        (ADR-0022 D1). Asked only with `pace_reassert`; an emergency want is
+        never held. The time it has been held is kept (starvation said)."""
+        why = None
+        if self.pace_reassert and self.gate is not None and not self.emergency_want():
+            g = self.gate(self.want, False)
+            why = g[1] if g and g[0] == 'hold' else None
+        if why is None:
+            self._drift_unheld()
+            return None
+        if self._drift_held_since is None:
+            self._drift_held_since = now
+        was = self.drift_held_s or 0.0
+        self.drift_held_s = now - self._drift_held_since
+        if was < DRIFT_HELD_WARN_S <= self.drift_held_s:
+            self.drift_held_long += 1
+        return why
+
+    def _drift_unheld(self) -> None:
+        self._drift_held_since, self.drift_held_s = None, None
+
+    def _act(self, now: float, forced: Optional[str], reason: str, signal, actual, **kw) -> Decision:
+        """One tick's act. A tick that leaves the drift branch (a pause, a
+        yield, a pending want, a forced or idle word) ends a held drift: its
+        held time is not carried into the status as a stale warning (RP-9)."""
+        self._drift_tick = False
+        try:
+            return self._act_body(now, forced, reason, signal, actual, **kw)
+        finally:
+            if not self._drift_tick:
+                self._drift_unheld()
+
+    def _act_body(self, now: float, forced: Optional[str], reason: str, signal, actual, *, changed: bool = False,
+                  actual_age_s: Optional[float] = None, actual_stale_s: Optional[float] = None) -> Decision:
         r = self.rule
         ts = self._wall or now                     # Decision stamps are wall time
         if self.paused_until is not None and ts < self.paused_until:
@@ -1361,7 +1434,13 @@ class RuleState:
             # the on/off timers — never on the emergency path (a stale safe,
             # a fast step, a rest): failing closed does not wait
             if not self._urgent:
-                why = self._onoff_hold(now) or (g[1] if g and g[0] == 'hold' else None)
+                held = g[1] if g and g[0] == 'hold' else None
+                if held and self.pace_reassert and self.emergency_want():
+                    # an emergency want that found the device's last command in
+                    # flight is pending without `_urgent`: the channel's pace
+                    # still never holds it (ADR-0022, review MED 3)
+                    held = None
+                why = self._onoff_hold(now) or held
                 if why:
                     return Decision(ts, 'hold', why, self.state, signal, self.want, actual, changed)
             # an urgent resend (urgent_retries) waits a short gap after the
@@ -1384,17 +1463,28 @@ class RuleState:
             return Decision(ts, 'idle', 'holding', self.state, signal, self.want, actual)
         if not fresh or _num(actual) is None:
             self.drift_since = None
+            self._drift_unheld()
             return Decision(ts, 'sweep', 'read-back missing or old — asking for a sweep', self.state, signal, self.want, actual)
         if abs(_num(actual) - float(self.want[p])) > r.tolerance:
+            self._drift_tick = True
             if self.drift_since is None:
                 self.drift_since = now
             if r.timing.reassert_s > 0 and now - self.drift_since >= r.timing.reassert_s:
                 if self.last_cmd_ts is not None and r.timing.min_interval_s > 0 and now - self.last_cmd_ts < r.timing.min_interval_s:
                     return Decision(ts, 'hold', 'drift seen, rate limit', self.state, signal, self.want, actual)
-                self.drift_since = None
-                return self._send(now, 'reassert', f'read-back {_num(actual):g} ≠ want {self.want[p]:g} for {int(r.timing.reassert_s)} s', signal, actual, False)
+                # the channel's own protection (ADR-0022 D1): the drift is kept,
+                # so the reassert goes out the first tick the channel opens
+                held = self._pace_hold(now)
+                if held:
+                    return Decision(ts, 'hold', f'drift seen — {held}', self.state, signal, self.want, actual)
+                d0, self.drift_since = self.drift_since, None
+                dec = self._send(now, 'reassert', f'read-back {_num(actual):g} ≠ want {self.want[p]:g} for {int(r.timing.reassert_s)} s', signal, actual, False)
+                # a reassert dropped at the head is still a drift since then (LOW 9)
+                self._last_undo['drift_since'] = d0
+                return dec
             return Decision(ts, 'idle', f'read-back {_num(actual):g} ≠ want {self.want[p]:g}, watching', self.state, signal, self.want, actual)
         self.drift_since = None
+        self._drift_unheld()
         return Decision(ts, 'idle', 'read-back matches', self.state, signal, self.want, actual)
 
     def _resume(self, now: float, held: Optional[float]) -> None:
@@ -1448,7 +1538,49 @@ class RuleState:
         self._urgent, self._urgent_retry, self.pending = True, True, True
         return True
 
+    # what a send overwrites and an undo puts back as it was (ADR-0021 D4)
+    _UNDO = ('last_cmd_ts', 'commanded', 'confirmed', '_urgent', '_sent_want', '_sent_urgent', '_urgent_retry',
+             '_urgent_resends')
+    # put back together or not at all: a read-back that matched after the
+    # send (commanded + confirmed) is what the device holds now
+    _UNDO_TOGETHER = (('commanded', 'confirmed'),)
+
+    def unsend(self, undo: Dict[str, Any]) -> None:
+        """Take back the send `undo` was made by: it never reached the wire.
+        The caller makes sure no later send happened (`send_no`). By delta:
+        a field goes back only while it still holds what this send set (a
+        paused or yielding tick may have set `_urgent` again since; a matching
+        read-back may have set commanded and confirmed — RC-3); the start it
+        counted (that timestamp; today's count only on the same day); on/off
+        times only where they still hold what it set."""
+        post = undo.get('post')
+        groups = list(self._UNDO_TOGETHER)
+        grouped = {k for g in groups for k in g}
+        groups += [(k,) for k in self._UNDO if k not in grouped]
+        for g in groups:
+            if post is None or all(getattr(self, k) == post[k] for k in g):
+                for k in g:
+                    setattr(self, k, undo[k])
+        t = undo.get('start')
+        if t is not None:
+            try:
+                self._starts.remove(t)
+            except ValueError:
+                pass                                 # aged out of the hour already
+            if self.day == undo.get('day') and self.starts_today > 0:
+                self.starts_today -= 1
+        for k, (pre, post_) in (undo.get('since') or {}).items():
+            if getattr(self, k) == post_:
+                setattr(self, k, pre)
+        # a reassert's drift, by delta: back only while no tick has seen a
+        # new drift (or a match) since (ADR-0022, review LOW 9)
+        if undo.get('drift_since') is not None and self.drift_since is None:
+            self.drift_since = undo['drift_since']
+        self.pending = self.want is not None and not (self.confirmed and self.commanded == self.want)
+
     def _send(self, now: float, action: str, reason: str, signal, actual, changed: bool) -> Decision:
+        undo = {k: getattr(self, k) for k in self._UNDO}
+        since0, n0, day0 = (self.on_since, self.off_since), len(self._starts), self.day
         if self.want != self._sent_want:
             self._urgent_resends = 0                # a new want: its own resends
         self._sent_urgent, self._sent_want = self._urgent, (dict(self.want) if self.want else None)
@@ -1459,6 +1591,14 @@ class RuleState:
         self.confirmed = False                     # until the device answers
         self.last_cmd_ts = now                     # interval clock: rate limit base
         self._urgent = False                       # the emergency send happened
+        undo['start'] = now if len(self._starts) > n0 else None
+        undo['day'] = day0
+        undo['since'] = {k: (pre, post) for k, pre, post in
+                         (('on_since', since0[0], self.on_since), ('off_since', since0[1], self.off_since))
+                         if pre != post}
+        undo['post'] = {k: getattr(self, k) for k in self._UNDO}
+        self.send_no += 1
+        self._last_undo = undo
         ts = self._wall or now
         if self.rule.mode != 'armed':
             return Decision(ts, 'shadow', f'would {action} — {reason}', self.state, signal, self.want, actual, changed)

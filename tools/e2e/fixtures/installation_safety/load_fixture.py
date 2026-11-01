@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 # Multi-Bus Gateway — multi-protocol Modbus/HTTP/MQTT acquisition gateway.
-# Copyright (C) 2024-2026 Stefan Maldaianu <sm26449@diysolar.ro>  — AGPL-3.0-or-later
+# Copyright (C) 2024-2026 Stefan Maldaianu <stefan@multibus.dev>  — AGPL-3.0-or-later
 """Write a throwaway gateway's config directory for one e2e fixture variant.
 
     load_fixture.py VARIANT OUTDIR [--writes] [--login PASSWORD]
 
-VARIANT is safety | plant | drive (a file next to this one), merged over
+VARIANT is safety | plant | drive | cmdui | types | qa | endpoint | fronius (a file next to this one), merged over
 base.yaml. OUTDIR is emptied and refilled: config.yaml and nothing else, so
 every run starts from the same state. --writes turns security.allow_writes
 on (arming a rule needs it); --login turns login on for `admin` with that
@@ -22,7 +22,7 @@ import sys
 import yaml
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-VARIANTS = ('safety', 'plant', 'drive')
+VARIANTS = ('safety', 'plant', 'drive', 'cmdui', 'types', 'qa', 'endpoint', 'fronius')
 
 
 def build(variant: str, writes: bool, password: str | None) -> dict:

@@ -370,14 +370,15 @@ def test_the_editors_lists_match_the_api():
     installation editors read theirs from /api/protocols."""
     import re
     from pathlib import Path
-    from multibus.config import MODBUS_PROTOCOLS, NETWORK_PROTOCOLS, SERIAL_PROTOCOLS
+    from multibus.config import (MODBUS_PROTOCOLS, NETWORK_PROTOCOLS, SERIAL_PROTOCOLS,
+                                 VIRTUAL_MAP_PROTOCOLS, VIRTUAL_MAP_SERIAL)
     js = Path(__file__).resolve().parents[1].joinpath("ui/js/app-devices.js").read_text(encoding="utf-8")
 
     def arr(name):
         return re.findall(r"'([^']+)'", re.search(rf"{name}: \[([^\]]*)\]", js).group(1))
-    assert set(arr("_DEVICE_PROTOCOLS")) == set(MODBUS_PROTOCOLS + ("http", "mqtt"))
+    assert set(arr("_DEVICE_PROTOCOLS")) == set(MODBUS_PROTOCOLS + VIRTUAL_MAP_PROTOCOLS + ("http", "mqtt"))
     assert set(arr("_NET_PROTOCOLS")) == set(NETWORK_PROTOCOLS)
-    assert set(arr("_SERIAL_PROTOCOLS")) == set(SERIAL_PROTOCOLS + ("rtu_tap",))
+    assert set(arr("_SERIAL_PROTOCOLS")) == set(SERIAL_PROTOCOLS + ("rtu_tap",) + VIRTUAL_MAP_SERIAL)
 
 
 @needs_tc

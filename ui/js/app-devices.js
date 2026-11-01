@@ -1,5 +1,5 @@
 /* Multi-Bus Gateway — multi-protocol Modbus/HTTP/MQTT acquisition gateway.
- * Copyright (C) 2024-2026 Stefan Maldaianu <sm26449@diysolar.ro>
+ * Copyright (C) 2024-2026 Stefan Maldaianu <stefan@multibus.dev>
  * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 // devices domain — augments JanitzaMonitor.prototype
@@ -8,6 +8,7 @@ Object.assign(JanitzaMonitor.prototype, {
     // Devices page: show the list, hide the detail + register-editor overlays.
     _showDevicesList() {
         this._view = { type: 'list' };    // what the address names (app-router.js)
+        window.DeviceStore?.clear();      // no device open: no tag held (ADR-0030)
         this._leaveDeviceDetail();        // a device page hidden here stops what it started
         if (this.updatePollGroupsStatus) this.updatePollGroupsStatus();
         if (this._stopEndpointDetail) this._stopEndpointDetail();
@@ -31,7 +32,7 @@ Object.assign(JanitzaMonitor.prototype, {
     // One selection across the three data pages; shown only when there is more
     // than one device (no clutter with a single meter).
     _viewDeviceId() {
-        return this._viewDevice || this._primaryDeviceId();
+        return this._viewDevice || this._defaultDeviceId();
     },
 
     _viewDeviceQS(sep = '?') {
@@ -43,8 +44,8 @@ Object.assign(JanitzaMonitor.prototype, {
         const devices = await this._fetchDevices();
         const sel = document.getElementById(selId);
         if (!sel) return;
-        if (!this._viewDevice) this._viewDevice = this._primaryDeviceId();
-        if (devices.length <= 1) { sel.style.display = 'none'; this._viewDevice = this._primaryDeviceId(); return; }
+        if (!this._viewDevice) this._viewDevice = this._defaultDeviceId();
+        if (devices.length <= 1) { sel.style.display = 'none'; this._viewDevice = this._defaultDeviceId(); return; }
         sel.style.display = '';
         const cur = this._viewDeviceId();
         sel.innerHTML = devices.map(d =>
@@ -84,12 +85,16 @@ Object.assign(JanitzaMonitor.prototype, {
     async renderDevicesList() {
         const el = document.getElementById('devicesList');
         if (!el) return;
+        // what a row's menu asked is asked again: the list's counts are new (L3.10 review m3)
+        this._ddvFacts = {};
         // the three lists the page draws, asked together
-        const [devices, endpoints, bridges] = await Promise.all([
+        const [devices, endpoints, bridges, guard] = await Promise.all([
             this._fetchDevices(true),
             fetch('/api/endpoints').then(r => r.json()).then(d => d.endpoints || [])
                 .catch(e => { console.error(e); return []; }),
             this._loadBridges ? this._loadBridges() : Promise.resolve([]),
+            // buses the bridge guard keeps off the wire (an adapter moved)
+            fetch('/api/bridge-guard').then(r => r.json()).then(d => d.problems || []).catch(() => []),
         ]);
         this._renderRegDeviceSelectors();
         this._renderRestorableDevices();          // deleted-but-restorable list
@@ -113,7 +118,8 @@ Object.assign(JanitzaMonitor.prototype, {
         const byEndpoint = {}, byParent = {};
         devices.forEach(d => { if (d.endpoint_id) (byEndpoint[d.endpoint_id] ||= []).push(d); });
         devices.forEach(d => { if (d.component_of) (byParent[d.component_of] ||= []).push(d); });
-        const html = (this._bridgesSectionHtml ? this._bridgesSectionHtml(bridges, healthColor) : '')
+        const html = (this._guardBannerHtml ? this._guardBannerHtml(guard, devices) : '')
+            + (this._bridgesSectionHtml ? this._bridgesSectionHtml(bridges, healthColor) : '')
             + standalone.map(d => this._deviceRowHtml(d, healthColor)
                 + this._componentChildrenHtml(d, byParent[d.id] || [], healthColor)).join('')
             + endpoints.map(p => this._endpointGroupHtml(p, byEndpoint[p.id] || [], healthColor)).join('');
@@ -202,22 +208,19 @@ Object.assign(JanitzaMonitor.prototype, {
 
     _deviceRowHtml(d, healthColor, nested = false) {
         {
-            const PROTO = this._PROTO_LABEL;
             const viaUnits = (d.read_via || []).length;
             const reach = this._reachWords(d);
-            const proto = viaUnits
-                ? d.read_via.map(r => `${this._esc(r.id)} ${PROTO[r.protocol] || this._esc(r.protocol)}${r.interval_s != null && r.protocol !== 'rtu_tap' ? ` ${r.interval_s} s` : ''}`).join(' · ')
-                : `${this._esc(reach.proto)} · ${this._esc(reach.address)}`;
             const stats = this._deviceStatsWords(d, reach);
-            const actions = [
-                `<button class="btn btn-ghost btn-sm" ${this._act('jumpToDeviceRegisters', [d.id])} ${this._ib(this.t('devices.registers', 'Measurements'), d.name || d.id)}><i aria-hidden="true" class="bi bi-list-check"></i></button>`,
-                `<button data-live class="btn btn-ghost btn-sm" ${this._act('testDevice', [d.id], {el: true})} ${this._ib(this.t('devices.test', 'Test read'), d.name || d.id)}><i aria-hidden="true" class="bi bi-activity"></i></button>`,
-            ];
+            // a row's icons are shortcuts to items of its ⋯ (ADR-0032 §1):
+            // Test where it runs, the same action as the menu's; Open; then
+            // the ⋯ itself, the device page's (one builder) — everything else
+            // done to it is there, used-by asked before Disable / Delete
+            const test = window.DeviceViewModel.headerActions(d, this._effRole(), this._devMenuCtx(d, 'list'))
+                .find(x => x.id === 'test' && !x.disabled);
+            const actions = [];
+            if (test) actions.push(`<button data-live class="btn btn-ghost btn-sm" ${this._act('ddvAct', ['test', d.id, 'list'], { el: true })} ${this._ib(this.t('ddv.test', 'Test'), d.name || d.id)}><i aria-hidden="true" class="bi bi-activity"></i></button>`);
             actions.push(`<button class="btn btn-ghost btn-sm" ${this._act('openDeviceDetail', [d.id])} ${this._ib(this.t('common.open', 'Open'), d.name || d.id)}><i aria-hidden="true" class="bi bi-box-arrow-up-right"></i></button>`);
-            if (!d.primary && !d.endpoint_id && !d.component_of) {
-                // held back while in use (_ubPaintList): still reachable, it shows what uses it
-                actions.push(`<button data-admin class="btn btn-ghost btn-sm" data-ub-del="${this._esc(d.id)}" data-ub-name="${this._esc(d.name || d.id)}" ${this._act('deleteDevice', [d.id])} ${this._ib(this.t('common.delete', 'Delete'), d.name || d.id)}><i aria-hidden="true" class="bi bi-trash"></i></button>`);
-            }
+            actions.push(this._devRowMenuHtml(d, 'list'));
             // nested rows sit under their endpoint group — the chip would repeat it
             const endpointChip = (d.endpoint_id && !nested)
                 ? ` <span class="dev-chip" title="${this.t('devices.endpointManaged', 'Managed through its installation — edit or delete the installation')}"><i aria-hidden="true" class="bi bi-diagram-3"></i> ${this._esc(d.endpoint_id)}</span>`
@@ -230,9 +233,9 @@ Object.assign(JanitzaMonitor.prototype, {
                 <span class="status-dot" style="--dot:${healthColor[d.data_health] || healthColor.idle}"
                       title="${this._esc(this._verdictWord(d))}"></span>
                 <div class="device-row-main">
-                    <div class="device-row-title">${this._kindIconHtml ? this._kindIconHtml(d.kind) : ''}<a class="device-row-name" href="#/devices/${encodeURIComponent(d.id)}">${this._esc(d.name || d.id)}</a>
+                    <div class="device-row-title">${this._kindIconHtml ? this._kindIconHtml(d.type || d.kind) : ''}<a class="device-row-name" href="#/devices/${encodeURIComponent(d.id)}">${this._esc(d.name || d.id)}</a>
                         <span class="dev-chip">${this._esc(d.id)}</span>${endpointChip}${this._ubSlotHtml(d.id)}</div>
-                    <div class="device-row-sub">${proto}${viaUnits ? '' : `${reach.unit != null ? ` · unit ${reach.unit}` : ''} · ${this._esc(d.template || '—')}`} · ${d.selected_registers ?? 0} ${this.t('devices.regsSelected', 'measurements')}</div>
+                    <div class="device-row-sub">${this._devSummaryHtml(d, { compact: true })}${viaUnits ? '' : ` · ${this._esc(d.template || '—')}`} · ${d.selected_registers ?? 0} ${this.t('devices.regsSelected', 'measurements')}</div>
                 </div>
                 <div class="device-row-stats">${stats}</div>
                 <div class="device-row-actions">${actions.join('')}</div>
@@ -350,13 +353,16 @@ Object.assign(JanitzaMonitor.prototype, {
     },
 
     async _restoreDevice(id) {
-        const rsp = await fetch(`/api/devices/${encodeURIComponent(id)}/restore`, { method: 'POST' });
-        const d = await rsp.json().catch(() => ({}));
-        if (rsp.ok) {
-            this.showToast('success', this.t('devices.restored', 'Device restored'), id);
+        // the one restore (app-restore.js): what it set back to safe is said
+        const r = await this._restoreNow(id);
+        if (r.ok) {
+            const said = this._resetsText(r.reset);
+            this.showToast('success', this.t('devices.restored', 'Device restored'),
+                [said ? this.t('undo.restoredReset', '{name}: back {what} — unlock or turn them on from its ⋯ when ready.', { name: id, what: said }) : id,
+                 this._resumesText(r.resumed, id)].filter(Boolean).join(' '));
             this.renderDevicesList();
         } else {
-            this.showToast('error', 'Restore', this._errMsg((d.detail && d.detail.errors) ? d.detail.errors.join('; ') : (d.detail ?? rsp.status)));
+            this.showToast('error', this.t('devices.restore', 'Restore'), r.errors.join('; '));
         }
     },
 
@@ -463,8 +469,11 @@ Object.assign(JanitzaMonitor.prototype, {
         const box = document.getElementById('discoverResult');
         if (!box) return;
         const results = d.results || [];
+        // a host:port a device only listens to is not asked (ADR-0025): say so
+        const skipped = (d.skipped || []).map(s => `<div class="field-hint">${this._esc(this.t('devices.scanSkipped',
+            '{host}: not asked — listened to by {devices}', { host: s.host, devices: (s.listeners || []).join(', ') }))}</div>`).join('');
         if (!results.length) {
-            box.innerHTML = `<div class="settings-card" style="padding:12px;color:var(--text-secondary);">${this.tn('devices.scanNone', d.scanned, 'No devices answered on {n} hosts.')}</div>`;
+            box.innerHTML = `<div class="settings-card" style="padding:12px;color:var(--text-secondary);">${this.tn('devices.scanNone', d.scanned, 'No devices answered on {n} hosts.')}${skipped}</div>`;
             return;
         }
         const rows = results.map(r => {
@@ -482,7 +491,7 @@ Object.assign(JanitzaMonitor.prototype, {
         }).join('');
         box.innerHTML = `<div class="settings-card" style="padding:14px;">
             <div style="margin-bottom:8px;"><b><i aria-hidden="true" class="bi bi-hdd-network"></i> ${results.length} ${this.t('devices.scanFound', 'device(s) found')}</b> <span style="color:var(--text-secondary);">· ${d.scanned} ${this.t('devices.scanScanned', 'scanned')}</span></div>
-            <table>${rows}</table></div>`;
+            <table>${rows}</table>${skipped}</div>`;
     },
 
     // ESPHome nodes answering on the native-API port. Flashing and adopting
@@ -519,8 +528,12 @@ Object.assign(JanitzaMonitor.prototype, {
                 method: 'POST', headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ protocol: 'tcp', host, port, unit_start: 1, unit_end: 32 }) });
             const d = await r.json();
-            const units = d.units || [];
             if (!cell) return;
+            if (!r.ok) {     // a bus a device only listens to is not swept: say why
+                cell.innerHTML = `<span class="field-hint">${this._esc((d.detail?.errors || [r.statusText]).join(' '))}</span>`;
+                return;
+            }
+            const units = d.units || [];
             cell.innerHTML = units.length
                 ? `<span class="field-hint">${this.t('devices.unitsFound', 'Unit ids:')}</span> ` + units.map(u =>
                     `<button data-admin class="calc-chip" ${this._act('useDiscoveredModbus', [host, port, u])}>${u}</button>`).join(' ')
@@ -575,9 +588,18 @@ Object.assign(JanitzaMonitor.prototype, {
             id,
             name: (m.model || 'Fronius Meter') + ' (Solar API)',
             protocol: 'http',
-            template: 'fronius_solar_api',
+            // a template that exists (L3-F2): the one for the device's class
+            template: this._froniusDiscoverTemplate('meter'),
             url: `http://${disc.host}/solar_api/v1/GetMeterRealtimeData.cgi?Scope=Device&DeviceId=${encodeURIComponent(sid)}`,
         });
+    },
+
+    // The bundled Solar API template for what the Fronius discovery found,
+    // by device class (L3-F2): an inverter, its per-phase supplement, a meter.
+    _froniusDiscoverTemplate(cls, perPhase = false) {
+        if (cls === 'inverter') return perPhase ? 'fronius_solar_api_inverter_3p' : 'fronius_solar_api_inverter';
+        if (cls === 'meter') return 'fronius_solar_api_meter';
+        return '';
     },
 
     // ── Full-page device detail (edit) ────────────────────────────────────
@@ -586,14 +608,25 @@ Object.assign(JanitzaMonitor.prototype, {
     // its published identity: id, topic, bucket and Influx tag are read-only so
     // existing history and Home Assistant entities never break.
     async openDeviceDetail(id) {
+        // what an editor of the page left open holds and did not save is asked
+        // about first (one leave guard, review of L3.11b M1); Keep editing:
+        // nothing opens (null — not "missing")
+        // (the Edit modal's own guard when it is open: a link inside it — a
+        // component's device — asks too, second review R2-1)
+        if (!await this._ddvBeforeOpen()) return null;
         // (another device opens right after: the one left open is not restarted)
         if (this.currentPage !== 'devices') this.navigateTo('devices', { _opening: true });
         this._showDevicesList();        // also stops an endpoint page's live tick
-        await this._fetchDevices(true);
-        const dev = (this._devices || []).find(d => d.id === id);
-        if (!dev) { this.showToast('error', this.t('devices.notFound', 'Device not found'), id); return false; }
+        // the page is the device as GET /api/devices/{id} answers it, with
+        // its ETag: every write it makes sends that tag (ADR-0030). The list
+        // row stands in when that read fails (written as before, untagged)
+        const store = window.DeviceStore;
+        const [, one] = await Promise.all([this._fetchDevices(true), store.load(id)]);
+        const dev = one || (this._devices || []).find(d => d.id === id);
+        if (!dev) { store.clear(); this.showToast('error', this.t('devices.notFound', 'Device not found'), id); return false; }
+        if (!one) store.open(id, dev, null);
         let templates = [];
-        try { templates = (await (await fetch('/api/device-templates')).json()).templates || []; }
+        try { templates = (await (await fetch('/api/device-templates')).json()).templates || []; this._devTplCache = templates; }
         catch (e) { console.error(e); }
         if (this._loadBridges) await this._loadBridges();   // the buses it may move to (or onto)
         const c = dev.connection || {};
@@ -656,6 +689,7 @@ Object.assign(JanitzaMonitor.prototype, {
         view.style.display = '';
         view.innerHTML = this._deviceDetailHtml();
         this._wireDeviceDetail();
+        this._ddvWatchTyped(view);      // what "Reload the device" keeps (ADR-0030)
         // the status bar states this unit's own rhythm while it is open
         this._footerOverride = (dev.read_via || []).length ? dev.read_via : null;
         if (this.updatePollGroupsStatus) this.updatePollGroupsStatus();
@@ -663,10 +697,158 @@ Object.assign(JanitzaMonitor.prototype, {
         return true;
     },
 
+    // ── changed elsewhere (ADR-0030) ─────────────────────────────────────
+    // Every write the page makes sends the tag the device was opened with
+    // (DeviceStore). A 412 — someone saved it meanwhile — puts a banner on
+    // the page: nothing was saved, the typed edits are still there. "Reload
+    // the device" reads it again and keeps what was typed, marking where
+    // that differs from what is stored now; "Show what changed" lists the
+    // stored settings that moved.
+
+    _ddvFieldVal(el) {
+        return (el.type === 'checkbox' || el.type === 'radio') ? el.checked : el.value;
+    },
+
+    _ddvIsField(el) {
+        return el && el.id && /^(INPUT|SELECT|TEXTAREA)$/.test(el.tagName)
+            && !['hidden', 'file', 'button', 'submit', 'reset'].includes(el.type)
+            && !el.closest('#ddvConflict');
+    },
+
+    // what each field held before it was touched: every field drawn at open,
+    // and a field drawn later (a tab built on first visit) when first focused
+    _ddvWatchTyped(view) {
+        const seen = this._ddvSeen = new Map();
+        view.querySelectorAll('input[id], select[id], textarea[id]').forEach(el => {
+            if (this._ddvIsField(el)) seen.set(el.id, this._ddvFieldVal(el));
+        });
+        view.addEventListener('focusin', e => {
+            const el = e.target;
+            if (this._ddvSeen === seen && this._ddvIsField(el) && !seen.has(el.id)) seen.set(el.id, this._ddvFieldVal(el));
+        });
+        // what the user changed (never what the page filled in): Done and
+        // Reconnect ask about it while it differs from what was drawn
+        const edited = this._ddvEdited = new Set();
+        const mark = e => { if (e.isTrusted && this._ddvEdited === edited && this._ddvIsField(e.target)) edited.add(e.target.id); };
+        view.addEventListener('input', mark);
+        view.addEventListener('change', mark);
+    },
+
+    _ddvTypedFields(view) {
+        const seen = this._ddvSeen || new Map();
+        const out = [];
+        view.querySelectorAll('input[id], select[id], textarea[id]').forEach(el => {
+            if (!this._ddvIsField(el) || !seen.has(el.id)) return;
+            const v = this._ddvFieldVal(el);
+            if (v !== seen.get(el.id)) out.push({ id: el.id, value: v });
+        });
+        return out;
+    },
+
+    _ddvValText(v) {
+        if (v === undefined || v === null || v === '') return '—';
+        return typeof v === 'object' ? JSON.stringify(v) : String(v);
+    },
+
+    _ddvOnConflict(c) {
+        const s = this._devDetail;
+        const box = document.getElementById('ddvConflict');
+        if (!box || !s || window.DeviceStore.id !== s.id) return;    // not the page's device
+        if (this._devEdit?.open) return;      // the Edit modal says it, and keeps its edits (app-device-edit.js)
+        const t = (k, d, p) => this.t(k, d, p);
+        box.innerHTML = `<div class="ddv-conflict-box">
+            <i aria-hidden="true" class="bi bi-exclamation-triangle"></i>
+            <p class="ddv-conflict-text"><b>${this._esc(t('ddv.conflict.title', 'This device was changed elsewhere since you opened it.'))}</b>
+                ${this._esc(t('ddv.conflict.kept', 'Nothing was saved; your unsaved edits are still on screen.'))}</p>
+            <div class="ddv-conflict-actions">
+                <button type="button" class="btn btn-primary btn-sm" id="ddvConflictReload" ${this._act('ddvReloadDevice')}>
+                    <i aria-hidden="true" class="bi bi-arrow-clockwise"></i> ${this._esc(t('ddv.conflict.reload', 'Reload the device'))}</button>
+                <button type="button" class="btn btn-secondary btn-sm" id="ddvConflictShow" aria-expanded="false" aria-controls="ddvConflictDiff"
+                    ${this._act('ddvToggleConflictDiff')}>${this._esc(t('ddv.conflict.show', 'Show what changed'))}</button>
+            </div>
+            <div id="ddvConflictDiff" class="ddv-conflict-diff" hidden></div>
+        </div>`;
+    },
+
+    ddvToggleConflictDiff() {
+        const c = window.DeviceStore.conflict;
+        const btn = document.getElementById('ddvConflictShow');
+        const box = document.getElementById('ddvConflictDiff');
+        if (!btn || !box) return;
+        const t = (k, d, p) => this.t(k, d, p);
+        const open = box.hidden;
+        box.hidden = !open;
+        btn.setAttribute('aria-expanded', String(open));
+        btn.textContent = open ? t('ddv.conflict.hide', 'Hide what changed') : t('ddv.conflict.show', 'Show what changed');
+        if (!open) return;
+        const rows = c ? window.DeviceStoreModel.diff(c.held, c.current) : [];
+        box.innerHTML = rows.length
+            ? `<table class="ddv-conflict-table"><caption class="sr-only">${this._esc(t('ddv.conflict.caption', 'Stored settings that changed since this page opened'))}</caption>
+                <thead><tr><th scope="col">${this._esc(t('ddv.conflict.colField', 'Setting'))}</th>
+                    <th scope="col">${this._esc(t('ddv.conflict.colHere', 'When this page opened'))}</th>
+                    <th scope="col">${this._esc(t('ddv.conflict.colNow', 'Stored now'))}</th></tr></thead>
+                <tbody>${rows.map(r => `<tr><th scope="row"><code>${this._esc(r.path)}</code></th>
+                    <td>${this._esc(this._ddvValText(r.before))}</td><td>${this._esc(this._ddvValText(r.after))}</td></tr>`).join('')}</tbody></table>`
+            : `<p class="field-hint">${this._esc(t('ddv.conflict.none', 'No stored setting shown here differs; the change was elsewhere in the device\'s file (reload to take it).'))}</p>`;
+        if (rows.length && c && c.ownSaves) {
+            box.insertAdjacentHTML('beforeend', `<p class="field-hint">${this._esc(t('ddv.conflict.ownSaves',
+                'This page also saved settings since it opened; those are listed too.'))}</p>`);
+        }
+    },
+
+    // read the device again; keep what was typed, mark where it differs
+    async ddvReloadDevice() {
+        const s = this._devDetail;
+        const view = document.getElementById('deviceDetailView');
+        if (!s || !view) return;
+        const t = (k, d, p) => this.t(k, d, p);
+        const typed = this._ddvTypedFields(view);
+        const tab = view.querySelector('#deviceWsTabs .config-main-tab.active')?.dataset.dtab;
+        const editing = this._ddvEditing;              // the editor open stays open
+        if (!await this.openDeviceDetail(s.id)) return;
+        if (editing) this.ddvEdit(editing);
+        else if (tab) this._switchDeviceTab(tab);
+        let marked = 0, first = null;
+        for (const f of typed) {
+            const el = document.getElementById(f.id);
+            if (!el) continue;
+            const stored = this._ddvFieldVal(el);
+            if (typeof f.value === 'boolean') el.checked = f.value; else el.value = f.value;
+            el.dispatchEvent(new Event('input', { bubbles: true }));
+            el.dispatchEvent(new Event('change', { bubbles: true }));
+            if (stored === f.value) continue;
+            marked++;
+            first = first || el;
+            el.classList.add('ddv-kept');
+            const note = document.createElement('span');
+            note.className = 'field-hint ddv-kept-note';
+            note.id = `${f.id}-kept`;
+            note.textContent = t('ddv.conflict.keptField', 'Your edit, kept. Stored now: {value}',
+                                 { value: typeof stored === 'boolean' ? (stored ? '✓' : '✕') : this._ddvValText(stored) });
+            el.insertAdjacentElement('afterend', note);
+            el.setAttribute('aria-describedby', [el.getAttribute('aria-describedby'), note.id].filter(Boolean).join(' '));
+        }
+        const fb = document.getElementById('ddvFeedback');
+        const said = marked
+            ? t('ddv.conflict.reloadedMarked', 'Reloaded. Your edits are kept; {n} of them differ from what is stored now (marked). Save to apply them.', { n: marked })
+            : t('ddv.conflict.reloaded', 'Reloaded: the page shows the device as stored now.');
+        if (fb) { fb.textContent = said; fb.className = 'save-feedback'; }
+        else this.showToast('info', t('ddv.conflict.reload', 'Reload the device'), said);
+        (first || view.querySelector('h2'))?.focus?.({ preventScroll: false });
+    },
+
     // Back from a unit is its installation; from a standalone device, the list.
     closeDeviceDetail(toList = false) {
+        // an editor's unsaved edits are asked about first (review of L3.11b M1)
+        // (the Edit modal is closed with the page, as before: a save in
+        // flight is said when it answers)
+        if (this._ddvLeave && !this._devEdit?.open && ((this._ddvFullDirty && this._ddvFullDirty())
+                                || (this._ddvEditing && this._ddvEditDirty && this._ddvEditDirty()))) {
+            return this._ddvLeave().then(ok => (ok ? this.closeDeviceDetail(toList) : null));
+        }
         const pid = this._devDetail?.endpoint_id;
         const parent = this._devDetail?.component_of;
+        window.DeviceStore?.clear();  // the device is no longer open (ADR-0030)
         this._leaveDeviceDetail();    // return embedded pages home BEFORE wiping the view
         const view = document.getElementById('deviceDetailView');
         if (view) { view.style.display = 'none'; view.innerHTML = ''; }
@@ -679,63 +861,51 @@ Object.assign(JanitzaMonitor.prototype, {
         return this.renderDevicesList();
     },
 
+    // the template choice on a device page: a CAN device offers CAN maps
+    // only, any other device none of them (the server refuses a mismatch);
+    // the template it has is always offered
+    _tplFitsDevice(x, d) {
+        if (x.id === d.template) return true;
+        return (x.transport === 'can') === (d.protocol === 'can');
+    },
+
     _deviceDetailHtml() {
         const s = this._devDetail, d = s.data;
-        const primary = s.primary;
         const endpointId = s.endpoint_id || '';
-        const endpointLk = endpointId ? 'disabled' : '';   // endpoint-owned field lock
         const compOf = s.component_of || '';
         // a parent whose template declares components shows their card
-        const holds = ((s.templates || []).find(x => x.id === d.template) || {}).components || [];
-        const tcp = d.protocol !== 'rtu';
-        const tplOptions = [`<option value="">${this.t('devices.detail.noTemplate', '(no template)')}</option>`]
-            .concat(s.templates.map(t =>
-                `<option value="${this._esc(t.id)}" ${t.id === d.template ? 'selected' : ''}>${this._esc(t.name)} · ${t.registers} measurements</option>`)).join('');
+        // the components card: one rule with the ⋯ item (the template declares them, or it holds some)
+        const holds = window.DeviceViewModel.holdsComponents(s.entry || {}, (s.templates || []).find(x => x.id === d.template)) ? [true] : [];
         const t = this.t.bind(this);
-        // the write lock is about what is written TO the device: it sits with
-        // the commands when there are some, else with the device's settings
-        const lockIn = (d.commands_offered || []).length ? 'commands' : 'connection';
         const meterOnly = d.protocol === 'none';
-        const e = s.entry || {};
-        // the tabs, grouped: what it shows (Live), what it is told (Configure),
-        // what to look at when it misbehaves (Diagnose) — one strip at a time
+        const e = { ...(s.entry || {}), id: s.id };
+        const M = window.DeviceViewModel;
+        const kind = M.kindOf(e);
+        // the tabs, grouped: what it shows (Live), what it reads and runs
+        // (Data), what it is told — read-only (Setup), what to look at when it
+        // misbehaves (Diagnose). Editing is not a tab: ⋯ or E (ADR-0031 §3)
         const offMon = d.enabled ? '' : t('ddv.offMonitor', 'Polling is off for this device: enable it to view live values.');
-        const offInf = d.influxdb_enabled ? '' : t('ddv.offInflux', 'The InfluxDB output is off for this device: enable it on the Outputs tab.');
+        const offInf = d.influxdb_enabled ? '' : this._roleHint('ddv.offInflux', 'The InfluxDB output is off for this device: switch it on from ⋯ → Outputs….', 'ddv.offInfluxOther', 'The InfluxDB output is off for this device: an admin switches it on.');
         const tabs = [
             ['overview', 'bi-grid-1x2', t('devices.tab.overview', 'Overview')],
             ['history', 'bi-clock-history', t('nav.history', 'History'), offInf],
             d.energy_fields === 0 ? null : ['energy', 'bi-lightning-charge', t('nav.energy', 'Energy'), offInf],
             d.pq_supported && !endpointId ? ['pq', 'bi-activity', t('nav.pq', 'Power Quality'), offInf] : null,
-            endpointId || compOf
-                ? ['connection', 'bi-diagram-3', t('devices.tab.readVia', 'Read via')]
-                : ['connection', meterOnly ? 'bi-person-vcard' : 'bi-ethernet',
-                   meterOnly ? t('ddv.tabIdentity', 'Identity') : t('ddv.tabConnection', 'Connection'), '', true],
             meterOnly ? null : ['measurements', 'bi-list-check', `${t('devices.registers', 'Measurements')} (${d.selected_registers})`],
             ['calculated', 'bi-calculator', t('calc.tab', 'Calculated')],
             (d.commands_offered || []).length ? ['commands', 'bi-send', `${t('commands.tab', 'Commands')} (${(d.commands || []).length})`] : null,
-            endpointId ? null : ['meters', 'bi-lightning', t('meters.tab', 'Meters')],
-            ['outputs', 'bi-signpost-split', t('devices.detail.outputs', 'Outputs')],
-            ['attributes', 'bi-tags', t('attr.title', 'Attributes')],
+            ['setup', 'bi-sliders', t('ddv.group.setup', 'Setup')],
             ['monitor', 'bi-graph-up', t('nav.monitor', 'Monitor'), offMon],
             ['logs', 'bi-journal-text', t('devices.tab.logs', 'Logs')],
         ].filter(Boolean);
-        const tabHtml = ([name, icon, label, off, admin]) => `<button type="button" class="config-main-tab" id="dtab-${name}" data-dtab="${name}"
+        const tabHtml = ([name, icon, label, off]) => `<button type="button" class="config-main-tab" id="dtab-${name}" data-dtab="${name}"
                 data-dgroup="${this._DTAB_GROUP[name]}" data-panel-id="dpanel-${name}" ${this._DTAB_GROUP[name] === 'live' ? '' : 'hidden'}
-                ${off ? `aria-disabled="true" aria-describedby="dtab-${name}-why" title="${this._esc(off)}"` : ''} ${admin ? 'data-admin' : ''}><i aria-hidden="true" class="bi ${icon}"></i> ${this._esc(label)}</button>`;
+                ${off ? `aria-disabled="true" aria-describedby="dtab-${name}-why" title="${this._esc(off)}"` : ''}><i aria-hidden="true" class="bi ${icon}"></i> ${this._esc(label)}</button>`;
         // why a tab is off: said once, as its description (never inside its name)
         const whyHtml = tabs.filter(x => x[3]).map(([name, , , off]) => `<span class="sr-only" id="dtab-${name}-why">${this._esc(off)}</span>`).join('');
         const offNote = (name, text) => text ? `<p class="dpanel-off" data-off-for="${name}" hidden><i aria-hidden="true" class="bi bi-info-circle"></i> ${this._esc(text)}</p>` : '';
         const crumb = endpointId || compOf;
-        // the ⋯ menu: what is done TO the device (Kind, Disable, Delete) and
-        // where it belongs; Test stays in sight
-        const menu = [
-            endpointId ? `<button type="button" role="menuitem" ${this._act('openEndpointDetail', [endpointId])}><i aria-hidden="true" class="bi bi-diagram-3"></i> ${t('devices.openInstallation', 'Open installation')}</button>` : '',
-            compOf ? `<button type="button" role="menuitem" ${this._act('openDeviceDetail', [compOf])}><i aria-hidden="true" class="bi bi-cpu"></i> ${t('components.openParent', 'Open device')}</button>` : '',
-            (primary || endpointId) ? '' : `<button data-admin type="button" role="menuitem" id="ddvSetKind" ${this._act('setDeviceKind', [s.id])}><i aria-hidden="true" class="bi bi-tag"></i> ${t('kind.set', 'Kind')}: ${this._esc(this._kindLabel ? this._kindLabel(e.kind) : (e.kind || ''))}…</button>`,
-            (primary || endpointId || compOf) ? '' : `<button data-admin type="button" role="menuitem" id="ddvEnableToggle" ${this._act('ddvSetEnabled', [s.id, !d.enabled])}><i aria-hidden="true" class="bi bi-${d.enabled ? 'pause-circle' : 'play-circle'}"></i> ${d.enabled ? t('ddv.disable', 'Disable') : t('ddv.enable', 'Enable')}</button>
-                <button data-admin type="button" role="menuitem" id="ddvDisableInstead" hidden ${this._act('ubDisableInstead', ['device', s.id])}><i aria-hidden="true" class="bi bi-pause-circle"></i> ${t('usedby.disableInstead', 'Disable instead')}</button>
-                <button data-admin type="button" role="menuitem" class="mbg-menu-danger" id="ddvDeleteBtn" aria-describedby="ddvDeleteWhy" ${this._act('deleteDevice', [s.id])}><i aria-hidden="true" class="bi bi-trash"></i> ${t('common.delete', 'Delete')}</button>`,
-        ].filter(Boolean).join('');
+        const notRunning = d.enabled && s.running === false && ['device', 'primary', 'meter-only'].includes(kind);
         return `
         <div class="section-header ddv-head">
             <h2><button class="btn btn-ghost btn-sm" data-action="closeDeviceDetail" aria-label="${t('common.back', 'Back')}"><i aria-hidden="true" class="bi bi-arrow-left"></i></button>
@@ -746,25 +916,30 @@ Object.assign(JanitzaMonitor.prototype, {
                         ? `<a href="#/installations/${encodeURIComponent(endpointId)}" ${this._act('openEndpointDetail', [endpointId])}><i aria-hidden="true" class="bi bi-diagram-3"></i> ${this._esc(s.endpoint_name || endpointId)}</a>`
                         : `<a href="#/devices/${encodeURIComponent(compOf)}" ${this._act('openDeviceDetail', [compOf])}><i aria-hidden="true" class="bi bi-cpu"></i> ${this._esc(s.parent_name || compOf)}</a>`}
                     <span aria-hidden="true">›</span>
-                    <span class="ddv-name" title="${this._esc(d.name)}">${this._kindIconHtml ? this._kindIconHtml(e.kind) : ''}${this._esc(d.name)}</span>
+                    <span class="ddv-name" title="${this._esc(d.name)}">${this._kindIconHtml ? this._kindIconHtml(e.type || e.kind) : ''}${this._esc(d.name)}</span>
                     <span class="dev-chip">${this._esc(s.id)}</span></nav>`
-                : `<span class="ddv-name" title="${this._esc(d.name)}">${this._kindIconHtml ? this._kindIconHtml(e.kind) : ''}${this._esc(d.name)}</span>
+                : `<span class="ddv-name" title="${this._esc(d.name)}">${this._kindIconHtml ? this._kindIconHtml(e.type || e.kind) : ''}${this._esc(d.name)}</span>
                 <span class="dev-chip">${this._esc(s.id)}</span>`}</h2>
             <div class="header-actions">
                 <button type="button" class="btn btn-ghost btn-sm ddv-usedby" id="ddvUsedByBadge" hidden ${this._act('usedByOpen', ['device', s.id, 'usedby'])}><i aria-hidden="true" class="bi bi-diagram-2"></i> <span></span></button>
-                ${endpointId || compOf || meterOnly ? '' : `<button data-live type="button" class="btn btn-secondary btn-sm" id="ddvHeadTest" ${this._act('testDevice', [s.id], { el: true })}><i aria-hidden="true" class="bi bi-activity"></i> ${t('ddv.test', 'Test')}</button>`}
-                ${menu ? `<div class="mbg-menu-wrap" ${endpointId || compOf ? '' : 'data-admin'}>
+                <span class="ddv-head-actions" id="ddvHeadActions">${this._ddvHeadHtml(e)}</span>
+                <div class="mbg-menu-wrap">
                     <button type="button" class="btn btn-ghost btn-sm" id="ddvActions" aria-haspopup="menu" aria-expanded="false" aria-controls="ddvActionsMenu"
-                        ${this._act('_menuToggle', [], { el: true })} aria-label="${this._esc(t('ddv.actions', 'Actions for {name}', { name: d.name }))}"><i aria-hidden="true" class="bi bi-three-dots"></i></button>
-                    <div class="mbg-menu" role="menu" id="ddvActionsMenu" aria-labelledby="ddvActions" hidden>${menu}</div>
-                    <span id="ddvDeleteWhy" class="sr-only"></span></div>` : ''}
+                        ${this._act('ddvMenuOpen', [], { el: true })} aria-label="${this._esc(t('ddv.actions', 'Actions for {name}', { name: d.name }))}"><i aria-hidden="true" class="bi bi-three-dots"></i></button>
+                    <div class="mbg-menu" role="menu" id="ddvActionsMenu" aria-labelledby="ddvActions" hidden>${this._devMenuItemsHtml(e, 'page')}</div>
+</div>
             </div>
             <p class="ddv-meta" id="ddvMeta">${this._ddvMetaHtml(s.id, e)}</p>
+            <div class="ddv-facts" id="ddvFacts">${this._devSummaryHtml(e)}</div>
+            ${notRunning ? `<div class="ddv-notice" id="ddvNotice" role="status"><i aria-hidden="true" class="bi bi-exclamation-circle"></i>
+                <span>${this._esc(this._roleHint('ddv.notRunning', 'Enabled, but its acquisition is not running.', 'ddv.notRunningOther', 'Enabled, but its acquisition is not running: an admin can reconnect it.'))}</span>
+                <button data-admin type="button" class="btn btn-secondary btn-sm" id="ddvHeadReconnect" ${this._act('ddvReconnect', [s.id])}>${this._esc(t('devices.reconnect', 'Reconnect'))}</button></div>` : ''}
         </div>
+        <div id="ddvConflict" class="ddv-conflict" role="alert"></div>
         <div id="devTplUpdate"></div>
         ${this._tplNotesHtml(d.template_notes, { folded: true })}
 
-        <!-- device workspace: three groups of tabs, every tab opens IN-PLACE
+        <!-- device workspace: four groups of tabs, every tab opens IN-PLACE
              (Measurements/Monitor/History/Energy are embedded, scoped to this
              device). The group tablist's one panel holds the tab strip and
              the tab panels (ARIA: a tablist controls tabpanels only). -->
@@ -777,23 +952,39 @@ Object.assign(JanitzaMonitor.prototype, {
             ${tabs.map(tabHtml).join('')}
         </div>${whyHtml}
 
+        <!-- editing (⋯ or E): what is edited, how it saves, the way back. A
+             large editor (Measurements with Calculated, Commands & bindings)
+             is full screen: its parts, one Save (ADR-0032 §6) -->
+        <div class="ddv-editbar" id="ddvEditBar" hidden>
+            <div class="ddv-editbar-text">
+                <h3 id="ddvEditTitle" tabindex="-1"></h3>
+                <p class="field-hint" id="ddvEditHint">${this._esc(t('ddv.editingHint', 'Each part saves with its own button, as before. Done returns to the view.'))}</p>
+            </div>
+            <div class="seg ddv-editparts" id="ddvEditParts" role="group" aria-label="${this._esc(t('ddv.editParts', 'Parts of this editor'))}" hidden>
+                <button type="button" class="seg-btn" data-edit-part="measurements" aria-pressed="false" ${this._act('ddvEditPart', ['measurements'])}><i aria-hidden="true" class="bi bi-list-check"></i> ${this._esc(t('devices.registers', 'Measurements'))}</button>
+                <button type="button" class="seg-btn" data-edit-part="calculated" aria-pressed="false" ${this._act('ddvEditPart', ['calculated'])}><i aria-hidden="true" class="bi bi-calculator"></i> ${this._esc(t('calc.tab', 'Calculated'))}</button>
+            </div>
+            <span class="save-feedback" id="ddvEditFeedback" role="status" aria-live="polite"></span>
+            <button type="button" class="btn btn-primary btn-sm" id="ddvEditSave" data-action="ddvEditSave" hidden><i aria-hidden="true" class="bi bi-check-lg"></i> ${this._esc(t('common.save', 'Save'))}</button>
+            <button type="button" class="btn btn-secondary btn-sm" id="ddvEditDone" data-action="ddvEditDone"><i aria-hidden="true" class="bi bi-check2"></i> ${this._esc(t('ddv.editDone', 'Done'))}</button>
+        </div>
+
         <!-- host panels for the embedded, device-scoped views -->
         <div data-dpanel="measurements" class="ws-embed-host" hidden></div>
         <div data-dpanel="monitor" class="ws-embed-host" hidden>${offNote('monitor', offMon)}</div>
         <div data-dpanel="history" class="ws-embed-host" hidden>${offNote('history', offInf)}</div>
         <div data-dpanel="energy" class="ws-embed-host" hidden>${offNote('energy', offInf)}</div>
-        <div data-dpanel="pq" class="ws-embed-host" hidden>${offNote('pq', offInf)}${d.pq_supported && !endpointId ? this._pqRecorderCard(d, primary) : ''}</div>
+        <div data-dpanel="pq" class="ws-embed-host" hidden>${offNote('pq', offInf)}</div>
 
         <!-- ── Calculated (formula-derived measurements) ── -->
         <div data-dpanel="calculated" hidden></div>
 
-        <!-- ── Meters: the meters that measure it, and what they give ── -->
-        <div data-dpanel="meters" hidden><div class="dev-meters-host"></div></div>
-
         <!-- ── Logs — what this device's acquisition has been doing ── -->
         <div data-dpanel="logs" hidden><div class="dev-log-host"></div></div>
-        <div data-dpanel="attributes" hidden><div class="dev-attr-host"></div></div>
-        <div data-dpanel="commands" hidden>${lockIn === 'commands' ? this._writeLockCard(d, primary) : ''}<div class="dev-cmd-host"></div></div>
+        <div data-dpanel="commands" hidden><div class="dev-cmd-host"></div></div>
+
+        <!-- ── Setup: what it is told, read-only, for every role ── -->
+        <div data-dpanel="setup" hidden><div id="ddvSetup"></div></div>
 
         <!-- ── Overview (read-only) ── -->
         <div data-dpanel="overview">${compOf ? this._componentOfHtml(s) : ''}${this._deviceOverviewHtml(d, s.entry || {})}
@@ -801,150 +992,52 @@ Object.assign(JanitzaMonitor.prototype, {
             ${holds.length && !compOf ? '<div id="devComponentsCard"></div>' : ''}
             <section id="devUsedBy"></section></div>
 
-        <!-- ── Connection ── one layout for every device; endpoint-owned
-             fields are disabled and marked (defined once on the endpoint);
-             a meter-only device has no address, only its identity -->
-        <div data-dpanel="connection" hidden>
-        ${endpointId ? this._unitReadViaHtml(s, d) : compOf ? this._componentReadViaHtml(s) : meterOnly ? this._meterOnlyIdentityHtml(s, d) : `
-        <div class="settings-card">
-            <div class="settings-card-header"><h3><i aria-hidden="true" class="bi bi-ethernet"></i> ${t('devices.detail.connection', 'Connection')}</h3></div>
-            <div class="settings-card-body">
-                <div id="ddvConn" class="cf-host"></div>
-            </div>
-        </div>
-
-        <div class="settings-card">
-            <div class="settings-card-header"><h3><i aria-hidden="true" class="bi bi-diagram-3"></i> ${t('devices.detail.identityTemplate', 'Identity & template')}</h3></div>
-            <div class="settings-card-body">
-                <div class="form-row">
-                    <div class="form-group flex-2"><label class="form-label" for="ddvName">${t('devices.wizard.name', 'Device name')}</label>
-                        <input type="text" id="ddvName" class="input" value="${this._esc(d.name)}" ${endpointLk}></div>
-                    <div class="form-group"><label class="form-label" for="ddvTemplate">${t('devices.wizard.template', 'Template')}</label>
-                        <select id="ddvTemplate" class="input" aria-label="${t('devices.wizard.template', 'Template')}" ${endpointLk}>${tplOptions}</select></div>
-                </div>
-            </div>
-        </div>
-
-        <div class="settings-card">
-            <div class="settings-card-header"><h3><i aria-hidden="true" class="bi bi-arrow-repeat"></i> ${t('devices.detail.polling', 'Polling')}</h3></div>
-            <div class="settings-card-body">
-                <label style="display:flex;align-items:center;gap:8px;">
-                    <input type="checkbox" id="ddvEnabled" ${d.enabled ? 'checked' : ''} ${endpointLk}>
-                    ${t('devices.wizard.enabled', 'Start polling immediately after saving')}</label>
-                <div style="margin-top:14px;">
-                    <div style="color:var(--text-secondary);font-size:12px;margin-bottom:6px;">${t('devices.pollGroups', 'Poll-group intervals (seconds)')}</div>
-                    <div id="ddvPollGroups"><span class="field-hint">${t('common.loading', 'Loading…')}</span></div>
-                    <div class="field-hint" style="margin-top:6px;">${t('devices.pollGroupsSaved', 'Saved with Save & Apply below; a changed interval applies at once, without a restart.')}</div>
-                </div>
-            </div>
-            <div class="settings-card-footer">
-                <span class="save-feedback" id="ddvFeedback"></span>
-                <button data-admin class="btn btn-primary btn-sm" data-action="saveDeviceDetail" data-with-el><i aria-hidden="true" class="bi bi-check-lg"></i> ${t('settings.saveApply', 'Save & Apply')}</button>
-            </div>
-        </div>
-        `}
-        ${lockIn === 'connection' ? this._writeLockCard(d, primary) : ''}
-        </div>
-
-        <!-- ── Outputs ── where the values go: a list of outputs and the chosen
-             one's settings (app-outputs.js) -->
-        <div data-dpanel="outputs" hidden><div id="outputsHost"></div></div>
+        <!-- ── the editors of the page (⋯ / E) for what the Edit device
+             modal does not edit: Meters and About (attributes). Every kind
+             — the primary, a unit, a component too — is edited in the
+             modal (ADR-0032 §6); the large editors open full screen. ── -->
+        <!-- Meters: the meters that measure it, and what they give -->
+        <div data-dpanel="meters" data-editor hidden><div class="dev-meters-host"></div></div>
+        <!-- About: the attributes (app-attributes.js) -->
+        <div data-dpanel="attributes" data-editor hidden><div class="dev-attr-host"></div></div>
         </div>`;
     },
-
-    // Write protection (F3a): the per-device lock. Locked = every write is
-    // refused regardless of guards. Toggle is immediate + audited (own
-    // endpoint, admin-only). Shown with the commands (or the settings).
-    _writeLockCard(d, primary) {
-        const locked = !!d.write_locked;
-        return `
-        <div class="settings-card">
-            <div class="settings-card-header">
-                <h3><i aria-hidden="true" class="bi bi-${locked ? 'lock-fill' : 'unlock'}"></i> ${this.t('devices.writeLock.title', 'Write protection')}
-                    ${locked ? `<span class="sink-pill warn">${this.t('devices.writeLock.locked', 'locked')}</span>`
-                             : `<span class="sink-pill ok">${this.t('devices.writeLock.unlocked', 'writes allowed')}</span>`}</h3>
-                <label class="switch-label">
-                    <input data-admin type="checkbox" id="ddvWriteLock" ${locked ? 'checked' : ''}
-                           ${this._act('toggleWriteLock', [this._devDetail.id], {el: true, on: "change"})}>
-                    <span>${this.t('devices.writeLock.lock', 'Lock')}</span>
-                </label>
-            </div>
-            <div class="settings-card-body">
-                <p class="field-hint" style="margin:0;">${primary
-                    ? this.t('devices.writeLock.primaryHint', 'The primary device ships locked (security.primary_write_locked). Unlock only deliberately — this is the meter your live systems read.')
-                    : this._devDetail?.endpoint_id
-                    ? this.t('devices.writeLock.endpointHint', 'Installation-level lock — locking/unlocking here applies to EVERY unit of the installation (one physical connection). The global master switch must also be on for any write.')
-                    : this.t('devices.writeLock.hint', 'Locked: every Modbus write to this device is refused, declared or not. The global master switch (Settings → Security → Modbus writes) must also be on for any write.')}</p>
-            </div>
-        </div>`;
-    },
-
-    async toggleWriteLock(id, cb) {
-        const locked = !!cb.checked;
-        cb.disabled = true;
-        try {
-            const r = await fetch(`/api/devices/${encodeURIComponent(id)}/write-lock`, {
-                method: 'POST', headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ locked }) });
-            const res = await r.json().catch(() => ({}));
-            if (!r.ok) {
-                cb.checked = !locked;
-                const errs = res.detail?.errors || [res.detail || 'failed'];
-                this.showToast('error', this.t('devices.writeLock.title', 'Write protection'),
-                               Array.isArray(errs) ? errs.join(' · ') : String(errs));
-                return;
-            }
-            if (this._devDetail?.data) this._devDetail.data.write_locked = locked;
-            this.showToast('success', this.t('devices.writeLock.title', 'Write protection'),
-                           locked ? this.t('devices.writeLock.nowLocked', 'Device locked — writes refused')
-                                  : this.t('devices.writeLock.nowUnlocked', 'Device unlocked — writes allowed (master switch permitting)'));
-        } finally { cb.disabled = false; }
-    },
-
-
-
 
     _wireDeviceDetail() {
         // in-place workspace tabs; the group bar is wired by data-action
         document.querySelectorAll('#deviceWsTabs .config-main-tab[data-dtab]').forEach(tab =>
             tab.addEventListener('click', () => this._switchDeviceTab(tab.dataset.dtab)));
-        // every panel is the tabpanel of its tab
+        // every panel is the tabpanel of its tab; an editor that is no longer
+        // a tab is a region named by the editing bar over it
         document.querySelectorAll('#deviceDetailView [data-dpanel]').forEach(p => {
             const n = p.dataset.dpanel;
-            if (!document.getElementById(`dtab-${n}`)) return;
             p.id = `dpanel-${n}`;
-            p.setAttribute('role', 'tabpanel');
-            p.setAttribute('aria-labelledby', `dtab-${n}`);
+            if (document.getElementById(`dtab-${n}`)) {
+                p.setAttribute('role', 'tabpanel');
+                p.setAttribute('aria-labelledby', `dtab-${n}`);
+            } else if (p.hasAttribute('data-editor')) {
+                p.setAttribute('role', 'region');
+                p.setAttribute('aria-labelledby', 'ddvEditTitle');
+            }
         });
         this._dgroupLast = {};
+        this._ddvEditing = null;
+        // the full-screen editors' staged edits (L3.11b): none on a page drawn anew
+        this._regDirty = false;
+        this._cmdStaged = {};
+        this._ddvFullEditor = null;
+        document.getElementById('deviceDetailView')?.classList.remove('ddv-full');
+        if (this._ddvFullTrap) this._ddvFullTrap(false);
+        this._setupSection = '';
+        this._ddvWireKeys();
         this._tabAria('#deviceWsGroups');
         this._tabAria('#deviceWsTabs');
         this._renderPairLine();
-        this._loadDevicePollGroups(this._devDetail?.id);
         this._loadDeviceSnapshot(this._devDetail?.id);   // Overview is the default tab
         this._loadDeviceTplUpdate(this._devDetail);
         this._compFoundLast = null;
         if (document.getElementById('devComponentsCard')) this.renderComponentsCard();
         this._loadDeviceUsedBy(this._devDetail?.id);
-        this._mountDeviceConnection();
-    },
-
-    // the Connection tab's form (app-connform.js): how the device is reached,
-    // the same form Add Device uses — its class kept (Modbus variants may
-    // change into one another, HTTP and MQTT stay), the primary on Modbus TCP,
-    // a device holding components kept as it is reached
-    _mountDeviceConnection() {
-        const host = document.getElementById('ddvConn');
-        const s = this._devDetail;
-        if (!host || !s) return;
-        const CM = window.ConnformModel;
-        const M = CM.model(s.entry || {});
-        const holds = ((s.templates || []).find(x => x.id === s.data.template) || {}).components || [];
-        this._cfMount(host, 'ddv', M, {
-            context: 'edit', deviceId: s.id, primary: !!s.primary,
-            lockClass: CM.classOf(M.mode), lockMode: holds.length > 0,
-            template: () => document.getElementById('ddvTemplate')?.value || s.data.template || '',
-        });
     },
 
     // what uses this device: the Overview section, the header's count, and
@@ -955,6 +1048,11 @@ Object.assign(JanitzaMonitor.prototype, {
         const ctx = s.primary ? 'primary' : s.endpoint_id ? 'unit' : s.component_of ? 'component' : 'device';
         const deps = await this._ubMount('device', id, document.getElementById('devUsedBy'), ctx);
         if (deps) this._applyDeviceUsedBy(id, deps);
+        else if (this._devDetail?.id === id) {
+            // not known: the menu says so, and Delete… asks the gateway itself
+            this._devDetail.usedByUnknown = true;
+            this._ddvRefreshMenu();
+        }
     },
 
     _applyDeviceUsedBy(id, deps) {
@@ -967,11 +1065,8 @@ Object.assign(JanitzaMonitor.prototype, {
             badge.querySelector('span').textContent = this.tn('usedby.badge', n, 'used by {n}');
             badge.setAttribute('aria-label', this.tn('usedby.badgeAria', n, 'Used by {n}: show what uses it'));
         }
-        this._ubHold(document.getElementById('ddvDeleteBtn'), n, document.getElementById('ddvDeleteWhy'));
-        const dis = document.getElementById('ddvDisableInstead');
-        if (dis) dis.hidden = !n || this._devDetail.data?.enabled === false;
-        const tog = document.getElementById('ddvEnableToggle');
-        if (tog) tog.hidden = !!n && this._devDetail.data?.enabled !== false;
+        // Delete… held while used, said in the menu: the same items, their state (ADR-0032 §2)
+        this._ddvRefreshMenu();
     },
 
     // a standalone device made from a template that has improved since: the
@@ -980,16 +1075,24 @@ Object.assign(JanitzaMonitor.prototype, {
     async _loadDeviceTplUpdate(s) {
         const box = document.getElementById('devTplUpdate');
         if (!box || !s || s.primary || s.endpoint_id) return;
+        // ⋯ "Update from template…" says "checking…" until this answers, then
+        // whether there is one — the item never comes or goes (ADR-0032 §2)
+        const said = pending => {
+            if (this._devDetail?.id !== s.id || s.tplPending === pending) return;
+            s.tplPending = pending;
+            this._ddvRefreshMenu();
+        };
         try {
             const r = await fetch(`/api/devices/${encodeURIComponent(s.id)}/template-changes`);
-            if (!r.ok) return;
+            if (!r.ok) { said(false); return; }
             const plan = await r.json();
             if (this._devDetail?.id !== s.id) return;    // the operator moved on
+            said(!!plan.pending);
             box.innerHTML = this._tplUpdateNotice('device', s.id, {
                 pending: plan.pending, changes: (plan.changes || []).length,
                 new: (plan.new || []).length, units_affected: 0,
                 missing_templates: plan.missing_templates || [] });
-        } catch (e) { /* the notice is a convenience */ }
+        } catch (e) { said(false); /* the notice is a convenience */ }
     },
 
     // ── Logs ────────────────────────────────────────────────────────────────
@@ -1007,6 +1110,16 @@ Object.assign(JanitzaMonitor.prototype, {
     // embedded (sent home), its footer rhythm. Called before another device
     // page is drawn, on close, and when the user leaves the Devices page.
     _leaveDeviceDetail() {
+        // a full editor never outlives its page: the page behind it is live again
+        document.getElementById('deviceDetailView')?.classList.remove('ddv-full');
+        if (this._ddvFullTrap) this._ddvFullTrap(false);
+        // the Edit modal edits the device the page shows: it never outlives it
+        if (this._devEdit?.open) {
+            this._devEdit.closing = true;
+            const m = document.getElementById('devEditModal');
+            if (m) m._keepOpen = null;        // a save in flight: its answer redraws, if still this device
+            this.closeModal('devEditModal');
+        }
         this._stopDeviceLogs();
         this._stopDeviceChannels();
         this._restoreWsPages();
@@ -1022,6 +1135,10 @@ Object.assign(JanitzaMonitor.prototype, {
         const t = (k, d) => this.t(k, d);
         const host = document.querySelector('#deviceDetailView [data-dpanel="commands"] .dev-cmd-host');
         if (!host) return;
+        // a redraw of this device's tab (the Enabled tick, a save) keeps what
+        // was typed in the other forms and not saved yet
+        const restoreTyped = host.dataset.cbDev === id ? this._cbKeep(host) : () => this._cbSync(host);
+        host.dataset.cbDev = id;
         host.innerHTML = `<div class="field-hint">${t('common.loading', 'Loading…')}</div>`;
         let cmds = [], hist = [], chans = [];
         try {
@@ -1043,6 +1160,12 @@ Object.assign(JanitzaMonitor.prototype, {
         const devRow = (this._devices || []).find(x => x.id === id) || {};
         const standalone = !devRow.endpoint_id;
         const fmtTs = ts => ts ? new Date((typeof ts === 'number' ? ts * 1000 : ts)).toLocaleString(this._loc()) : '';
+        // the binding and channel fields: edited on a device of its own from
+        // ⋯ → Commands & bindings… (read-only in the view); read-only on an
+        // installation's unit, which points to its group (it sets them)
+        const editing = this._ddvEditing === 'commands';
+        const cbCtx = { scope: 'dev', prefix: 'dcb', devId: id, readOnly: !standalone || !editing, staged: editing,
+                        pointer: !standalone, endpointId: devRow.endpoint_id || '', groupId: devRow.group_id || '' };
         host.innerHTML = `
         <div class="settings-card">
             <div class="settings-card-header"><h3><i aria-hidden="true" class="bi bi-send"></i> ${t('commands.tab', 'Commands')}</h3></div>
@@ -1051,7 +1174,10 @@ Object.assign(JanitzaMonitor.prototype, {
                     'What this unit can be told. Each command writes what its template declares — Modbus registers, or a value published over MQTT — then reads back and says whether it took. The same commands are accepted over MQTT and from Home Assistant; every run is audited.')}</p>
                 ${cmds.length ? '' : `<div class="field-hint">${t('commands.none', 'This unit\'s template declares no commands.')}</div>`}
                 <div class="cmd-channels-host">${this._channelsCardHtml(chans)}</div>
-                ${cmds.map(c => `
+                ${window.CmdBindingModel.channels(cmds).map(ch => `
+                <section class="cb-group" data-channel-group="${this._esc(ch.cid)}">
+                ${this._cbChannelHtml(ch, cbCtx)}
+                ${ch.cmds.map(c => `
                 <div class="cmd-card" data-cmd="${this._esc(c.name)}" style="border:1px solid var(--border,#e5e7eb);border-radius:8px;padding:12px;margin-bottom:12px;${c.enabled ? '' : 'opacity:.75;'}">
                     <div style="display:flex;gap:8px;align-items:baseline;flex-wrap:wrap;margin-bottom:8px;">
                         <b>${this._esc(c.label || c.name)}</b> <span class="dev-chip">${this._esc(c.name)}</span>
@@ -1059,12 +1185,14 @@ Object.assign(JanitzaMonitor.prototype, {
                         ${this._tplNoteFor(devRow.template_notes, c.name) ? `<span class="sink-pill warn" title="${this._esc(this._tplNoteFor(devRow.template_notes, c.name))}"><i aria-hidden="true" class="bi bi-exclamation-triangle"></i> ${t('tplNotes.seeNote', 'see the template note')}</span>` : ''}
                         ${c.enabled ? '' : `<span class="sink-pill warn">${t('commands.notEnabled', 'not enabled on this unit')}</span>`}
                         ${c.refreshing ? `<span class="sink-pill ok" title="${this._esc(t('commands.refreshingHint', 'The device forgets this setting by itself: it is written again until the safe value is sent.'))}"><i aria-hidden="true" class="bi bi-arrow-repeat"></i> ${t('commands.refreshing', 'kept alive')}${c.refresh_s ? ` · ${Math.round(c.refresh_s / 60)} min` : ''}</span>` : ''}
-                        ${standalone && c.from_template ? `<label class="checkbox-label" data-admin style="margin-left:8px;"><input type="checkbox" ${c.enabled ? 'checked' : ''} ${this._act('toggleDeviceCommand', [id, c.name], { el: true, on: 'change' })}> <span>${t('commands.enabledHere', 'Enabled on this device')}</span></label>` : ''}
+                        ${standalone && c.from_template ? `<label class="checkbox-label" data-admin style="margin-left:8px;"><input type="checkbox" ${(editing && (this._cmdStaged || {})[c.name] !== undefined ? this._cmdStaged[c.name] : c.enabled) ? 'checked' : ''} ${this._act('toggleDeviceCommand', [id, c.name], { el: true, on: 'change' })}> <span>${t('commands.enabledHere', 'Enabled on this device')}</span></label>` : ''}
                         <span class="field-hint" style="margin-left:auto;">MQTT <code>${this._esc(c.mqtt_topic || '')}</code></span>
                     </div>
-                    ${c.enabled ? '' : `<div class="field-hint" style="margin-bottom:8px;">${standalone
-                        ? t('commands.enableHintDevice', 'Test shows what it would write without writing. Tick “Enabled on this device” to allow Run, the API and MQTT.')
-                        : t('commands.enableHint', 'Tick it under Commands in the group editor of the installation.')}</div>`}
+                    ${c.enabled ? '' : `<div class="field-hint" style="margin-bottom:8px;">${!standalone
+                        ? t('commands.enableHint', 'Tick it under Commands in the group editor of the installation.')
+                        : editing ? t('commands.enableHintDevice', 'Test shows what it would write without writing. Tick “Enabled on this device” to allow Run, the API and MQTT.')
+                        : this._roleHint('commands.enableHintView', 'Test shows what it would write without writing. It is enabled from ⋯ → Commands & bindings….', 'commands.enableHintOther', 'Test shows what it would write without writing. An admin enables it.')}</div>`}
+                    ${c.from_template ? this._cbBindingHtml(c, cbCtx) : ''}
                     ${c.writes && c.writes.length ? `<div class="field-hint" style="margin-bottom:8px;">${t('commands.writes', 'Writes')}: ${c.writes.map(w => `<code>${this._esc(w.register)}</code>`).join(', ')}${c.guard && c.guard.length ? ` · ${t('commands.guarded', 'only if')} ${c.guard.map(g => `<code>${this._cmdGuardText(g)}</code>`).join(', ')}` : ''}${c.verify && c.verify.length ? ` · ${t('commands.verifies', 'verifies')} ${c.verify.map(g => `<code>${this._esc(g.read)}</code>`).join(', ')}` : ''}</div>` : ''}
                     ${this._cmdFormHtml(c, `dcmd_${c.name}`)}
                     <div class="cmd-chan">${this._cmdChannelHtml(c, chanOf(c.name))}</div>
@@ -1076,6 +1204,7 @@ Object.assign(JanitzaMonitor.prototype, {
                     </div>
                     <div class="cmd-out" role="status" aria-live="polite" style="margin-top:8px;font-size:12.5px;"></div>
                 </div>`).join('')}
+                </section>`).join('')}
             </div>
         </div>
         <div class="settings-card">
@@ -1094,6 +1223,7 @@ Object.assign(JanitzaMonitor.prototype, {
                 : `<div class="field-hint">${t('commands.noHistory', 'Nothing yet. Every command — from this page, the API, MQTT or Home Assistant — is recorded here.')}</div>`}
             </div>
         </div>`;
+        restoreTyped();
         // who holds a channel changes on its own (a safety rule starts or stops
         // acting, a pause runs out): kept current while the tab is shown
         this._stopDeviceChannels();
@@ -1276,7 +1406,7 @@ Object.assign(JanitzaMonitor.prototype, {
                   <td style="padding-right:14px;">${g.interval ?? '—'}s</td>
                   <td style="padding-right:14px;${over ? 'color:var(--danger,#ef4444);font-weight:600;' : ''}">${g.cycle_s != null ? g.cycle_s + 's' : '—'}</td>
                   <td style="padding-right:14px;">${g.reads ?? '—'}</td>
-                  <td style="padding-right:14px;${g.overruns ? 'color:var(--warning,#f59e0b);font-weight:600;' : ''}">${g.overruns ?? 0}</td>
+                  <td style="padding-right:14px;${g.overruns ? 'color:var(--warning-text,#8a5a00);font-weight:600;' : ''}">${g.overruns ?? 0}</td>
                   <td>${g.age_s != null ? g.age_s + 's' : '—'}</td></tr>`;
             }).join('')}</table>` : '';
 
@@ -1296,13 +1426,13 @@ Object.assign(JanitzaMonitor.prototype, {
 
     // ── the device page's groups and tabs ─────────────────────────────────
     // A tab's name is its address (#/devices/<id>/<tab>); its group follows
-    // from it. `edit` is the earlier name of `connection`, kept for links.
-    _DTAB_ALIAS: { edit: 'connection', registers: 'measurements', regs: 'measurements', values: 'overview' },
-    _DTAB_GROUP: { overview: 'live', history: 'live', energy: 'live', pq: 'live',
-                   connection: 'configure', measurements: 'configure', calculated: 'configure',
-                   commands: 'configure', meters: 'configure', outputs: 'configure', attributes: 'configure',
-                   monitor: 'diagnose', logs: 'diagnose' },
-    _DGROUPS: ['live', 'configure', 'diagnose'],
+    // from it (ui/js/device-view-model.js). The tabs that only edited
+    // (connection, outputs, attributes, meters; `edit`) left: an old link
+    // opens Setup at the section that shows them now (_DTAB_SECTION).
+    _DTAB_ALIAS: window.DeviceViewModel.TAB_ALIAS,
+    _DTAB_SECTION: window.DeviceViewModel.TAB_SECTION,
+    _DTAB_GROUP: window.DeviceViewModel.TAB_GROUP,
+    _DGROUPS: window.DeviceViewModel.GROUPS,
 
     // the header's second line: health in words, how fresh, what measures it
     _ddvMetaHtml(id, e) {
@@ -1318,7 +1448,8 @@ Object.assign(JanitzaMonitor.prototype, {
                 : t('ddv.measuredBy', 'measured by {list}', { list: names.join(', ') })) : '';
         return `<span class="dev-chip ddv-meta-id" aria-hidden="true">${this._esc(id)}</span>
                 <span class="status-dot" style="--dot:${hColor[health]}" aria-hidden="true"></span>
-                <span class="ddv-verdict">${this._esc(this._verdictWord(e))}</span>${ago ? ` <span aria-hidden="true">·</span> <span>${this._esc(ago)}</span>` : ''}${measured ? ` <span aria-hidden="true">·</span> <span>${this._esc(measured)}</span>` : ''}`;
+                <a class="ddv-verdict ddv-verdict-link" href="#/devices/${encodeURIComponent(id)}/logs" ${this._act('_switchDeviceTab', ['logs'])}
+                   title="${this._esc(this.t('ddv.verdictLogs', 'What its acquisition has been doing: Logs'))}">${this._esc(this._verdictWord(e))}</a>${ago ? ` <span aria-hidden="true">·</span> <span>${this._esc(ago)}</span>` : ''}${measured ? ` <span aria-hidden="true">·</span> <span>${this._esc(measured)}</span>` : ''}`;
     },
 
     async _refreshDdvMeta(id) {
@@ -1336,43 +1467,44 @@ Object.assign(JanitzaMonitor.prototype, {
     async ddvSetEnabled(id, on) {
         const t = (k, d, p) => this.t(k, d, p);
         if (!on) {
-            const deps = this._devDetail?.id === id ? this._devDetail.usedBy : null;
+            // what uses it, asked wherever Disable… was chosen (a list row, a
+            // bridge line: L3-UX-3) — a used device goes through the dialog
+            // that names what reacts
+            let deps = this._devDetail?.id === id ? this._devDetail.usedBy : null;
+            if (!deps) { try { deps = await this._ubLoad('device', id); } catch (e) { deps = null; } }
             if (deps && this._ubCount(deps)) return this.ubDisableInstead('device', id);
             const ok = await this.confirmAction({
                 title: t('usedby.disableDevTitle', 'Disable device {id}', { id }),
-                message: t('ddv.disableMsg', 'Its reading stops; nothing uses it. It can be enabled again.'),
+                message: deps ? t('ddv.disableMsg', 'Its reading stops; nothing uses it. It can be enabled again.')
+                              : t('ddv.disableMsgUnasked', 'Its reading stops. It can be enabled again.'),
                 confirmLabel: t('usedby.disable', 'Disable'),
             });
             if (!ok) return;
         }
-        const r = await fetch(`/api/devices/${encodeURIComponent(id)}`, { method: 'PUT',
-            headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ enabled: !!on }) });
+        const r = await window.DeviceStore.devWrite(id, 'PUT', `/api/devices/${encodeURIComponent(id)}`, { enabled: !!on });
         if (!r.ok) { this.showToast('error', t('toast.saveFailed', 'Save Failed'), this._respError(r, await r.json().catch(() => ({})))); return; }
         this.showToast('success', on ? t('ddv.enabled', 'Enabled') : t('usedby.disabledTitle', 'Disabled'), id);
-        await this.openDeviceDetail(id);
-        const h = document.querySelector('#deviceDetailView h2');
-        if (h) { h.tabIndex = -1; h.focus({ preventScroll: true }); }
+        await this._ddvRedraw(id);
     },
 
     _dgroupLabel(g) {
-        return ({ live: this.t('ddv.group.live', 'Live'), configure: this.t('ddv.group.configure', 'Configure'),
-                  diagnose: this.t('ddv.group.diagnose', 'Diagnose') })[g] || g;
+        return ({ live: this.t('ddv.group.live', 'Live'), data: this.t('ddv.group.data', 'Data'),
+                  setup: this.t('ddv.group.setup', 'Setup'), diagnose: this.t('ddv.group.diagnose', 'Diagnose') })[g] || g;
     },
 
-    // a tab this account may open (a configuration tab is not opened for a
-    // viewer even by a link — by role, never by whether it is on screen)
+    // a tab this account may open (by role, never by whether it is on
+    // screen): every tab is, since none of them edits (L3-F16)
     _dtabAllowed(btn) {
         return !!btn && !(btn.hasAttribute('data-admin') && this._isAdminView && !this._isAdminView());
     },
 
     // the tab a group opens on: the one last used in it on this page, else
-    // its first — Configure on a meter-only device opens on its Meters
+    // its first (Diagnose: its Logs)
     _dgroupTab(g) {
         const tabs = [...document.querySelectorAll(`#deviceWsTabs [data-dtab][data-dgroup="${g}"]`)]
             .filter(b => this._dtabAllowed(b));
         const last = (this._dgroupLast || {})[g];
         if (last && tabs.some(b => b.dataset.dtab === last)) return last;
-        if (g === 'configure' && this._devDetail?.data?.protocol === 'none' && tabs.some(b => b.dataset.dtab === 'meters')) return 'meters';
         if (g === 'diagnose' && tabs.some(b => b.dataset.dtab === 'logs')) return 'logs';
         return tabs[0]?.dataset.dtab || 'overview';
     },
@@ -1381,8 +1513,15 @@ Object.assign(JanitzaMonitor.prototype, {
         return this._switchDeviceTab(this._dgroupTab(g));
     },
 
-    _switchDeviceTab(name) {
+    // opts: section — Setup opens at it (focusSection: and focuses its
+    // heading); editing — the item being edited (ui/js/device-view-model.js
+    // EDIT_TARGETS): the tab's panel shows its editing controls, or `editor`
+    // names the editor shown in place of the tab's panel
+    _switchDeviceTab(name, opts = {}) {
         const id = this._devDetail?.id;
+        const section = opts.section || this._DTAB_SECTION[name] || '';
+        const focusSection = !!opts.focusSection || !!this._DTAB_SECTION[name];
+        this._setupFocusId = '';                      // a section a link asked for: Setup's, set again there
         name = this._DTAB_ALIAS[name] || name;
         if (this._DGROUPS.includes(name)) name = this._dgroupTab(name);
         let btn = document.querySelector(`#deviceWsTabs [data-dtab="${CSS.escape(name)}"]`);
@@ -1396,6 +1535,9 @@ Object.assign(JanitzaMonitor.prototype, {
             b.classList.toggle('on', on);
         });
         document.querySelectorAll('#deviceWsTabs [data-dtab]').forEach(b => { b.hidden = b.dataset.dgroup !== group; });
+        // a group of one tab: its strip says nothing more than the group
+        const strip = document.getElementById('deviceWsTabs');
+        if (strip) strip.classList.toggle('dtabs-one', strip.querySelectorAll('[data-dtab]:not([hidden])').length < 2);
         document.getElementById('dgrpPanel')?.setAttribute('aria-labelledby', `dgrp-${group}`);
         document.getElementById('deviceWsTabs')?.setAttribute('aria-label', this._dgroupLabel(group));
         this._tabAria('#deviceWsGroups');
@@ -1406,8 +1548,19 @@ Object.assign(JanitzaMonitor.prototype, {
             t.classList.toggle('active', t.dataset.dtab === name));
         this._tabAria('#deviceWsTabs');
         btn?.scrollIntoView?.({ block: 'nearest', inline: 'nearest' });
-        document.querySelectorAll('#deviceDetailView [data-dpanel]').forEach(p =>
-            p.hidden = p.dataset.dpanel !== name);
+        // editing (⋯ / E): the editor shown, its controls with it; the view
+        // otherwise — nothing in the page body edits (ADR-0031 §3)
+        const editing = opts.editing || null;
+        const shownPanel = opts.editor || name;
+        this._ddvEditing = editing;
+        document.querySelectorAll('#deviceDetailView [data-dpanel]').forEach(p => {
+            p.hidden = p.dataset.dpanel !== shownPanel;
+            p.classList.toggle('ddv-editing', !!editing && p.dataset.dpanel === shownPanel);
+        });
+        // a large editor is full screen: the edit bar and its panel only (ADR-0032 §6)
+        document.getElementById('deviceDetailView')?.classList.toggle('ddv-full', !!editing && !!opts.full);
+        if (this._ddvFullTrap) this._ddvFullTrap(!!editing && !!opts.full);
+        this._ddvEditBarShow(editing, !!opts.full);
         this._viewDevice = id;                        // lock the scoped views to THIS device
         // a tab that cannot show anything now (polling off, no InfluxDB
         // output) opens on why — its page is not started
@@ -1415,28 +1568,29 @@ Object.assign(JanitzaMonitor.prototype, {
         document.querySelectorAll('#deviceDetailView .dpanel-off').forEach(n => { n.hidden = !(off && n.dataset.offFor === name); });
         // a panel that starts with no control is a tab stop itself (APG), so
         // Tab from the strip lands in it, not past the page
-        const panel = document.querySelector(`#deviceDetailView [data-dpanel="${CSS.escape(name)}"]`);
+        const panel = document.querySelector(`#deviceDetailView [data-dpanel="${CSS.escape(shownPanel)}"]`);
         if (panel) {
             const first = panel.querySelector('a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea, [tabindex="0"]');
-            if (name === 'overview' || !first) panel.tabIndex = 0; else panel.removeAttribute('tabindex');
+            if (name === 'overview' || name === 'setup' || !first) panel.tabIndex = 0; else panel.removeAttribute('tabindex');
+        }
+        if (opts.editor) {
+            // an editor that is no longer a tab, drawn as its tab drew it
+            if (opts.editor === 'meters') this._renderMetersTab();
+            else if (opts.editor === 'attributes') this._loadAttributes('devices', id,
+                document.querySelector('#deviceDetailView [data-dpanel="attributes"] .dev-attr-host'));
+            return;
         }
         if (off) return;
         if (name === 'overview') { this._pairLive = null; this._loadDeviceSnapshot(id); this._renderPairLine(); this._refreshDdvMeta(id); }
-        else if (name === 'outputs') this._renderOutputs();
+        else if (name === 'setup') this._renderSetup(section, focusSection);
         else if (name === 'calculated') this._initCalculated(id);
-        else if (name === 'meters') this._renderMetersTab();
         else if (name === 'logs') this._initDeviceLogs(id);
         else if (name === 'commands') this._initDeviceCommands(id);
-        else if (name === 'attributes') this._loadAttributes('devices', id,
-            document.querySelector('#deviceDetailView [data-dpanel="attributes"] .dev-attr-host'));
         else if (name === 'measurements') this._embedRegisters(id);
         else if (name === 'monitor') this._embedWsPage('monitor', () => this.initMonitorPage());
         else if (name === 'history') this._embedWsPage('history', () => this.initHistoryPage());
         else if (name === 'energy') this._embedWsPage('energy', () => this.initEnergyPage());
-        else if (name === 'pq') {
-            this._embedWsPage('pq', () => this.initPowerQualityPage());
-            if (this._devDetail?.data?.pq_supported) this._loadPqSinkStatus(id);
-        }
+        else if (name === 'pq') this._embedWsPage('pq', () => this.initPowerQualityPage());
     },
 
     // Relocate a standalone page (#<page>Page) into its workspace panel and render
@@ -1462,7 +1616,10 @@ Object.assign(JanitzaMonitor.prototype, {
         if (!this._wsEmbedded.registers) this._wsEmbedded.registers = { parent: el.parentElement, next: el.nextSibling };
         panel.appendChild(el);
         el.style.display = '';
-        this.setRegDevice(id).then(() => {
+        el.inert = false;                             // drawn into the view: live with it
+        // the full editor's other part shown and back: the staged selection is kept
+        const kept = this._regDirty && String(this._regDevice) === String(id);
+        (kept ? Promise.resolve() : this.setRegDevice(id)).then(() => {
             this.registerSearchPage = 1;
             this.renderRegistersTable();
             this.updateConfigTabs();
@@ -1492,9 +1649,9 @@ Object.assign(JanitzaMonitor.prototype, {
 
     // every protocol a device may speak, and its families — the same tuples
     // as multibus/config.py (pinned by tests/test_unchanged_save.py)
-    _DEVICE_PROTOCOLS: ['tcp', 'udp', 'rtu-tcp', 'ascii-tcp', 'rtu', 'ascii', 'rtu_tap', 'http', 'mqtt'],
+    _DEVICE_PROTOCOLS: ['tcp', 'udp', 'rtu-tcp', 'ascii-tcp', 'rtu', 'ascii', 'rtu_tap', 'seplos_v2', 'seplos_v2-tcp', 'http', 'mqtt'],
     _NET_PROTOCOLS: ['tcp', 'udp', 'rtu-tcp', 'ascii-tcp'],
-    _SERIAL_PROTOCOLS: ['rtu', 'ascii', 'rtu_tap'],
+    _SERIAL_PROTOCOLS: ['rtu', 'ascii', 'rtu_tap', 'seplos_v2'],
 
     // a serial line's settings, shown whole: an editor that shows half of
     // them writes the other half back as defaults (a 19200-baud bus read at
@@ -1529,7 +1686,8 @@ Object.assign(JanitzaMonitor.prototype, {
     },
 
     _PROTO_LABEL: { http: 'HTTP', tcp: 'Modbus TCP', udp: 'Modbus UDP', 'rtu-tcp': 'Modbus RTU/TCP', 'ascii-tcp': 'Modbus ASCII/TCP',
-                    rtu: 'Modbus RTU', ascii: 'Modbus ASCII', rtu_tap: 'Modbus RTU tap', mqtt: 'MQTT', none: 'Measured by its meters' },
+                    rtu: 'Modbus RTU', ascii: 'Modbus ASCII', rtu_tap: 'Modbus RTU tap', mqtt: 'MQTT', none: 'Measured by its meters',
+                    seplos_v2: 'Seplos V2', 'seplos_v2-tcp': 'Seplos V2/TCP', can: 'CAN' },
 
     // How a device is reached, in one set of words for the list, the Overview
     // and the component page: its protocol as it goes on the wire (UDP and
@@ -1553,6 +1711,9 @@ Object.assign(JanitzaMonitor.prototype, {
             const broker = e.mqtt_in_broker || c.broker || '—';
             address = `${broker}${c.port ? ':' + c.port : ''}${c.tls ? ' · TLS' : ''}`
                 + ((e.mqtt_in_topic || c.topic) ? ' · ••••' : '');
+        } else if (p === 'can') {
+            // a CAN link: the interface it listens on, the bus's bitrate
+            address = `${c.channel || '—'}${c.bitrate ? ` · ${c.bitrate / 1000} kbit/s` : ''}`;
         } else if (this._SERIAL_PROTOCOLS.includes(p)) {
             const port = ser.serial_port || c.serial_port || '—';
             const baud = ser.baudrate || c.baudrate;
@@ -1564,8 +1725,9 @@ Object.assign(JanitzaMonitor.prototype, {
         return {
             proto: this._protoLabel(p),
             address,
-            unit: (p === 'http' || p === 'mqtt') ? null : (e.unit_id ?? c.unit_id ?? null),
-            pushed: p === 'mqtt' || p === 'rtu_tap',
+            unit: (p === 'http' || p === 'mqtt' || p === 'can') ? null : (e.unit_id ?? c.unit_id ?? null),
+            // a bus listened to (connection mode listen) is pushed too: its own master sets the rhythm
+            pushed: p === 'mqtt' || p === 'rtu_tap' || p === 'can' || c.mode === 'listen',
             // a connection that means something about the device: a TCP
             // session or a broker. A datagram socket or an open tty does not.
             link: ['tcp', 'rtu-tcp', 'ascii-tcp', 'mqtt'].includes(p),
@@ -1593,9 +1755,21 @@ Object.assign(JanitzaMonitor.prototype, {
         if (!reach.pushed && e.poll_rate != null && (e.connected || !reach.link)) {
             return `${Number(e.poll_rate).toFixed(1)} poll/s · ${age || '— ' + t('devices.age', 'age')}`;
         }
-        if (reach.pushed && age) return t('devices.reach.lastValue', 'last value {age} ago', { age: e.staleness_age_s + 's' });
+        const can = e.can ? ' · ' + this._canCountersHtml(e.can) : '';
+        if (reach.pushed && age) return t('devices.reach.lastValue', 'last value {age} ago', { age: e.staleness_age_s + 's' }) + can;
         if (reach.link && !e.connected) return t('devices.verdict.notConnected', 'Not connected');
-        return this._verdictWord(e);
+        return this._verdictWord(e) + can;
+    },
+
+    // a CAN device's counters (GET /api/devices → can, can_client.stats_summary):
+    // frames heard, on unknown ids, decode errors, the interface's listen-only flag
+    _canCountersHtml(c) {
+        const t = (k, d, p) => this.t(k, d, p);
+        const lo = c.listen_only === true ? `<span class="sink-pill ok">${this._esc(t('can.listenOnly', 'listen-only'))}</span>`
+            : c.listen_only === false ? `<span class="sink-pill warn" title="${this._esc(t('can.notListenOnlyHint', 'The interface ACKs frames: set it listen-only on the host (ip link set can0 type can bitrate 500000 listen-only on).'))}">${this._esc(t('can.notListenOnly', 'not listen-only'))}</span>`
+            : '';
+        return `<span data-can-counters>${this._esc(t('can.counters', '{frames} frames · {unknown} unknown ({ids} ids) · {errors} decode errors',
+            { frames: c.frames ?? 0, unknown: c.unknown_frames ?? 0, ids: c.unknown_ids ?? 0, errors: c.decode_errors ?? 0 }))}${c.open_error ? ' · ' + this._esc(c.open_error) : ''} ${lo}</span>`;
     },
 
     // Every way this unit is read, one line each: protocol, address, rhythm,
@@ -1617,15 +1791,16 @@ Object.assign(JanitzaMonitor.prototype, {
             return `<div style="display:flex;gap:8px;align-items:baseline;font-size:12.5px;padding:2px 0;flex-wrap:wrap;" data-read-via="${this._esc(r.id)}">
                 <span class="status-dot" style="--dot:${hc[r.status] || hc.idle}" aria-hidden="true"></span>
                 <b>${this._esc(r.id)}</b>
-                <span style="color:var(--text-secondary);">${this._esc(r.status || 'idle')}</span>
+                <span style="color:var(--text-secondary);">${this._esc(this.t('status.word.' + (r.status || 'idle'), r.status || 'idle'))}</span>
                 <span>${bits.join(' · ')}</span></div>`;
         }).join('');
     },
 
-    // The "Read via" panel of a unit: the truth about how it is read, and the
-    // one thing that is the unit's own — its name. Sources, intervals and the
-    // template belong to the installation and are edited there.
-    _unitReadViaHtml(s, d) {
+    // How a unit is read — the truth about each source (the Edit device
+    // modal's Connection, "set on the installation", L3.11b). Sources,
+    // intervals and the template belong to the installation and are edited
+    // there; the unit's own name is edited in the modal's Identity.
+    _unitReadViaTableHtml(s) {
         const t = this.t.bind(this);
         const rv = (s.entry || {}).read_via || [];
         const rows = rv.map((r, i) => `<tr data-src-row="${this._esc(r.id)}" style="border-top:1px solid var(--border,#2a3038);">
@@ -1637,25 +1812,9 @@ Object.assign(JanitzaMonitor.prototype, {
             <td style="padding:8px 10px 8px 0;white-space:nowrap;">${r.interval_s != null ? `${r.interval_s} s` : '—'}</td>
             <td style="padding:8px 10px 8px 0;white-space:nowrap;">${r.stale_after_s ? `${r.stale_after_s} s` : t('endpoints.never', 'never')}</td>
             <td style="padding:8px 10px 8px 0;white-space:nowrap;font-variant-numeric:tabular-nums;">${r.provides} / ${r.registers}</td>
-            <td style="padding:8px 0;white-space:nowrap;font-variant-numeric:tabular-nums;">${this._esc(r.status || 'idle')}${r.latency_ms != null ? ` · ${Math.round(r.latency_ms)} ms` : ''}${r.fail_pct_5m ? ` · <span style="color:var(--danger,#ef4444);">${r.fail_pct_5m} % ${t('endpoints.failed5m', 'failed (5 min)')}</span>` : ''}</td>
+            <td style="padding:8px 0;white-space:nowrap;font-variant-numeric:tabular-nums;">${this._esc(this.t('status.word.' + (r.status || 'idle'), r.status || 'idle'))}${r.latency_ms != null ? ` · ${Math.round(r.latency_ms)} ms` : ''}${r.fail_pct_5m ? ` · <span style="color:var(--danger-text,#c0392b);">${r.fail_pct_5m} % ${t('endpoints.failed5m', 'failed (5 min)')}</span>` : ''}</td>
         </tr>`).join('');
         return `
-        <div class="field-hint" style="margin:0 0 12px;display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
-            <span><i aria-hidden="true" class="bi bi-diagram-3"></i> ${t('devices.unit.readViaIntro', 'This unit is read as part of')} <b>${this._esc(s.endpoint_name || s.endpoint_id)}</b>. ${t('devices.unit.readViaIntro2', 'Its sources, intervals and template are set there.')}</span>
-            <button class="btn btn-secondary btn-sm" ${this._act('openEndpointDetail', [s.endpoint_id])}><i aria-hidden="true" class="bi bi-diagram-3"></i> ${t('devices.openInstallation', 'Open installation')}</button>
-        </div>
-        <div class="settings-card">
-            <div class="settings-card-header"><h3><i aria-hidden="true" class="bi bi-tag"></i> ${t('devices.unit.identity', 'Name')}</h3></div>
-            <div class="settings-card-body">
-                <div class="form-row align-end">
-                    <div class="form-group flex-2"><label class="form-label" for="ddvName">${t('devices.wizard.name', 'Device name')}</label>
-                        <input type="text" id="ddvName" class="input" value="${this._esc(d.name)}"></div>
-                    <div class="form-group"><button data-admin class="btn btn-primary btn-sm" ${this._act('saveUnitName', [s.id], { el: true })}><i aria-hidden="true" class="bi bi-check-lg"></i> ${t('common.save', 'Save')}</button>
-                        <span class="save-feedback" id="ddvNameFeedback" role="status"></span></div>
-                </div>
-                <div class="field-hint">${t('devices.unit.nameHint', 'The only thing that is this unit’s own. Its id, topics and bucket stay as they are.')}</div>
-            </div>
-        </div>
         <div class="settings-card">
             <div class="settings-card-header"><h3><i aria-hidden="true" class="bi bi-diagram-3"></i> ${t('devices.tab.readVia', 'Read via')}</h3></div>
             <div class="settings-card-body">
@@ -1675,37 +1834,6 @@ Object.assign(JanitzaMonitor.prototype, {
                     ${t('devices.unit.tickHint', 'What is read from each source is ticked in the Measurements tab — pick the source there.')}</p>
             </div>
         </div>`;
-    },
-
-    async saveUnitName(deviceId, btn) {
-        const s = this._devDetail;
-        const fb = document.getElementById('ddvNameFeedback');
-        const name = (document.getElementById('ddvName')?.value || '').trim();
-        if (!s?.endpoint_id) return;
-        if (btn) btn.disabled = true;
-        try {
-            const p = await (await fetch(`/api/endpoints/${encodeURIComponent(s.endpoint_id)}`)).json();
-            const body = this._endpointPutBody(p);
-            const u = body.units.find(x => x.id === deviceId);
-            if (!u) return;
-            if (name) u.name = name; else delete u.name;
-            const rsp = await fetch(`/api/endpoints/${encodeURIComponent(s.endpoint_id)}`, {
-                method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-            const d = await rsp.json().catch(() => ({}));
-            if (!rsp.ok) {
-                const errs = d.detail?.errors || [d.detail || rsp.statusText];
-                if (fb) { fb.textContent = Array.isArray(errs) ? errs.join(' · ') : String(errs); fb.className = 'save-feedback err'; }
-                return;
-            }
-            const made = (d.devices || []).find(x => x.id === deviceId);
-            s.data.name = made?.name || name || s.data.name;
-            const crumb = document.querySelector('#deviceDetailView .section-header h2 .ddv-name');
-            if (crumb) {
-                crumb.innerHTML = `${this._kindIconHtml ? this._kindIconHtml(s.entry?.kind) : ''}${this._esc(s.data.name)}`;
-                crumb.title = s.data.name;
-            }
-            if (fb) { fb.textContent = '✓ ' + this.t('settings.saved', 'Saved & applied'); fb.className = 'save-feedback ok'; setTimeout(() => { if (fb.classList.contains('ok')) fb.textContent = ''; }, 3000); }
-        } finally { if (btn) btn.disabled = false; }
     },
 
     // Read-only status view — what you see first, no forms.
@@ -1768,11 +1896,12 @@ Object.assign(JanitzaMonitor.prototype, {
                 <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:16px 24px;margin-bottom:8px;">
                     ${fact(t('devices.overview.source', 'Source'), `${proto}<br><span style="font-weight:400;font-size:12px;color:var(--text-secondary);word-break:break-all;">${src}</span>`)}
                     ${fact(t('devices.overview.template', 'Template'), this._esc(d.template || '—'))}
-                    ${this._kindLabel ? fact(t('find.facet.kind', 'Kind'), `${this._kindCellHtml(entry.kind)}<br><span style="font-weight:400;font-size:12px;color:var(--text-secondary);" data-kind-source="${this._esc(entry.kind_source || '')}">${this._esc(this._kindSourceWords(entry.kind_source))}</span>`) : ''}
+                    ${this._kindLabel ? fact(t('find.facet.kind', 'Type'), `${this._kindCellHtml(entry.type || entry.kind)}<br><span style="font-weight:400;font-size:12px;color:var(--text-secondary);" data-kind-source="${this._esc(entry.kind_source || '')}">${this._esc(this._kindSourceWords(entry.kind_source))}</span>`) : ''}
                     ${fact(t('devices.overview.registers', 'Measurements polled'), d.selected_registers)}
                     ${reach.link ? fact(t('devices.overview.link', 'Link'), entry.connected ? t('devices.connected', 'Connected') : t('devices.verdict.notConnected', 'Not connected')) : ''}
                     ${reach.pushed ? '' : fact(t('devices.overview.pollRate', 'Poll rate'), entry.poll_rate != null ? entry.poll_rate + '/s' : '—')}
                     ${fact(t('devices.overview.lastRead', 'Last read'), entry.staleness_age_s != null ? entry.staleness_age_s + 's ago' : '—')}
+                    ${entry.can ? fact('CAN', `<span style="font-weight:400;font-size:12.5px;">${this._canCountersHtml(entry.can)}</span>`) : ''}
                     ${fact('MQTT', `${mp} <code style="font-size:11px;">${this._esc(d.topic_prefix || '')}</code>`)}
                     ${fact('InfluxDB', `${ip} <code style="font-size:11px;">${this._esc(d.bucket || '')}</code>`)}
                 </div>
@@ -1812,11 +1941,7 @@ Object.assign(JanitzaMonitor.prototype, {
             // grouped by what they measure; a unit read two ways says which
             // source each value came from
             const manySources = ((this._devDetail?.entry || {}).read_via || []).length > 1;
-            const catOf = v => {
-                if (v.category_label) return v.category_label;
-                const c = v.category || 'other';
-                return this.t(`sec.${c}`, c.charAt(0).toUpperCase() + c.slice(1).replace(/_/g, ' '));
-            };
+            const catOf = v => this._catName(v.category, v.category_label);
             const groups = new Map();
             vals.slice(0, 120).forEach(v => { const k = catOf(v); if (!groups.has(k)) groups.set(k, []); groups.get(k).push(v); });
             const row = v => `<tr>
@@ -1828,45 +1953,13 @@ Object.assign(JanitzaMonitor.prototype, {
         } catch (e) { box.innerHTML = `<span class="field-hint">${this.t('common.error', 'Error')}</span>`; }
     },
 
-    async _loadDevicePollGroups(id) {
-        const box = document.getElementById('ddvPollGroups');
-        if (!box || !id) return;
-        try {
-            const d = await (await fetch(`/api/devices/${encodeURIComponent(id)}/poll-groups`)).json();
-            const groups = d.poll_groups || {};
-            if (this._devDetail?.id !== id) return;
-            box.innerHTML = Object.entries(groups).map(([name, g]) => `
-                <div class="form-group" style="display:flex;align-items:center;gap:8px;margin:4px 0;flex-wrap:wrap;">
-                    <label style="width:90px;font-size:13px;" for="ddvPg-${this._esc(name)}">${this._esc(name)}</label>
-                    <input type="text" inputmode="decimal" class="input input-sm ddv-pg" id="ddvPg-${this._esc(name)}" data-group="${this._esc(name)}"
-                           data-orig="${g.interval}" value="${g.interval}" style="width:110px;" aria-label="${this._esc(name)} interval seconds">
-                    <span style="color:var(--text-secondary);font-size:12px;">${this._esc(g.description || '')}</span>
-                </div>`).join('') || `<span class="field-hint">${this.t('devices.noPollGroups', 'No poll groups.')}</span>`;
-        } catch (e) {
-            box.innerHTML = `<span class="field-hint">${this.t('common.error', 'Error')}</span>`;
-        }
-    },
-
-    // the intervals the Edit tab shows: only the groups changed since it
-    // loaded (the server keeps the others), and the inputs that are wrong
-    _pollGroupEdits() {
-        const changed = {}, fields = {};
-        document.querySelectorAll('#ddvPollGroups .ddv-pg').forEach(inp => {
-            const raw = inp.value.trim().replace(',', '.');
-            const v = /^\d+(\.\d*)?$|^\.\d+$/.test(raw) ? Number(raw) : NaN;
-            if (!Number.isFinite(v) || v < 0.05 || v > 86400) {
-                fields[`poll_groups.${inp.dataset.group}`] = this.t('devices.pgRange', 'Seconds, from 0.05 to 86400');
-            } else if (v !== Number(inp.dataset.orig)) {
-                changed[inp.dataset.group] = { interval: v };
-            }
-        });
-        return { changed, fields };
-    },
-
     // Errors put at their inputs: {path: message} → the field it names is
     // marked and told, the first one focused. What has no input on this
     // page is returned, for the form's own feedback line.
-    _placeFieldErrors(scope, fields, idOf) {
+    // opts.anySection: an input in a section not shown now (the Edit modal's
+    // other sections) still carries its error — the modal's error summary
+    // links to it; opts.focus === false: nothing is focused
+    _placeFieldErrors(scope, fields, idOf, opts = {}) {
         if (!scope) return Object.entries(fields || {}).map(([k, v]) => `${k}: ${v}`);
         scope.querySelectorAll('.field-error[data-placed]').forEach(e => e.remove());
         // the error's id is added to what describes the input (its hints
@@ -1892,7 +1985,10 @@ Object.assign(JanitzaMonitor.prototype, {
             const el = this._pickVisible(field);
             // an input not shown (another mode's section, display:none) cannot
             // carry its error: it is said on the form's own line instead
-            if (!el || !scope.contains(el) || el.closest('[hidden]') || !el.getClientRects().length) { left.push(`${path}: ${msg}`); continue; }
+            const unseen = opts.anySection
+                ? !!el && (el.type === 'hidden' || !!el.closest('[hidden]:not([data-shell-panel])'))
+                : !!el && (el.closest('[hidden]') || !el.getClientRects().length);
+            if (!el || !scope.contains(el) || unseen) { left.push(`${path}: ${msg}`); continue; }
             const err = document.createElement('div');
             err.className = 'field-error';
             err.dataset.placed = '';
@@ -1905,22 +2001,14 @@ Object.assign(JanitzaMonitor.prototype, {
             el.addEventListener('input', () => { clear(el); err.remove(); }, { once: true });
             first = first || el;
         }
-        if (first) first.focus();
+        if (first && opts.focus !== false) first.focus();
         return left;
     },
 
-    // a device page path → its input: the page's own (name, template,
-    // intervals), the connection form's for a connection path
-    _ddvFieldId(path) {
-        if (path.startsWith('poll_groups.')) return `ddvPg-${path.slice('poll_groups.'.length)}`;
-        if (path.startsWith('connection.')) return (this._cf || {}).ddv?.fieldId(path) || null;
-        return ({ name: 'ddvName', template: 'ddvTemplate' })[path] || null;
-    },
-
-    // a device's Edit tab, from anywhere (the bridge card's move button)
+    // a device's connection editor, from anywhere (Add Device's "edit it")
     async openDeviceEdit(id) {
         await this.openDeviceDetail(id);
-        if (this._devDetail?.id === id) this._switchDeviceTab('connection');
+        if (this._devDetail?.id === id) this.ddvEdit('connection');
     },
 
     // a whole number as typed, else null — "1.5" or "abc" is not a unit id,
@@ -1935,22 +2023,6 @@ Object.assign(JanitzaMonitor.prototype, {
         return (v === null || v < 0 || v > 255)
             ? this.t('devices.unitIdNeeded', 'Unit ID: a whole number 0–255 (most devices answer on 1).')
             : null;
-    },
-
-    _gatherDeviceDetail() {
-        const g = id => document.getElementById(id);
-        const s = this._devDetail, d = s.data;
-        // protocol is fixed after creation — fall back to the STORED protocol,
-        // never to 'tcp' (a missing radio must not silently rewrite rtu-tcp)
-        d.protocol = s.data.protocol || 'tcp';
-        d.name = g('ddvName')?.value.trim() || s.id;
-        d.template = g('ddvTemplate')?.value || '';
-        d.enabled = !!g('ddvEnabled')?.checked;
-        // The outputs are switched from their own tab, at once; an edit sends
-        // them as they stand (the primary always routes).
-        if (s.primary) { d.mqtt_enabled = true; d.influxdb_enabled = true; }
-        if (d.protocol === 'none') d.template = '';
-        return d;
     },
 
     // Test on the Connection tab: the form's (the saved device when nothing
@@ -1987,68 +2059,17 @@ Object.assign(JanitzaMonitor.prototype, {
 
 
 
-    // PQ recorder card (Jasic/Janitza only — see docs/pq-recorder.md), on the
-    // Power Quality tab with the events it records. The live status line
-    // (running / last poll / counters) is filled by _loadPqSinkStatus.
-    _pqRecorderCard(d, primary) {
-        const pq = this._devDetail.entry?.pq_recorder || d.pq_recorder || {};
-        const on = !!pq.enabled;
-        return `
-        <div class="settings-card">
-            <div class="settings-card-header">
-                <h3><i aria-hidden="true" class="bi bi-activity"></i> ${this.t('pq.sinkTitle', 'PQ event recorder')}</h3>
-                <label class="switch-label"><input type="checkbox" id="ddvPqEnabled" ${on ? 'checked' : ''}><span>${this.t('devices.sink.enable', 'Enable')}</span></label>
-            </div>
-            <div class="settings-card-body">
-                <div class="form-row">
-                    <div class="form-group" style="max-width:130px"><label class="form-label" for="ddvPqPoll">${this.t('pq.pollS', 'Poll (s)')}</label>
-                        <input type="number" id="ddvPqPoll" class="input" min="30" value="${pq.poll_s || 300}"></div>
-                    <div class="form-group flex-2"><label class="form-label" for="ddvPqBaseUrl">${this.t('pq.baseUrl', 'Base URL')}</label>
-                        <input type="text" id="ddvPqBaseUrl" class="input" value="${this._esc(pq.base_url || '')}" placeholder="${this._esc(this._pqDefaultUrl(d))}">
-                        <div class="field-hint" id="ddvPqBaseUrlHint">${this._esc(this.t('pq.baseUrlBlank', 'Blank: {url}', { url: this._pqDefaultUrl(d) }))}</div></div>
-                </div>
-                <label style="display:flex;align-items:center;gap:8px;margin-top:6px;">
-                    <input type="checkbox" id="ddvPqArchive" ${pq.archive_waveforms !== false ? 'checked' : ''}> ${this.t('pq.archiveWf', 'Archive event waveforms (RMS traces of the implicated channels)')}</label>
-                <div class="rest-status" id="ddvPqStatus"></div>
-                <div class="calc-editor-actions" style="margin-top:12px">
-                    <button data-admin class="btn btn-primary btn-sm" ${this._act('savePqRecorder', [this._devDetail.id])}><i aria-hidden="true" class="bi bi-check-lg"></i> ${this.t('common.save', 'Save')}</button>
-                </div>
-                <p class="field-hint"><i aria-hidden="true" class="bi bi-info-circle"></i> ${this.t('pq.sinkNote', 'Archives the on-device PQ event ring (dips, outages, rapid voltage changes) + waveforms into InfluxDB, publishes new events to MQTT and the alert channels. Browse them in the Power Quality tab.')}</p>
-            </div>
-        </div>`;
-    },
-
     // what a blank Base URL means: the device's own host over HTTP
     _pqDefaultUrl(d) {
         const host = (d?.connection || {}).host || d?.host || (this._devDetail?.data || {}).host || '';
         return host ? `http://${host}` : 'http://<host>';
     },
 
-    async savePqRecorder(id) {
-        const payload = {
-            enabled: document.getElementById('ddvPqEnabled').checked,
-            poll_s: parseInt(document.getElementById('ddvPqPoll').value) || 300,
-            archive_waveforms: document.getElementById('ddvPqArchive').checked,
-            base_url: document.getElementById('ddvPqBaseUrl').value.trim(),
-        };
-        try {
-            const r = await fetch(`/api/pq/config?device=${encodeURIComponent(id)}`,
-                { method: 'POST', headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify(payload) });
-            if (!r.ok) throw new Error((await r.json()).detail || 'failed');
-            if (this._devDetail?.entry) this._devDetail.entry.pq_recorder = (await r.json()).pq_recorder;
-            this.showToast('success', this.t('pq.sinkTitle', 'PQ event recorder'), this.t('settings.saved', 'Saved & applied'));
-            this._fetchDevices(true);
-            this._loadPqSinkStatus(id);
-            this._loadPqStatus?.();          // the tab's own "not enabled" line
-        } catch (e) {
-            this.showToast('error', this.t('pq.sinkTitle', 'PQ event recorder'), String(e.message || e));
-        }
-    },
-
     async _loadPqSinkStatus(id) {
-        const el = document.getElementById('ddvPqStatus');
-        if (!el) return;
+        // the editor's line and Setup's (every [data-pq-status] on the page)
+        const els = [...document.querySelectorAll('#deviceDetailView [data-pq-status], #devEditModal [data-pq-status]')];
+        if (!els.length) return;
+        const el = { set textContent(v) { els.forEach(x => { x.textContent = v; }); } };
         try {
             const r = await fetch('/api/pq/status');
             if (!r.ok) return;
@@ -2084,9 +2105,11 @@ Object.assign(JanitzaMonitor.prototype, {
 
     // a command the template offers, enabled (or not) on this device of its own
     async toggleDeviceCommand(id, name, el) {
+        // the full-screen Commands & bindings editor stages it: written by its one Save
+        if (this._cmdStagedNow(id)) { this._cmdStage(name, el.checked); return; }
         try {
-            const r = await fetch(`/api/devices/${encodeURIComponent(id)}/commands/${encodeURIComponent(name)}/enabled`, {
-                method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ enabled: el.checked }) });
+            const r = await window.DeviceStore.devWrite(id, 'PUT',
+                `/api/devices/${encodeURIComponent(id)}/commands/${encodeURIComponent(name)}/enabled`, { enabled: el.checked });
             const d = await r.json().catch(() => ({}));
             if (!r.ok) throw new Error((d.detail?.errors || [d.detail || r.statusText]).join(' '));
             this.showToast('success', this.t('commands.tab', 'Commands'), `${name}: ${el.checked ? this.t('commands.nowEnabled', 'enabled') : this.t('commands.nowDisabled', 'disabled')}`);
@@ -2100,125 +2123,9 @@ Object.assign(JanitzaMonitor.prototype, {
 
     // sends an enabled, stopped device's settings again: the gateway starts
     // its acquisition (update_device saves a stalled device even unchanged)
+    // (the stored device, never the form: ddvReconnect)
     reconnectDevice() {
-        return this.saveDeviceDetail(document.querySelector('#deviceDetailView [data-action="saveDeviceDetail"]'), true);
-    },
-
-    async saveDeviceDetail(btn, reconnect = false) {
-        const d = this._gatherDeviceDetail();
-        const s = this._devDetail;
-        const fb = document.getElementById('ddvFeedback');
-        const panel = document.querySelector('#deviceDetailView [data-dpanel="connection"]');
-        const say = (text, ok) => { if (fb) { fb.textContent = text; fb.className = `save-feedback ${ok ? 'ok' : 'err'}`; } };
-        // everything wrong that the page can see is said at its input before
-        // anything is sent: a bad interval never leaves a half-saved edit
-        const pg = this._pollGroupEdits();
-        const form = d.protocol === 'none' ? null : (this._cf || {}).ddv;
-        const conn = form ? form.read() : { errors: {} };
-        const local = { ...pg.fields, ...conn.errors };
-        if (Object.keys(local).length) {
-            const left = this._placeFieldErrors(panel, local, p => this._ddvFieldId(p));
-            say(left.length ? left.join(' · ') : this.t('devices.fixMarked', 'Fix the marked fields.'), false);
-            return;
-        }
-        this._placeFieldErrors(panel, {}, () => null);
-        // the connection says only what was changed in it ({} = nothing)
-        const connPayload = form ? form.payload() : {};
-        const payload = this._ddvPayload(s.id, d, connPayload);
-        // only intervals changed: the device itself is not saved (a save of
-        // the primary meter reconnects it, of any device writes its file)
-        const pgChanged = Object.keys(pg.changed).length > 0;
-        const formSame = !Object.keys(connPayload).length
-            && JSON.stringify(this._ddvPayload(s.id, d)) === JSON.stringify(this._ddvPayload(s.id, s.orig));
-        // nothing edited: nothing is sent (FINDINGS PROD-1 — an untouched
-        // Save of the primary reconnected the meter live systems read). An
-        // enabled device that is not running is revived by saving it again:
-        // that is offered as its own action, never done by a plain Save
-        if (formSame && !pgChanged && !reconnect) {
-            if (d.enabled && s.running === false && fb) {
-                fb.className = 'save-feedback err';
-                fb.replaceChildren(document.createTextNode(
-                    this.t('devices.notRunningReconnect', 'Nothing to save — but this device is not running.') + ' '));
-                const b = document.createElement('button');
-                b.type = 'button';
-                b.className = 'btn btn-sm btn-secondary';
-                b.id = 'ddvReconnect';
-                b.dataset.action = 'reconnectDevice';
-                b.setAttribute('data-admin', '');
-                b.textContent = this.t('devices.reconnect', 'Reconnect');
-                fb.append(b);
-                return;
-            }
-            say(this.t('devices.nothingToSave', 'Nothing to save — nothing was sent.'), true);
-            return;
-        }
-        const orig = btn ? btn.innerHTML : '';
-        if (btn) { btn.disabled = true; btn.innerHTML = '<i aria-hidden="true" class="bi bi-arrow-repeat spin"></i>'; }
-        if (fb) { fb.textContent = ''; fb.className = 'save-feedback'; }
-        try {
-            let res = { status: 'unchanged' };
-            if (!(formSame && pgChanged)) {
-                const r = await fetch(`/api/devices/${encodeURIComponent(s.id)}`, {
-                    method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
-                });
-                res = await r.json().catch(() => ({}));
-                if (!r.ok) {
-                    const det = res.detail;
-                    // each refusal at its input; the rest on the feedback line
-                    const left = det?.fields
-                        ? this._placeFieldErrors(panel, det.fields, p => this._ddvFieldId(p))
-                        : [];
-                    const keys = Object.keys(det?.fields || {});
-                    const rest = [...left, ...(det?.errors || [typeof det === 'string' ? det : this.t('toast.saveFailed', 'Save Failed')])
-                        .filter(e => !keys.some(k => String(e).startsWith(k + ': ')))];
-                    say(rest.length ? rest.join(' · ') : this.t('devices.fixMarked', 'Fix the marked fields.'), false);
-                    return;
-                }
-            }
-            const unchanged = res.status === 'unchanged';
-            // the intervals go after the device: only the groups changed, the
-            // server keeps the others
-            let pgErr = null;
-            if (pgChanged) {
-                try {
-                    const pr = await fetch(`/api/devices/${encodeURIComponent(s.id)}/poll-groups`, {
-                        method: 'POST', headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ poll_groups: pg.changed }) });
-                    if (!pr.ok) pgErr = this._respError(pr, await pr.json().catch(() => ({})));
-                } catch (e) { pgErr = e.message || 'failed'; }
-            }
-            if (unchanged && !pgChanged) {
-                say(this.t('devices.unchanged', 'Nothing changed — nothing was restarted.'), true);
-                return;
-            }
-            // a save that answers no `restarted` restarted acquisition (the
-            // quiet path says restarted: false)
-            const saved = unchanged ? null
-                : res.restarted === false ? this.t('devices.savedKept', 'Saved — kept running')
-                : this.t('devices.savedRestarted', 'Saved — restarted');
-            if (!unchanged) this.showToast('success', this.t('devices.updated', 'Device updated'), d.name);
-            if (pgErr) {
-                // a half save is said as one, never a plain "Saved"; the page
-                // stays as typed, the interval the gateway refused marked
-                if (!unchanged) this._devDetail.orig = JSON.parse(JSON.stringify(d));
-                const m = /^([^:\s]+): (.+)$/.exec(pgErr);
-                if (m && pg.changed[m[1]]) this._placeFieldErrors(panel, { [`poll_groups.${m[1]}`]: m[2] }, p => this._ddvFieldId(p));
-                say(unchanged
-                    ? this.t('devices.intervalsFailed', 'Intervals NOT applied: {err}', { err: pgErr })
-                    : this.t('devices.savedIntervalsFailed', 'Saved; intervals NOT applied: {err}', { err: pgErr }), false);
-                return;
-            }
-            const words = [saved, pgChanged ? this.t('devices.intervalsApplied', 'Intervals applied') : null].filter(Boolean).join(' · ');
-            // stay here, redrawn from what is stored now
-            await this.openDeviceDetail(s.id);
-            this._switchDeviceTab('connection');
-            const fb2 = document.getElementById('ddvFeedback');
-            if (fb2) { fb2.textContent = '✓ ' + words; fb2.className = 'save-feedback ok'; }
-        } catch (e) {
-            if (fb) { fb.textContent = e.message; fb.className = 'save-feedback err'; }
-        } finally {
-            if (btn) { btn.disabled = false; btn.innerHTML = orig; }
-        }
+        return this.ddvReconnect(this._devDetail?.id);
     },
 
     // the PUT a device page sends: its name, template, enabled and outputs as
@@ -2235,7 +2142,7 @@ Object.assign(JanitzaMonitor.prototype, {
         const orig = btn ? btn.innerHTML : '';
         if (btn) { btn.disabled = true; btn.innerHTML = '<span class="btn-spinner"></span>'; }
         try {
-            const r = await fetch(`/api/devices/${encodeURIComponent(id)}/test`, { method: 'POST' });
+            const r = await window.DeviceStore.devWrite(id, 'POST', `/api/devices/${encodeURIComponent(id)}/test`);
             const v = this._testVerdict(r, await r.json().catch(() => ({})));
             this.showToast(v.cls === 'ok' ? 'success' : v.cls === 'info' ? 'info' : 'error',
                            v.cls === 'ok' ? this.t('devices.testOk', 'Device answered')
@@ -2355,20 +2262,20 @@ Object.assign(JanitzaMonitor.prototype, {
             kind: 'device', id, details,
             host: onPage ? document.getElementById('devUsedBy') : null,
             title: t('devices.deleteTitle', 'Delete device {id}', { id }),
-            message: t('devices.deleteConfirm',
-                'Its polling stops and it leaves the configuration. It can be restored from "Deleted devices"; its measurement selection stays on disk.'),
+            message: t('devices.deleteConfirm', // admin: only an admin deletes
+                'Its polling stops and it leaves the configuration. Undo (for 10 s) or ⋯ → Deleted devices: restore… brings it back; its measurement selection stays on disk.'),
         };
         if (!await this._ubDelete(ask)) {
             if (onPage && ask.refused) this._applyDeviceUsedBy(id, ask.refused);
             return;
         }
-        this.showToast('success', t('devices.deleted', 'Device deleted'), id);
-        if (this._regDevice === id) this._regDevice = this._primaryDeviceId();
+        if (this._regDevice === id) this._regDevice = this._defaultDeviceId();
         // its own page open: back to the list, not left on a device that is gone
-        if (this._devDetail?.id === id && document.getElementById('deviceDetailView')?.style.display !== 'none') {
-            this.closeDeviceDetail(true);
-            return;
-        }
-        await this.renderDevicesList();
+        if (onPage) { await this.closeDeviceDetail(true); await this._routeSettled(); }
+        else await this.renderDevicesList();
+        // Undo for 10 s (ADR-0032 §8): the restore, and what it cannot bring back said
+        const res = ask.result || {};
+        this._undoToast({ id, name: dev.name || id, resets: res.restore_resets, resumes: res.restore_resumes,
+                          deletedTs: res.deleted_ts, restorable: res.restorable, fromPage: onPage });
     }
 });

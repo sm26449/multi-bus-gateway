@@ -1,5 +1,5 @@
 /* Multi-Bus Gateway — multi-protocol Modbus/HTTP/MQTT acquisition gateway.
- * Copyright (C) 2024-2026 Stefan Maldaianu <sm26449@diysolar.ro>
+ * Copyright (C) 2024-2026 Stefan Maldaianu <stefan@multibus.dev>
  * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 // A device's Outputs tab: where its values go. On the left, every output with
@@ -9,50 +9,86 @@
 // Each output is described ONCE in _outputDefs(): its switch, its state, its
 // summary and its settings. The list, the header, the switch and the
 // remembered choice are built from that description, so an output added
-// later is one entry, not another card to copy. Every switch applies at once;
-// an output with settings to type (REST push, the OPC UA values) saves them
-// from its own panel.
+// later is one entry, not another card to copy.
+//
+// Two ways to save, one description:
+// - staged (the Edit device modal, L3.4 — this._outStage set): every switch
+//   and setting changes the modal's draft ({draft, set(path, v)}); nothing is
+//   sent until the modal's one Save. Each input names its draft path
+//   (data-draft-path, data-draft-kind), the modal reads it back.
+// - at once: every switch applies at once; an output with settings to type
+//   (REST push, the OPC UA values) saves them from its own panel. Since
+//   L3.11b (ADR-0032 §6) no editor of the page uses it: the primary and an
+//   installation's unit are edited in the modal too (staged).
+// A lock the modal holds (the primary's MQTT, InfluxDB and the gateway's HA
+// switch) is said beside its control with its way there (_outLock).
 Object.assign(JanitzaMonitor.prototype, {
+
+    // a value of the draft (staged) or the page's (at once)
+    _outVal(path, now) {
+        const st = this._outStage;
+        return st ? st.draft.cur[path] : now;
+    },
 
     _outputDefs() {
         const s = this._devDetail, d = s.data, id = s.id;
         const t = (k, f) => this.t(k, f);
         const primary = !!s.primary, unit = !!s.endpoint_id;
-        const rp = s.entry?.rest_push || {};
+        const st = this._outStage;
+        const rp = st ? { ...(s.entry?.rest_push || {}), enabled: st.draft.cur['outputs.rest_push.enabled'],
+                          url: st.draft.cur['outputs.rest_push.url'] } : (s.entry?.rest_push || {});
+        const opcuaOn = this._outVal('outputs.opcua.enabled', !!d.opcua_enabled);
         const installation = t('devices.sink.endpointLevel', 'Set on the installation — applies to every unit');
         const endpointWide = unit ? t('devices.endpointUnit.sinkShared', 'Declared on the installation — switching this applies to every unit of') + ` <code>${this._esc(s.endpoint_id)}</code>.` : '';
-        const opcuaFields = d.opcua_fields || [];
+        const opcuaFields = this._outVal('outputs.opcua.fields', d.opcua_fields || []) || [];
         let restHost = '';
         try { restHost = rp.url ? new URL(rp.url).host : ''; } catch (e) { restHost = rp.url || ''; }
+        // staged: a switch changes the draft (the modal saves it); at once: it posts
+        const stage = path => on => st.set(path, on);
         return [
             { key: 'mqtt', icon: 'broadcast', title: 'MQTT',
-              on: !!d.mqtt_enabled, sink: s.sinks?.mqtt, summary: d.topic_prefix,
+              on: !!this._outVal('outputs.mqtt.enabled', d.mqtt_enabled), sink: s.sinks?.mqtt, summary: d.topic_prefix,
               lock: primary ? t('devices.sink.lockedPrimary', 'Always on for device #1') : unit ? installation : '',
+              held: this._outLock('outputs.mqtt'),
               body: () => this._outMqttBody(d, primary, unit),
-              set: on => this._postOutputs(id, { mqtt: on }) },
+              set: st ? stage('outputs.mqtt.enabled') : on => this._postOutputs(id, { mqtt: on }) },
             { key: 'influxdb', icon: 'database', title: 'InfluxDB',
-              on: !!d.influxdb_enabled, sink: s.sinks?.influxdb, summary: d.bucket,
+              on: !!this._outVal('outputs.influxdb.enabled', d.influxdb_enabled), sink: s.sinks?.influxdb, summary: d.bucket,
               lock: primary ? t('devices.sink.lockedPrimary', 'Always on for device #1') : unit ? installation : '',
+              held: this._outLock('outputs.influxdb'),
               body: () => this._outInfluxBody(d, primary, unit),
-              set: on => this._postOutputs(id, { influxdb: on }) },
+              set: st ? stage('outputs.influxdb.enabled') : on => this._postOutputs(id, { influxdb: on }) },
             { key: 'http', icon: 'braces', title: t('devices.sink.httpTitle', 'HTTP / JSON output'),
-              on: !!d.http_output_enabled, sink: s.sinks?.http, summary: `/api/meters/${id}`, scope: endpointWide,
+              on: !!this._outVal('outputs.http_output', d.http_output_enabled), sink: s.sinks?.http, summary: `/api/meters/${id}`, scope: endpointWide,
               body: () => this._outHttpBody(d, id),
-              set: on => this._postHttpOutput(id, on),
+              set: st ? stage('outputs.http_output') : on => this._postHttpOutput(id, on),
               shown: () => d.http_output_enabled && this._loadHttpFeed(id) },
             { key: 'opcua', icon: 'hdd-network', title: 'OPC UA',
-              on: !!d.opcua_enabled, sink: s.sinks?.opcua,
+              on: !!opcuaOn, sink: s.sinks?.opcua,
               summary: opcuaFields.length ? t('devices.sink.opcuaCount', '{n} chosen').replace('{n}', opcuaFields.length)
                                           : t('devices.sink.opcuaAll', 'Every value'),
               scope: unit ? t('devices.sink.opcuaGroup', 'Set for every unit of its group — they share a template, so they share the choice.') : '',
               body: () => this._outOpcuaBody(d),
-              set: on => this._postOpcua(id, on, d.opcua_fields || []),
-              shown: () => d.opcua_enabled && opcuaFields.length && this._loadOpcuaFields(id) },
+              set: st ? stage('outputs.opcua.enabled') : on => this._postOpcua(id, on, d.opcua_fields || []),
+              shown: () => opcuaOn && (opcuaFields.length || this._outOpcuaChosen) && this._loadOpcuaFields(id) },
             { key: 'rest', icon: 'cloud-upload', title: t('rest.title', 'REST push'),
               on: !!rp.enabled, sink: s.sinks?.rest, summary: restHost, scope: endpointWide,
               body: () => this._outRestBody(rp),
-              set: on => this._saveRestPush(id, on) },
+              set: st ? stage('outputs.rest_push.enabled') : on => this._saveRestPush(id, on) },
         ];
+    },
+
+    // a lock the Edit modal holds for an output (the server's, e.g. the
+    // primary's): its words and its way there are said beside the switch
+    _outLock(field) {
+        const st = this._outStage;
+        return (st && (st.locks || []).find(l => l.field === field)) || null;
+    },
+
+    // a staged input: the draft path it edits and how its value reads
+    // (bool | num | mode | text | headers | fields)
+    _outIn(path, kind) {
+        return this._outStage ? ` data-draft-path="${path}" data-draft-kind="${kind}"` : '';
     },
 
     // ── the frame: list + chosen output ──
@@ -96,15 +132,17 @@ Object.assign(JanitzaMonitor.prototype, {
         return `
         <div class="settings-card-header">
             <h3><i aria-hidden="true" class="bi bi-${o.icon}"></i> ${this._esc(o.title)} ${this._sinkStatusPill(o.sink, o.on, this._devDetail?.entry?.connected)}</h3>
-            <label class="switch-label" ${o.lock ? `title="${this._esc(o.lock)}"` : ''}>
-                <input data-admin type="checkbox" id="outEnabled" ${o.on ? 'checked' : ''} ${o.lock ? 'disabled' : ''}
+            <label class="switch-label" ${o.lock && !o.held ? `title="${this._esc(o.lock)}"` : ''}>
+                <input data-admin type="checkbox" id="outEnabled" ${o.on ? 'checked' : ''}
+                       ${o.held ? 'aria-disabled="true" data-de-locked="1" aria-describedby="outEnabledLock"' : o.lock ? 'disabled' : ''}
                        ${this._act('toggleOutput', [o.key], {el: true, on: 'change'})}>
                 <span>${t('devices.sink.enable', 'Enable')}</span>
             </label>
         </div>
         <div class="settings-card-body">
             ${o.body()}
-            ${o.lock ? `<p class="field-hint"><i aria-hidden="true" class="bi bi-lock"></i> ${this._esc(o.lock)}</p>` : ''}
+            ${o.held ? this._deLockHtml(o.held, 'outEnabledLock')
+                : o.lock ? `<p class="field-hint"><i aria-hidden="true" class="bi bi-lock"></i> ${this._esc(o.lock)}</p>` : ''}
             ${o.scope ? `<p class="field-hint"><i aria-hidden="true" class="bi bi-diagram-3"></i> ${o.scope}</p>` : ''}
         </div>`;
     },
@@ -122,18 +160,26 @@ Object.assign(JanitzaMonitor.prototype, {
     },
 
     _renderOutputs(focus = false) {
-        const host = document.getElementById('outputsHost');
+        // the modal's Outputs section while it stages, else the page's editor
+        const host = document.getElementById(this._outStage ? this._outStage.host : 'outputsHost');
         if (!host || !this._devDetail) return;
         host.innerHTML = this._outputsHtml();
         const nav = host.querySelector('.outputs-nav');
         if (nav) nav.addEventListener('keydown', ev => this._outputsKey(ev, nav));
         const active = host.querySelector('.outputs-nav-item.active');
-        // a phone shows the list as a row: bring the open one into view, sideways only
+        this._outNavInView(host);
+        if (focus) active?.focus({ preventScroll: true });
+        this._outputShown();
+    },
+
+    // a phone shows the list as a row: bring the open one into view, sideways
+    // only (again when a hidden list is shown: the Edit modal's section)
+    _outNavInView(host) {
+        const nav = host && host.querySelector('.outputs-nav');
+        const active = host && host.querySelector('.outputs-nav-item.active');
         if (nav && active && nav.scrollWidth > nav.clientWidth) {
             nav.scrollLeft = Math.max(0, active.offsetLeft - nav.offsetLeft - 8);
         }
-        if (focus) active?.focus({ preventScroll: true });
-        this._outputShown();
     },
 
     // the arrows move along the list (either way: it is a row on a phone)
@@ -159,6 +205,12 @@ Object.assign(JanitzaMonitor.prototype, {
         const o = this._outputDefs().find(x => x.key === key);
         if (!o) return;
         const on = !!el.checked;
+        if (this._outStage) {                            // staged: the draft, saved with the modal
+            o.set(on);
+            this._renderOutputs();
+            document.getElementById('outEnabled')?.focus();
+            return;
+        }
         el.disabled = true;
         try {
             await o.set(on);
@@ -173,9 +225,9 @@ Object.assign(JanitzaMonitor.prototype, {
         }
     },
 
-    async _postJson(url, body) {
-        const r = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' },
-                                     body: JSON.stringify(body) });
+    // a POST to the device `id` (its tag sent and kept: ADR-0030)
+    async _devPostJson(id, url, body) {
+        const r = await window.DeviceStore.devWrite(id, 'POST', url, body);
         const res = await r.json().catch(() => ({}));
         if (!r.ok) {
             const errs = res.detail?.errors || [res.detail || 'failed'];
@@ -188,7 +240,7 @@ Object.assign(JanitzaMonitor.prototype, {
     _sinkState(sink, enabled, deviceLive) {
         const t = (k, f) => this.t(k, f);
         if (!enabled) return { cls: 'off', label: t('devices.sink.off', 'off here'),
-            tip: t('devices.sink.offTip', 'Turned off for this device (its Outputs tab).') };
+            tip: this._roleHint('devices.sink.offTip', 'Turned off for this device (its ⋯ → Outputs…).', 'devices.sink.offTipOther', 'Turned off for this device.') };
         if (!sink?.available) return { cls: 'off', label: t('devices.sink.noService', 'off in Settings'),
             tip: t('devices.sink.noServiceTip', 'The service is off for the whole gateway (Settings).') };
         if (!sink.connected) return { cls: 'warn', label: t('devices.sink.down', 'not connected') };
@@ -210,7 +262,7 @@ Object.assign(JanitzaMonitor.prototype, {
 
     // ── MQTT and InfluxDB ──
     async _postOutputs(id, flags) {
-        const res = await this._postJson(`/api/devices/${encodeURIComponent(id)}/outputs`, flags);
+        const res = await this._devPostJson(id, `/api/devices/${encodeURIComponent(id)}/outputs`, flags);
         const d = this._devDetail?.data;
         if (d) {
             d.mqtt_enabled = res.mqtt_enabled;
@@ -237,13 +289,17 @@ Object.assign(JanitzaMonitor.prototype, {
 
     _outMqttBody(d, primary, unit) {
         const t = (k, f) => this.t(k, f);
+        // the gateway's own HA switch, held for the primary: said, with Settings → MQTT
+        const haLock = this._outLock('outputs.ha_discovery');
         return `
         <div class="form-group"><label class="form-label" for="ddvTopic">${t('devices.wizard.topicPrefix', 'MQTT topic prefix')}</label>
             <input type="text" id="ddvTopic" class="input" value="${this._esc(d.topic_prefix)}" disabled></div>
-        <label style="display:flex;align-items:center;gap:8px;margin-top:6px;">
-            <input data-admin type="checkbox" id="ddvHaDisc" ${d.ha_discovery_enabled ? 'checked' : ''} ${unit || primary ? 'disabled' : ''}
-                   ${this._act('toggleHaDiscovery', [this._devDetail.id], {el: true, on: 'change'})}>
+        <label style="display:flex;align-items:center;gap:8px;margin-top:6px;font-size:13px;">
+            <input data-admin type="checkbox" id="ddvHaDisc" ${this._outVal('outputs.ha_discovery', d.ha_discovery_enabled) ? 'checked' : ''}
+                   ${haLock ? 'aria-disabled="true" data-de-locked="1" aria-describedby="ddvHaDiscLock"' : unit || primary ? 'disabled' : ''}
+                   ${this._outStage ? this._outIn('outputs.ha_discovery', 'bool') : this._act('toggleHaDiscovery', [this._devDetail.id], {el: true, on: 'change'})}>
             ${t('devices.wizard.haDiscovery', 'Publish Home Assistant MQTT discovery for this device')}</label>
+        ${haLock ? this._deLockHtml(haLock, 'ddvHaDiscLock') : ''}
         ${unit ? '' : `<p class="field-hint"><i aria-hidden="true" class="bi bi-lock"></i> ${primary
             ? t('devices.sink.mqttLockNote', 'Topic and MQTT output are fixed for device #1 (protects existing history & Home Assistant).')
             : t('devices.sink.routeLockNote', 'Topic prefix is fixed after creation — changing it would orphan existing history & HA entities.')}</p>`}
@@ -268,7 +324,7 @@ Object.assign(JanitzaMonitor.prototype, {
     // ── publishing: when a value goes out (on change or every reading, how
     //    often an unchanged one is resent / at most how often a point is
     //    written) — the device's own, or the gateway's (Settings) ──
-    _pubWords(sect, mode, secs) {
+    _pubWords(sect, mode, secs, hb) {
         const t = (k, f) => this.t(k, f);
         const n = v => String(Number(v));
         if (sect === 'mqtt') {
@@ -277,8 +333,17 @@ Object.assign(JanitzaMonitor.prototype, {
                 ? t('devices.pub.mqttChanged', 'on change · an unchanged value resent every {s} s').replace('{s}', n(secs))
                 : t('devices.pub.mqttChangedOnly', 'on change only');
         }
+        // ADR-0029: in `changed` mode an unchanged value is rewritten every hb s
+        const rewrite = mode !== 'all' && Number(hb) > 0
+            ? ' · ' + t('devices.pub.influxRewrite', 'an unchanged value rewritten every {s} s').replace('{s}', n(hb)) : '';
         return (mode === 'all' ? t('devices.pub.influxAll', 'every reading') : t('devices.pub.influxChanged', 'on change'))
-            + ' · ' + t('devices.pub.influxAtMost', 'at most one point every {s} s').replace('{s}', n(secs));
+            + ' · ' + t('devices.pub.influxAtMost', 'at most one point every {s} s').replace('{s}', n(secs)) + rewrite;
+    },
+
+    // the words for one section's publishing ({publish_mode, write_interval, heartbeat_interval})
+    _pubSaid(sect, p) {
+        const key = sect === 'mqtt' ? 'heartbeat_interval' : 'write_interval';
+        return this._pubWords(sect, p.publish_mode, p[key], p.heartbeat_interval);
     },
 
     _outPublishingHtml(sect) {
@@ -290,62 +355,78 @@ Object.assign(JanitzaMonitor.prototype, {
         const settingsLink = `<a href="#" ${this._act('openSettingsTab', [sect])}>${t('devices.pub.settingsLink', 'Settings')} → ${sect === 'mqtt' ? 'MQTT' : 'InfluxDB'}</a>`;
         const head = `<h4 class="outputs-sub">${t('devices.pub.title', 'Publishing')}</h4>`;
         if (!p.editable) {
-            return `${head}<p class="field-hint">${this._esc(this._pubWords(sect, eff.publish_mode, eff[key]))} — ${t('devices.pub.primary', 'the gateway\'s own device follows')} ${settingsLink}.</p>`;
+            return `${head}<p class="field-hint">${this._esc(this._pubSaid(sect, eff))} — ${t('devices.pub.primary', 'the gateway\'s own device follows')} ${settingsLink}.</p>`;
         }
-        const asSettings = t('devices.pub.asSettings', 'As in Settings') + ` (${this._pubWords(sect, set.publish_mode, set[key])})`;
-        const opt = (v, label) => `<option value="${v}" ${(own.publish_mode || '') === v ? 'selected' : ''}>${this._esc(label)}</option>`;
+        const asSettings = t('devices.pub.asSettings', 'As in Settings') + ` (${this._pubSaid(sect, set)})`;
+        // staged (the Edit modal): the draft's values, read back by the modal
+        const st = this._outStage;
+        const val = k => (st ? st.draft.cur[`outputs.${sect}.${k}`] : own[k]);
+        const mode = val('publish_mode') || '';
+        const opt = (v, label) => `<option value="${v}" ${mode === v ? 'selected' : ''}>${this._esc(label)}</option>`;
         const unit = this._devDetail.endpoint_id;
         return `
         ${head}
         <div class="form-row">
             <div class="form-group flex-2"><label class="form-label" for="pubMode-${sect}">${t('devices.pub.when', 'Send a value')}</label>
-                <select id="pubMode-${sect}" class="input" data-admin>
+                <select id="pubMode-${sect}" class="input" data-admin${this._outIn(`outputs.${sect}.publish_mode`, 'mode')}>
                     ${opt('', asSettings)}${opt('changed', t('devices.pub.onChange', 'On change'))}${opt('all', t('devices.pub.every', 'At every reading'))}
                 </select></div>
             <div class="form-group"><label class="form-label" for="pubSecs-${sect}">${sect === 'mqtt'
                     ? t('devices.pub.heartbeat', 'Resend an unchanged value every (s)')
                     : t('devices.pub.interval', 'At most one point every (s)')}</label>
-                <input type="number" id="pubSecs-${sect}" class="input" data-admin min="0" max="86400" step="1"
-                       value="${own[key] ?? ''}" placeholder="${this._esc(String(set[key]))}"></div>
+                <input type="number" id="pubSecs-${sect}" class="input" data-admin min="0" max="86400" step="1"${this._outIn(`outputs.${sect}.${key}`, 'num')}
+                       value="${this._esc(val(key) ?? '')}" placeholder="${this._esc(String(set[key]))}"></div>
+            ${sect === 'influxdb' ? `<div class="form-group"><label class="form-label" for="pubHb-influxdb">${t('influx.heartbeat', 'Rewrite an unchanged value every (s)')}</label>
+                <input type="number" id="pubHb-influxdb" class="input" data-admin min="0" max="86400" step="1"${this._outIn('outputs.influxdb.heartbeat_interval', 'num')}
+                       value="${this._esc(val('heartbeat_interval') ?? '')}" placeholder="${this._esc(String(set.heartbeat_interval))}"
+                       aria-describedby="pubHbGw-influxdb pubHbZero-influxdb">
+                <span class="field-hint"><span id="pubHbGw-influxdb">${this._esc(t('devices.pub.gateway', 'gateway: {s} s').replace('{s}', String(set.heartbeat_interval)))}</span>
+                    · <span id="pubHbZero-influxdb">${this._esc(t('devices.pub.zeroRewrite', '0 = never rewrite'))}</span></span></div>` : ''}
         </div>
         <p class="field-hint">${t('devices.pub.blank', 'Blank = as in')} ${settingsLink}${sect === 'mqtt' ? ` · ${t('devices.pub.zero', '0 = never resend')}` : ''}.
-            ${t('devices.pub.now', 'Now')}: <strong id="pubNow-${sect}">${this._esc(this._pubWords(sect, eff.publish_mode, eff[key]))}</strong>.</p>
+            ${t('devices.pub.now', 'Now')}: <strong id="pubNow-${sect}">${this._esc(this._pubSaid(sect, eff))}</strong>.</p>
         ${unit ? `<p class="field-hint"><i aria-hidden="true" class="bi bi-diagram-3"></i> ${t('devices.pub.group', 'Set for every unit of its group.')}</p>` : ''}
-        <div class="outputs-actions">
+        ${st ? '' : `<div class="outputs-actions">
             <button data-admin type="button" class="btn btn-primary btn-sm" ${this._act('savePublishing', [sect])}><i aria-hidden="true" class="bi bi-check-lg"></i> ${t('devices.pub.save', 'Save publishing')}</button>
-        </div>`;
+        </div>`}`;
     },
 
     async savePublishing(sect) {
         const id = this._devDetail?.id;
         const key = sect === 'mqtt' ? 'heartbeat_interval' : 'write_interval';
         const mode = document.getElementById(`pubMode-${sect}`)?.value || null;
-        const raw = (document.getElementById(`pubSecs-${sect}`)?.value || '').trim();
-        const secs = raw === '' ? null : Number(raw);
-        if (secs !== null && !(secs >= 0 && secs <= 86400)) {
+        const secsOf = elId => {
+            const raw = (document.getElementById(elId)?.value || '').trim();
+            return raw === '' ? null : Number(raw);
+        };
+        const body = { publish_mode: mode, [key]: secsOf(`pubSecs-${sect}`) };
+        if (sect === 'influxdb') body.heartbeat_interval = secsOf('pubHb-influxdb');
+        const ok = (v, whole) => v === null || (v >= 0 && v <= 86400 && (!whole || Number.isInteger(v)));
+        if (!ok(body[key], false) || !ok(body.heartbeat_interval ?? null, true)) {
             this.showToast('error', this.t('devices.pub.title', 'Publishing'), this.t('devices.pub.badSecs', 'Seconds, 0 to 86400 — or blank for Settings.'));
             return;
         }
         try {
-            const res = await this._postJson(`/api/devices/${encodeURIComponent(id)}/publishing`,
-                                             { [sect]: { publish_mode: mode, [key]: secs } });
+            const res = await this._devPostJson(id, `/api/devices/${encodeURIComponent(id)}/publishing`,
+                                             { [sect]: body });
             if (this._devDetail?.entry) this._devDetail.entry.publishing = res.publishing;
             const eff = res.publishing.effective[sect];
-            this.showToast('success', this.t('devices.pub.title', 'Publishing'), this._pubWords(sect, eff.publish_mode, eff[key]));
+            this.showToast('success', this.t('devices.pub.title', 'Publishing'), this._pubSaid(sect, eff));
             this._renderOutputs();
         } catch (e) {
             this.showToast('error', this.t('devices.pub.title', 'Publishing'), e.message);
         }
     },
 
-    openSettingsTab(tab) {
+    async openSettingsTab(tab) {
+        if (this._deLeave && !await this._deLeave()) return;     // the Edit modal closes first (asks when unsaved)
         this.navigateTo('config');
         this.switchConfigTab(tab);
     },
 
     // ── HTTP / JSON ──
     async _postHttpOutput(id, enabled) {
-        await this._postJson(`/api/devices/${encodeURIComponent(id)}/http-output`, { enabled });
+        await this._devPostJson(id, `/api/devices/${encodeURIComponent(id)}/http-output`, { enabled });
         if (this._devDetail?.data) this._devDetail.data.http_output_enabled = enabled;
         this._patchSink('http', { enabled, active: enabled });
     },
@@ -353,8 +434,11 @@ Object.assign(JanitzaMonitor.prototype, {
     _outHttpBody(d, id) {
         const t = (k, f) => this.t(k, f);
         const url = `${location.origin}/api/meters/${id}`;
-        if (!d.http_output_enabled) {
+        if (!this._outVal('outputs.http_output', d.http_output_enabled)) {
             return `<p class="field-hint">${t('devices.sink.httpNote', 'Serves this device\'s live values as read-only JSON, keyed by measurement name (Solar-API style) — pull it from any HTTP client without MQTT or InfluxDB. Guarded by the same IP allowlist / auth as the UI.')}</p>`;
+        }
+        if (!d.http_output_enabled) {                     // switched on in the draft: served once saved
+            return `<p class="field-hint">${this._esc(t('devices.sink.httpAfterSave', 'Served at {url} once saved.').replace('{url}', url))}</p>`;
         }
         return `
         <div class="form-group">
@@ -405,13 +489,16 @@ Object.assign(JanitzaMonitor.prototype, {
         const s = this._devDetail.sinks?.opcua || {};
         const id = this._devDetail.id;
         const t = (k, f) => this.t(k, f);
-        const chosen = (d.opcua_fields || []).length > 0;
+        const st = this._outStage;
+        const fields = this._outVal('outputs.opcua.fields', d.opcua_fields || []) || [];
+        // staged: "only the values I choose" stays picked while none is ticked yet
+        const chosen = fields.length > 0 || (!!st && !!this._outOpcuaChosen);
         const server = s.available
             ? `<code>${this._esc((s.endpoint || '').replace('0.0.0.0', location.hostname))}</code>`
             : t('devices.sink.opcuaServerOff', 'The OPC UA server is off — Settings → OPC UA.');
         return `
         <p class="field-hint">${this._esc(t('devices.sink.opcuaNote', 'Serves this device on the gateway\'s OPC UA server, for SCADA systems and HMI panels: each value with its quality and read time, under Devices/<device>/<value>.'))} ${server}</p>
-        ${d.opcua_enabled ? `
+        ${this._outVal('outputs.opcua.enabled', d.opcua_enabled) ? `
         <fieldset class="outputs-choice">
             <legend class="form-label">${t('devices.sink.opcuaWhich', 'Values served')}</legend>
             <label><input data-admin type="radio" name="ddvOpcuaMode" value="all" ${chosen ? '' : 'checked'} ${this._act('_opcuaMode', [id], {el: true, on: 'change'})}> ${t('devices.sink.opcuaAll', 'Every value')}</label>
@@ -419,16 +506,16 @@ Object.assign(JanitzaMonitor.prototype, {
         </fieldset>
         <div id="ddvOpcuaPick" ${chosen ? '' : 'hidden'}>
             <input type="search" id="ddvOpcuaFilter" class="input" placeholder="${t('common.filter', 'Filter')}" aria-label="${t('common.filter', 'Filter')}" ${this._act('_opcuaFilter', [], {el: true, on: 'input'})}>
-            <div id="ddvOpcuaList" class="outputs-pick-list">${t('common.loading', 'Loading…')}</div>
+            <div id="ddvOpcuaList" class="outputs-pick-list"${this._outIn('outputs.opcua.fields', 'fields')}>${t('common.loading', 'Loading…')}</div>
             <div class="outputs-actions">
                 <span id="ddvOpcuaCount" class="field-hint"></span>
-                <button data-admin type="button" class="btn btn-primary btn-sm" ${this._act('saveOpcuaFields', [id])}><i aria-hidden="true" class="bi bi-check-lg"></i> ${t('devices.sink.opcuaSave', 'Serve these values')}</button>
+                ${st ? '' : `<button data-admin type="button" class="btn btn-primary btn-sm" ${this._act('saveOpcuaFields', [id])}><i aria-hidden="true" class="bi bi-check-lg"></i> ${t('devices.sink.opcuaSave', 'Serve these values')}</button>`}
             </div>
         </div>` : ''}`;
     },
 
     async _postOpcua(id, enabled, fields) {
-        const res = await this._postJson(`/api/devices/${encodeURIComponent(id)}/opcua-output`, { enabled, fields });
+        const res = await this._devPostJson(id, `/api/devices/${encodeURIComponent(id)}/opcua-output`, { enabled, fields });
         const d = this._devDetail?.data;
         if (d) {
             d.opcua_enabled = res.opcua_enabled;
@@ -444,6 +531,12 @@ Object.assign(JanitzaMonitor.prototype, {
         const chosen = el.value === 'chosen';
         const pick = document.getElementById('ddvOpcuaPick');
         if (pick) pick.hidden = !chosen;
+        if (this._outStage) {                            // staged: the draft (every value = no list)
+            this._outOpcuaChosen = chosen;
+            if (chosen) this._loadOpcuaFields(id);
+            else this._outStage.set('outputs.opcua.fields', []);
+            return;
+        }
         if (chosen) { this._loadOpcuaFields(id); return; }
         try {                                            // back to every value: applies at once
             await this._postOpcua(id, true, []);
@@ -461,7 +554,7 @@ Object.assign(JanitzaMonitor.prototype, {
         try {
             rows = (await (await fetch(`/api/registers/selected?device=${encodeURIComponent(id)}`)).json()).registers || [];
         } catch (e) { /* the list stays empty, said below */ }
-        const picked = new Set(this._devDetail?.data?.opcua_fields || []);
+        const picked = new Set(this._outVal('outputs.opcua.fields', this._devDetail?.data?.opcua_fields || []) || []);
         const seen = new Set();
         rows = rows.filter(r => r.name && !seen.has(r.name) && seen.add(r.name));
         // a chosen value the device no longer declares stays visible, so it can be unticked
@@ -508,28 +601,32 @@ Object.assign(JanitzaMonitor.prototype, {
         const t = (k, f) => this.t(k, f);
         const id = this._devDetail.id;
         const last = rp.last || {};
-        const hdrText = Object.entries(rp.headers || {}).map(([k, v]) => `${k}: ${v}`).join('\n');
+        const st = this._outStage;
+        // staged: the draft's values (the modal's Save sends them)
+        const v = (k, now) => (st ? st.draft.cur[`outputs.rest_push.${k}`] : now);
+        const hdrText = Object.entries(v('headers', rp.headers) || {}).map(([k, x]) => `${k}: ${x}`).join('\n');
         const statusLine = last.ts
             ? (last.ok ? `✓ ${t('rest.ok', 'push OK')} ${last.code ? '(' + last.code + ')' : ''}` : `✕ ${last.error || 'failed'}`)
             : '';
+        const fmt = v('format', rp.format);
         return `
         <div class="form-row">
             <div class="form-group flex-2"><label class="form-label" for="ddvRestUrl">${t('rest.url', 'POST URL')}</label>
-                <input type="text" id="ddvRestUrl" class="input" value="${this._esc(rp.url || '')}" placeholder="https://my-cloud/api/telemetry"></div>
+                <input type="text" id="ddvRestUrl" class="input" value="${this._esc(v('url', rp.url) || '')}" placeholder="https://my-cloud/api/telemetry"${this._outIn('outputs.rest_push.url', 'text')}></div>
             <div class="form-group" style="max-width:110px"><label class="form-label" for="ddvRestInterval">${t('rest.interval', 'Interval (s)')}</label>
-                <input type="number" id="ddvRestInterval" class="input" min="5" value="${rp.interval_s || 30}"></div>
+                <input type="number" id="ddvRestInterval" class="input" min="5" value="${this._esc(v('interval_s', rp.interval_s) || 30)}"${this._outIn('outputs.rest_push.interval_s', 'num')}></div>
             <div class="form-group" style="max-width:120px"><label class="form-label" for="ddvRestFormat">${t('rest.format', 'Format')}</label>
-                <select id="ddvRestFormat" class="input"><option value="native" ${rp.format !== 'flat' ? 'selected' : ''}>native</option><option value="flat" ${rp.format === 'flat' ? 'selected' : ''}>flat</option></select></div>
+                <select id="ddvRestFormat" class="input"${this._outIn('outputs.rest_push.format', 'text')}><option value="native" ${fmt !== 'flat' ? 'selected' : ''}>native</option><option value="flat" ${fmt === 'flat' ? 'selected' : ''}>flat</option></select></div>
         </div>
         <div class="form-group"><label class="form-label" for="ddvRestHeaders">${t('rest.headers', 'Headers (Name: Value per line)')}</label>
-            <textarea id="ddvRestHeaders" class="input" rows="2" spellcheck="false" placeholder="Authorization: Bearer …">${this._esc(hdrText)}</textarea></div>
+            <textarea id="ddvRestHeaders" class="input" rows="2" spellcheck="false" placeholder="Authorization: Bearer …"${this._outIn('outputs.rest_push.headers', 'headers')}>${this._esc(hdrText)}</textarea></div>
         <label style="display:flex;align-items:center;gap:8px;margin-top:6px;">
-            <input type="checkbox" id="ddvRestVerify" ${rp.verify_tls !== false ? 'checked' : ''}> ${t('rest.verifyTls', 'Verify TLS certificate')}</label>
+            <input type="checkbox" id="ddvRestVerify" ${v('verify_tls', rp.verify_tls) !== false ? 'checked' : ''}${this._outIn('outputs.rest_push.verify_tls', 'bool')}> ${t('rest.verifyTls', 'Verify TLS certificate')}</label>
         <div class="rest-status" id="ddvRestStatus" aria-live="polite">${this._esc(statusLine)}</div>
-        <div class="outputs-actions">
+        ${st ? `<p class="field-hint">${this._esc(t('rest.testAfterSave', 'Test push tries the saved settings: Setup → Outputs, after Save.'))}</p>` : `<div class="outputs-actions">
             <button data-live class="btn btn-ghost btn-sm" ${this._act('testRestPush', [id])}><i aria-hidden="true" class="bi bi-send"></i> ${t('rest.test', 'Test push')}</button>
             <button data-admin class="btn btn-primary btn-sm" ${this._act('saveRestPush', [id])}><i aria-hidden="true" class="bi bi-check-lg"></i> ${t('common.save', 'Save')}</button>
-        </div>
+        </div>`}
         <p class="field-hint"><i aria-hidden="true" class="bi bi-info-circle"></i> ${t('rest.note', 'POSTs the live values of this device as JSON to the URL every interval. External URLs are allowed. Put a Bearer / API key in Headers (stored masked).')}</p>`;
     },
 
@@ -554,7 +651,7 @@ Object.assign(JanitzaMonitor.prototype, {
     },
 
     async _saveRestPush(id, enabled) {
-        const res = await this._postJson(`/api/devices/${encodeURIComponent(id)}/rest-push`, this._restPushPayload(enabled));
+        const res = await this._devPostJson(id, `/api/devices/${encodeURIComponent(id)}/rest-push`, this._restPushPayload(enabled));
         if (this._devDetail?.entry) this._devDetail.entry.rest_push = res.rest_push;
         this._patchSink('rest', { enabled: !!res.rest_push?.enabled, active: !!res.rest_push?.enabled });
         return res;
@@ -577,7 +674,7 @@ Object.assign(JanitzaMonitor.prototype, {
         if (!(await this.saveRestPush(id))) return;   // the test uses the saved settings
         const box = document.getElementById('ddvRestStatus');
         try {
-            const d = await (await fetch(`/api/devices/${encodeURIComponent(id)}/rest-push/test`, { method: 'POST' })).json();
+            const d = await (await window.DeviceStore.devWrite(id, 'POST', `/api/devices/${encodeURIComponent(id)}/rest-push/test`)).json();
             if (box) box.textContent = d.ok ? `✓ ${this.t('rest.ok', 'push OK')} ${d.code ? '(' + d.code + ')' : ''}` : `✕ ${d.error || 'failed'}`;
             this.showToast(d.ok ? 'success' : 'error', this.t('rest.title', 'REST push'),
                 d.ok ? this.t('rest.ok', 'push OK') : (d.error || 'failed'));

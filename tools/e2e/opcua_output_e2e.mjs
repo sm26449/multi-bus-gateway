@@ -1,8 +1,10 @@
-/* Device → Outputs → OPC UA: a device from before the choice existed is
- * served with every value; a new one is off; "only the values I choose"
- * lists what the device reads, keeps the choice across a reload, and the
- * OPC UA server serves exactly that (tools/e2e/opcua_client_check.py-style
- * browse is done by the caller); the Romanian page.
+/* Device → Outputs → OPC UA (⋯ → Outputs…: the Edit device modal, L3.4 —
+ * the switch and the choice are staged and saved with its one Save): a
+ * device from before the choice existed is served with every value; a new
+ * one is off; "only the values I choose" lists what the device reads, keeps
+ * the choice across a reload, and the OPC UA server serves exactly that
+ * (tools/e2e/opcua_client_check.py-style browse is done by the caller); the
+ * Romanian page.
  *
  *   docker run -d --rm --name mbg-opcout-test -p 127.0.0.1:18090:8080 -p 127.0.0.1:14840:4840 \
  *     -e UI_HOST=0.0.0.0 --entrypoint python -v "$PWD":/app:ro -v <cfg>:/app/config -w /app <image> main.py
@@ -12,7 +14,8 @@
  * OPC UA server is switched on here when it is off, and back off after.
  */
 import { chromium } from 'playwright';
-import { openDeviceTab } from './lib/device-page.mjs';
+import { openDeviceTab, saveDeviceEditor } from './lib/device-page.mjs';
+import { watchDialogs } from './lib/dialogs.mjs';
 const BASE = process.env.MBG_URL || 'http://127.0.0.1:18090';
 const results = [];
 const check = (name, cond, extra = '') => { results.push({ name, ok: !!cond }); console.log(`${cond ? 'PASS' : 'FAIL'} ${name}${extra ? ' — ' + JSON.stringify(extra) : ''}`); };
@@ -20,7 +23,8 @@ const browser = await chromium.launch(process.env.CHROMIUM_PATH ? { executablePa
 const ctx = await browser.newContext({ viewport: { width: 1500, height: 1000 } });
 const page = await ctx.newPage();
 page.setDefaultTimeout(20000);
-const errs = []; page.on('console', m => { if (m.type() === 'error' && !/40[1349]|422/.test(m.text())) errs.push(m.text()); }); page.on('pageerror', e => errs.push(String(e)));
+const dlg = await watchDialogs(page);                 // an output going off is reviewed: answered yes
+const errs = []; page.on('console', m => { if (m.type() === 'error' && !/40[1349]|422|Failed to fetch/.test(m.text())) errs.push(m.text()); }); page.on('pageerror', e => errs.push(String(e)));
 const sink = async id => (await (await ctx.request.get(BASE + '/api/devices')).json()).devices.find(d => d.id === id)?.sinks?.opcua || {};
 
 async function openOutputs(id) {
@@ -57,7 +61,8 @@ try {
         && (await sink('pump2')).enabled === false);
   check('…and its choices are hidden while off', await page.locator('input[name="ddvOpcuaMode"]').count() === 0);
   await page.locator('#outEnabled').check(); await page.waitForTimeout(1000);
-  check('turned on from the switch, at once', (await sink('pump2')).enabled === true);
+  check('turned on from the switch: staged, nothing sent before Save', (await sink('pump2')).enabled === false
+        && await page.locator('input[name="ddvOpcuaMode"]').count() === 2);
 
   await page.locator('input[name="ddvOpcuaMode"][value="chosen"]').check(); await page.waitForTimeout(1500);
   const boxes = page.locator('#ddvOpcuaList input[type=checkbox]');
@@ -72,24 +77,31 @@ try {
   const secondName = await second.getAttribute('value');
   await second.check();
   check('the count follows the ticks', /2/.test(await page.locator('#ddvOpcuaCount').innerText()));
-  await page.locator('button[data-action="saveOpcuaFields"]').click(); await page.waitForTimeout(1000);
+  check('no "Serve these values" of its own: the modal\'s Save', !(await page.locator('button[data-action="saveOpcuaFields"]').count()));
+  const r1 = await saveDeviceEditor(page);
   const fields = (await sink('pump2')).fields || [];
-  check('the chosen values are saved', fields.length === 2 && fields.includes(secondName), fields);
+  check('on and the chosen values, saved in one PATCH', r1?.ok() && (await sink('pump2')).enabled === true
+        && fields.length === 2 && fields.includes(secondName), fields);
 
   await openOutputs('pump2');
   check('after a reload the choice is shown', await page.locator('input[name="ddvOpcuaMode"][value="chosen"]').isChecked()
         && await page.locator('#ddvOpcuaList input[type=checkbox]:checked').count() === 2);
 
   await page.locator('input[name="ddvOpcuaMode"][value="all"]').check(); await page.waitForTimeout(1000);
-  check('back to every value, at once', ((await sink('pump2')).fields || []).length === 0);
+  await saveDeviceEditor(page);
+  check('back to every value, on Save', ((await sink('pump2')).fields || []).length === 0);
+  await openOutputs('pump2');
   await page.locator('input[name="ddvOpcuaMode"][value="chosen"]').check(); await page.waitForTimeout(1200);
   await page.locator('#ddvOpcuaList input[type=checkbox]').first().check();
-  await page.locator('button[data-action="saveOpcuaFields"]').click(); await page.waitForTimeout(800);
+  await saveDeviceEditor(page);
   console.log('SERVED_FIELD=' + ((await sink('pump2')).fields || [])[0]);
 
   await openOutputs('vfd1');
-  await page.locator('#outEnabled').uncheck(); await page.waitForTimeout(1000);
-  check('an old device turned off', (await sink('vfd1')).enabled === false);
+  await page.locator('#outEnabled').uncheck(); await page.waitForTimeout(500);
+  const nRev = dlg.seen.length;
+  await saveDeviceEditor(page);
+  check('an old device turned off (reviewed first: an output going off)', (await sink('vfd1')).enabled === false
+        && /Review/.test((dlg.seen[nRev] || {}).title || ''));
 
   await page.evaluate(() => { try { localStorage.setItem('mbg-lang', 'ro'); } catch (e) {} });
   await openOutputs('pump2');

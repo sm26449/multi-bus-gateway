@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # Multi-Bus Gateway — multi-protocol Modbus/HTTP/MQTT acquisition gateway.
-# Copyright (C) 2024-2026 Stefan Maldaianu <sm26449@diysolar.ro>  — AGPL-3.0-or-later
+# Copyright (C) 2024-2026 Stefan Maldaianu <stefan@multibus.dev>  — AGPL-3.0-or-later
 """How many sockets is this access point worth?
 
 A master device — a Fronius DataManager, an RS-485-over-TCP bridge, a PLC front

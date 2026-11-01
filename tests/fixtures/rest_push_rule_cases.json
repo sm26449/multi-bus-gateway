@@ -1,0 +1,26 @@
+{
+ "about": "The REST push rule, said once for both sides (L3.11b second review, R2-6): multibus/device_patch.py rest_push_clean (POST /api/devices/{id}/rest-push) and ui/js/device-shell.js localErrors (a unit's Edit dialog, before any write). tests/test_rest_push_rule.py and tools/e2e/device_shell_model_test.mjs read these cases; each side must give the same verdict.",
+ "cases": [
+  {"enabled": true,  "url": "",                 "interval_s": 30,    "url_ok": false, "interval_ok": true},
+  {"enabled": true,  "url": "   ",              "interval_s": 30,    "url_ok": false, "interval_ok": true},
+  {"enabled": true,  "url": "http://x",         "interval_s": 30,    "url_ok": true,  "interval_ok": true},
+  {"enabled": true,  "url": "https://x/y",      "interval_s": 30,    "url_ok": true,  "interval_ok": true},
+  {"enabled": true,  "url": " https://x ",      "interval_s": 30,    "url_ok": true,  "interval_ok": true},
+  {"enabled": true,  "url": "https://",         "interval_s": 30,    "url_ok": true,  "interval_ok": true},
+  {"enabled": true,  "url": "HTTP://x",         "interval_s": 30,    "url_ok": false, "interval_ok": true},
+  {"enabled": true,  "url": "Https://x",        "interval_s": 30,    "url_ok": false, "interval_ok": true},
+  {"enabled": true,  "url": "ftp://x",          "interval_s": 30,    "url_ok": false, "interval_ok": true},
+  {"enabled": false, "url": "ftp://x",          "interval_s": 30,    "url_ok": true,  "interval_ok": true},
+  {"enabled": false, "url": "",                 "interval_s": 30,    "url_ok": true,  "interval_ok": true},
+  {"enabled": true,  "url": "http://x",         "interval_s": 4,     "url_ok": true,  "interval_ok": false},
+  {"enabled": true,  "url": "http://x",         "interval_s": 5,     "url_ok": true,  "interval_ok": true},
+  {"enabled": true,  "url": "http://x",         "interval_s": 7.5,   "url_ok": true,  "interval_ok": true},
+  {"enabled": true,  "url": "http://x",         "interval_s": 4.9,   "url_ok": true,  "interval_ok": false},
+  {"enabled": true,  "url": "http://x",         "interval_s": "12",  "url_ok": true,  "interval_ok": true},
+  {"enabled": true,  "url": "http://x",         "interval_s": " 12 ", "url_ok": true, "interval_ok": true},
+  {"enabled": true,  "url": "http://x",         "interval_s": "7.5", "url_ok": true,  "interval_ok": false},
+  {"enabled": true,  "url": "http://x",         "interval_s": "abc", "url_ok": true,  "interval_ok": false},
+  {"enabled": true,  "url": "http://x",         "interval_s": null,  "url_ok": true,  "interval_ok": false},
+  {"enabled": false, "url": "",                 "interval_s": 2,     "url_ok": true,  "interval_ok": false}
+ ]
+}

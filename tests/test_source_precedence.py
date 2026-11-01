@@ -1,5 +1,5 @@
 # Multi-Bus Gateway — multi-protocol Modbus/HTTP/MQTT acquisition gateway.
-# Copyright (C) 2024-2026 Stefan Maldaianu <sm26449@diysolar.ro>  — AGPL-3.0-or-later
+# Copyright (C) 2024-2026 Stefan Maldaianu <stefan@multibus.dev>  — AGPL-3.0-or-later
 """Declaration order decides who owns a field.
 
 Two sources reaching one unit both carry `power_active_total`. Left alone they
@@ -198,6 +198,18 @@ def test_a_unit_is_healthy_only_when_every_source_is():
     assert h['status'] == 'degraded'          # NOT ok — half the fields are gone
     assert h['sources'] == {'s0': 'ok', 's1': 'down'}
     assert h['sources_down'] == ['s1']
+
+
+def test_a_source_that_never_connected_is_not_shown_ok():
+    """QA-R1-12: on a cold start a driver answers ``ok`` until a read fails;
+    the unit is gated to ``degraded`` (client_health) while not connected, and
+    its source's word in the installation's unit table must agree — it said
+    "ok" beside a "degraded" unit that had never read anything."""
+    c, drvs = _client('ok', 'ok')
+    drvs[1].connected = False
+    assert c.data_health()['sources'] == {'s0': 'ok', 's1': 'degraded'}
+    drvs[1].connected = True
+    assert c.data_health()['sources'] == {'s0': 'ok', 's1': 'ok'}
 
 
 def test_a_unit_is_down_only_when_nothing_is_left():

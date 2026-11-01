@@ -2,6 +2,7 @@
   "device_template": {
     "schema_version": 1,
     "id": "delta_vfd_el",
+    "kind": "drive",
     "name": "Delta VFD-EL frequency drive",
     "vendor": "Delta Electronics",
     "model": "VFD-EL (e.g. VFD022EL43A)",

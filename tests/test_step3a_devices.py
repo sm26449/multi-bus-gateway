@@ -1,5 +1,5 @@
 # Multi-Bus Gateway — multi-protocol Modbus/HTTP/MQTT acquisition gateway.
-# Copyright (C) 2024-2026 Stefan Maldaianu <sm26449@diysolar.ro>  — AGPL-3.0-or-later
+# Copyright (C) 2024-2026 Stefan Maldaianu <stefan@multibus.dev>  — AGPL-3.0-or-later
 """Devices, server side of the 2026-10-21 UI audit (lot a): a save asked
 first (dry run) never touches anything, a refusal says which field, poll
 groups keep what a save did not send, a component names its kind, a
@@ -22,7 +22,10 @@ def test_a_dry_run_create_checks_everything_and_makes_nothing(tmp_path):
     body = {"id": "em-new", "name": "New", "template": "eastron_sdm630",
             "connection": {"protocol": "tcp", "host": "192.0.2.77", "port": 502, "unit_id": 1}}
     r = client.post("/api/devices?dry_run=true", json=body)
-    assert r.status_code == 200 and r.json() == {"status": "valid", "would": "create"}, r.text
+    # (ADR-0031 §5: with the would-be entry beside it)
+    assert r.status_code == 200 and {k: v for k, v in r.json().items() if k != 'entry'} == \
+        {"status": "valid", "would": "create"}, r.text
+    assert r.json()['entry']['topic_prefix'] == "mbg/devices/em-new"
     assert _raw_text(cfg) == before and cfg.get_device("em-new") is None
     assert not any(d["id"] == "em-new" for d in client.get("/api/devices").json()["devices"])
     # a refusal names its field, next to the whole list as always

@@ -1,5 +1,5 @@
 # Multi-Bus Gateway — multi-protocol Modbus/HTTP/MQTT acquisition gateway.
-# Copyright (C) 2024-2026 Stefan Maldaianu <sm26449@diysolar.ro>  — AGPL-3.0-or-later
+# Copyright (C) 2024-2026 Stefan Maldaianu <stefan@multibus.dev>  — AGPL-3.0-or-later
 """The OPC UA server, with a real client: every value with its quality and
 the time it was read, stable node ids, the gateway's own accounts, and
 encryption that is really required when it says so."""
@@ -20,6 +20,16 @@ from multibus.opcua.server import LOCKOUT_FAILS, _Users  # noqa: E402
 # loaded host (the full suite, one CPU busy) that took longer than the 15 s
 # the gateway waits — the server came up, the test had given up on it
 START_WAIT_S = 60.0
+
+
+def _until_running(client, st):
+    """PUT /api/opcua answers at once; a loaded host is still `starting`
+    then (FLAKE-OPCUA-START-2) — wait for running, as an operator would."""
+    deadline = time.monotonic() + START_WAIT_S
+    while not st.get('running') and st.get('starting') and time.monotonic() < deadline:
+        time.sleep(0.5)
+        st = client.get("/api/opcua").json()
+    return st
 
 
 def _port():
@@ -106,6 +116,24 @@ def test_users_are_the_gateways_accounts_with_a_lockout():
     t['now'] = 400.0
     assert u.get_user(None, 'scada', 'right-pass') is not None                # five minutes later
     assert _Users(_auth, allow_anonymous=True).get_user(None).name == 'anonymous'
+
+
+def test_a_server_still_coming_up_says_starting_not_failed(tmp_path):
+    """A loaded host can need longer than start()'s wait: status says
+    `starting` (no error), and the API logs a warning, never an error."""
+    import threading
+    srv = OpcUaServer(_cfg(), devices=[], authenticate=_auth, config_dir=tmp_path)
+    gate = threading.Event()
+    srv._thread = threading.Thread(target=gate.wait, daemon=True)     # alive, never ready
+    srv._thread.start()
+    try:
+        st = srv.status()
+        assert st['starting'] is True and st['running'] is False and st['error'] is None
+        srv.error = "OSError: address in use"
+        assert srv.status()['starting'] is False                             # a failure is not "starting"
+    finally:
+        gate.set()
+        srv._thread.join(2)
 
 
 # ── a real server, a real client ─────────────────────────────────────────────
@@ -376,6 +404,7 @@ def test_enabled_from_the_settings_it_starts_says_so_and_stops(tmp_path):
         port = _port()
         st = client.put("/api/opcua", json={'enabled': True, 'port': port, 'host': '127.0.0.1',
                                             'encryption': 'required'}).json()
+        st = _until_running(client, st)
         assert st['running'] and st['endpoint'] == f"opc.tcp://127.0.0.1:{port}/mbg" and st['auth_enabled'], st
         assert cfg.opcua.enabled and 'opcua' in (tmp_path / 'config.yaml').read_text()
         r = client.get("/api/opcua/certificate")
@@ -507,7 +536,7 @@ def test_from_opc_ua_to_the_drive_through_the_gateways_command_path(tmp_path):
     assert ctl.status()['enabled'] is False
     port = _port()
     r = client.put("/api/opcua", json={'enabled': True, 'port': port, 'host': '127.0.0.1', 'encryption': 'off'})
-    assert r.status_code == 200 and r.json()['running'], r.text
+    assert r.status_code == 200 and _until_running(client, r.json())['running'], r.text
     try:
         deadline = time.time() + 10
         while ctl.status().get('commands', 0) < 1 and time.time() < deadline:
@@ -550,8 +579,10 @@ def test_a_service_token_logs_in_under_its_own_name_with_its_role(tmp_path):
         client.post("/api/auth/login", json={"username": "admin", "password": "pw"})
         tok = client.post("/api/auth/service-tokens", json={'name': 'fuxa', 'role': 'viewer'}).json()['token']
         port = _port()
-        assert client.put("/api/opcua", json={'enabled': True, 'port': port, 'host': '127.0.0.1',
-                                              'encryption': 'off'}).json()['running']
+        st = client.put("/api/opcua", json={'enabled': True, 'port': port, 'host': '127.0.0.1',
+                                            'encryption': 'off'}).json()
+        st = _until_running(client, st)
+        assert st['running'], st
         try:
             url = f"opc.tcp://127.0.0.1:{port}/mbg"
 

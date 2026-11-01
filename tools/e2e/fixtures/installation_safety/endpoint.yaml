@@ -1,0 +1,16 @@
+# endpoint_page_e2e: one installation read over Modbus TCP at a port that
+# REFUSES (127.0.0.1:9 inside the container), so every unit stays offline and
+# the offline/degraded paths are the ones under test. Three units, the third
+# with a hand-written id and name; two connections; units' topics by pattern.
+primary_device: false
+endpoints:
+  - id: sunfield
+    name: Sunfield PV
+    enabled: true
+    template: fronius_sunspec_inverter
+    connection: {protocol: tcp, host: 127.0.0.1, port: 9, timeout: 1, max_connections: 2}
+    units:
+      - 1
+      - 2
+      - {unit_id: 3, id: sunfield-east, name: East roof}
+    mqtt: {topic_prefix: 'mbg/devices/${device_id}'}

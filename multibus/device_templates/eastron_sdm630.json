@@ -10,6 +10,7 @@
   "kind": "meter",
   "source_document": "Eastron SDM630 Modbus Protocol V2 (input registers, FC04, float32)",
   "protocol": {
+   "master_hint": "Often the grid meter of an inverter or a battery system, which then polls it: if one does, add this meter Listen-only.",
    "byte_order": "big",
    "default_register_type": "input"
   },

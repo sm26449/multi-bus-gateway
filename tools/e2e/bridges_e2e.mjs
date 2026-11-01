@@ -24,6 +24,7 @@
  * not fail the run unless STRICT=1 (it prints FIXED once the product is right).
  */
 import { chromium } from 'playwright';
+import { openAdd, pickModel, answer, fill, next, waitCheck, step } from './lib/add-device.mjs';
 import { watchDialogs } from './lib/dialogs.mjs';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
@@ -181,21 +182,29 @@ async function addBridge({ type, name, id, host, ports = [] }) {
   await page.waitForSelector('#bridgeModal', { state: 'hidden', timeout: 20000 });
 }
 async function wizTest() {
-  const out = page.locator('#devWizTestResult');
+  const out = page.locator('#csAddTestResult');
   await out.evaluate(el => { el.textContent = ''; });
-  await page.locator('#deviceWizardModal [data-action="devWizardTest"]:visible').first().click();
-  await page.waitForFunction(() => document.getElementById('devWizTestResult')?.textContent.trim(), null, { timeout: 20000 });
+  await page.click('#csAddTestBtn');
+  await page.waitForFunction(() => document.getElementById('csAddTestResult')?.textContent.trim(), null, { timeout: 20000 });
   return (await out.textContent()).trim();
 }
-/** steps 2 and 3 of the wizard after the bus is chosen on step 1 */
+/** Add Device (L3.9) after the bus is chosen on the Connection step: the
+ *  model when the way in did not know it (a bus's + Device), the check, Name & save */
 async function wizFinish(id, name) {
-  await page.click('#devWizNext');
-  await page.click(`.tpl-pick[data-tpl="${TPL}"]`);
-  await page.click('#devWizNext');
-  await page.fill('#devWizId', id);
-  await page.fill('#devWizName', name);
-  if (!(await page.isChecked('#devWizEnabled'))) await page.click('label:has(#devWizEnabled)');
-  await page.click('#devWizNext');
+  if (await next(page) === 'what') {
+    await page.click(`#adResults [data-ad-tpl="${TPL}"]`);
+    await next(page);
+  }
+  await waitCheck(page, 30000);
+  await next(page);
+  await page.fill('#adId', id);
+  await page.fill('#adName', name);
+  await page.locator('#adId').dispatchEvent('input');
+  if (!(await page.isChecked('#adEnabled'))) await page.click('label:has(#adEnabled)');
+  await page.waitForSelector('#adReviewBody .ad-strip', { timeout: 15000 }).catch(() => {});
+  await page.click('#addDevNext');
+  await page.waitForSelector('#adResult', { timeout: 20000 });
+  await page.click('#adResDone');
 }
 async function busButton(bridgeId, port, action) {
   await goDevices();
@@ -224,48 +233,51 @@ try {
     b.protocol === 'rtu-tcp' && b.ports?.[0]?.serial === '9600 8N1', JSON.stringify(b).slice(0, 200));
 
   // ═══ 2. Two slaves on one bus, through the wizard ═══════════════════════
-  // 2a. device 1 from the main Add Device button: Modbus RTU → Over network
+  // 2a. device 1 from the main Add Device button: the model, RS-485, through a bridge
   await goDevices();
-  await page.locator('button[data-action="openDeviceWizard"]:visible').first().click();
-  await page.waitForSelector('#deviceWizardModal.active');
-  await page.click('#deviceWizardModal label:has(input[name="devWizProto"][value="rtu"])');
-  await page.click('#deviceWizardModal label:has(input[name="devWizRtuMode"][value="rtu-tcp"])');
-  await page.waitForSelector('#devWizBridge');
-  check('wizard (RTU over network) offers the bridge picker', await page.inputValue('#devWizBridge') === BR.t,
-    await page.inputValue('#devWizBridge'));
-  check('…and hides the legacy adapter scan', !(await page.isVisible('#devWizLegacyScan')));
-  // pick the OTHER bus on the preselected bridge: the choice must stick
-  await page.selectOption('#devWizBridgePort', String(P.tSpare));
-  check('wizard: choosing a bus on the preselected bridge keeps that bus',
-    await page.inputValue('#devWizBridgePort') === String(P.tSpare),
-    `picked :${P.tSpare}, the picker shows :${await page.inputValue('#devWizBridgePort')} (app-wizard.js _devWizBridgeChanged: d.bridge is '' on a fresh wizard, so the first change of the BUS is taken for a change of BRIDGE and resets bridge_port)`);
-  await page.selectOption('#devWizBridgePort', String(P.t));
-  check('wizard bus picker on :' + P.t, await page.inputValue('#devWizBridgePort') === String(P.t));
-  check('…hint: first device on this bus', /First device/i.test(await page.innerText('#devWizBridgeHint2')));
-  await page.fill('#devWizUnitBr', '1');
+  await openAdd(page);
+  await pickModel(page, TPL, TPL);
+  await answer(page, 'PortKind', 'serial');
+  await answer(page, 'Reach', 'bridge');
+  await page.waitForSelector('#csAddBus');
+  const busOpts = await page.locator('#csAddBus option').evaluateAll(els => els.map(e => e.value));
+  check('Add (RS-485 through a bridge) lists the bridge\'s buses',
+    busOpts.includes(`${BR.t}::${P.t}`) && busOpts.includes(`${BR.t}::${P.tSpare}`), busOpts.join(' | '));
+  check('…and no adapter scan of old', !(await page.isVisible('#csAddLegacyScan')));
+  // pick one bus, then the other: the choice must stick
+  await page.selectOption('#csAddBus', `${BR.t}::${P.tSpare}`);
+  await page.waitForTimeout(300);
+  check('Add: choosing a bus keeps that bus', await page.inputValue('#csAddBus') === `${BR.t}::${P.tSpare}`);
+  await page.selectOption('#csAddBus', `${BR.t}::${P.t}`);
+  await page.waitForTimeout(300);
+  check('Add bus picker on :' + P.t, await page.inputValue('#csAddBus') === `${BR.t}::${P.t}`);
+  check('…the bus says nobody is on it yet', /No device/i.test(await page.innerText('#csAddBusQ')), await page.innerText('#csAddBusQ'));
+  await answer(page, 'Role', 'poll');
+  await fill(page, 'Unit', 1);
   const t1 = await wizTest();
-  check('wizard Test (unit 1, nobody on the bus yet) succeeds', /^✓/.test(t1), t1);
+  check('Add Test (unit 1, nobody on the bus yet) succeeds', /^✓/.test(t1), t1);
   await wizFinish(DEV.u1, 'E2E slave 1');
-  await page.waitForSelector('#deviceWizardModal', { state: 'hidden' });
+  await page.waitForSelector('#addDeviceModal', { state: 'hidden' });
 
   let v = await waitValues(DEV.u1, WANT.t1);
   check('slave 1 reads 1111 / 2222 through the transparent bridge', shown(v) === WANT.t1.join(), shown(v));
 
   // 2b. device 2 from the bus's own "+ Device" button (prefilled bridge, bus, next free unit)
   await busButton(BR.t, P.t, 'addDeviceOnBus');
-  await page.waitForSelector('#deviceWizardModal.active');
-  await page.waitForSelector('#devWizUnitBr');
-  check('"+ Device" on a bus prefills bridge, bus and the next free unit (2)',
-    await page.inputValue('#devWizBridge') === BR.t && await page.inputValue('#devWizBridgePort') === String(P.t)
-    && await page.inputValue('#devWizUnitBr') === '2',
-    `${await page.inputValue('#devWizBridge')} :${await page.inputValue('#devWizBridgePort')} unit ${await page.inputValue('#devWizUnitBr')}`);
-  const hint2 = await page.innerText('#devWizBridgeHint2');
-  check('…and says who else is on that bus', /E2E slave 1 \(unit 1\)/.test(hint2), hint2);
+  await page.waitForSelector('#addDeviceModal.active');
+  await page.waitForSelector('#csAddUnit');
+  await page.waitForTimeout(600);
+  check('"+ Device" on a bus prefills the bus and the next free unit (2)',
+    await page.inputValue('#csAddBus') === `${BR.t}::${P.t}` && await page.inputValue('#csAddUnit') === '2',
+    `${await page.inputValue('#csAddBus')} unit ${await page.inputValue('#csAddUnit')}`);
+  const hint2 = await page.innerText('#csAddBusQ');
+  check('…and says who else is on that bus', /E2E slave 1|e2e-br-u1/.test(hint2) && /1 is /.test(await page.innerText('#csAddAddrQ')), hint2);
+  check('…the role pre-filled by the bus\'s claim (slave 1 polls it): Master', await page.isChecked('#csAddRole-poll'));
   const t2 = await wizTest();
-  check('wizard Test (unit 2) goes through the bus slave 1 already holds, and says so',
+  check('Add Test (unit 2) goes through the bus slave 1 already holds, and says so',
     /^✓/.test(t2) && /one connection|already reads/i.test(t2), t2);
   await wizFinish(DEV.u2, 'E2E slave 2');
-  await page.waitForSelector('#deviceWizardModal', { state: 'hidden' });
+  await page.waitForSelector('#addDeviceModal', { state: 'hidden' });
   v = await waitValues(DEV.u2, WANT.t2);
   check('slave 2 reads 3333 / 4444 on the same bus', shown(v) === WANT.t2.join(), shown(v));
   v = await waitValues(DEV.u1, WANT.t1, 5);
@@ -305,22 +317,23 @@ try {
 
   // 2c. the same unit id twice on a bus is refused, in words
   await busButton(BR.t, P.t, 'addDeviceOnBus');
-  await page.waitForSelector('#devWizUnitBr');
-  check('"+ Device" now proposes unit 3', await page.inputValue('#devWizUnitBr') === '3');
-  await page.fill('#devWizUnitBr', '1');
-  // the gateway is asked on step 1: the clash is said there, at the unit
-  await page.click('#devWizNext');
-  await page.waitForFunction(() => document.querySelector('#devWizBody .field-error[data-placed]')?.textContent.trim());
-  const dupMsg = await page.textContent('#devWizBody .field-error[data-placed]');
-  check('a 3rd device with unit 1 on that bus is refused on step 1, at the unit, saying which device has it',
+  await page.waitForSelector('#csAddUnit');
+  await page.waitForFunction(() => document.getElementById('csAddUnit')?.value === '3', null, { timeout: 8000 }).catch(() => {});
+  check('"+ Device" now proposes unit 3', await page.inputValue('#csAddUnit') === '3');
+  await fill(page, 'Unit', 1);
+  // the gateway is asked on the Connection step: the clash is said there, at the unit
+  await page.click('#addDevNext');
+  await page.waitForFunction(() => document.querySelector('#adConnHost .field-error[data-placed]')?.textContent.trim());
+  const dupMsg = await page.textContent('#adConnHost .field-error[data-placed]');
+  check('a 3rd device with unit 1 on that bus is refused on the Connection step, at the unit, saying which device has it',
     /unit 1/.test(dupMsg) && new RegExp(DEV.u1).test(dupMsg) && /own address/.test(dupMsg)
-    && await page.evaluate(() => window.app._devWiz.step) === 1
-    && (await page.getAttribute('#devWizUnitBr', 'aria-invalid')) === 'true', dupMsg);
+    && await step(page) === 'connection'
+    && (await page.getAttribute('#csAddUnit', 'aria-invalid')) === 'true', dupMsg);
   check('…and nothing was created', !(await api('/api/devices')).body.devices.some(d => d.id === DEV.u3));
 
   // ═══ 3. Test connection while they poll ═════════════════════════════════
-  // still in the wizard on step 1: unit 2 (a slave a running device reads)
-  await page.fill('#devWizUnitBr', '2');
+  // still on Add's Connection step: unit 2 (a slave a running device reads)
+  await fill(page, 'Unit', 2);
   s0 = await freshStats(P.t);
   const since = Date.now() / 1000;
   const t3 = await wizTest();
@@ -329,10 +342,10 @@ try {
   s1 = await freshStats(P.t);
   check('the Test opened no connection of its own (the live one was not kicked)',
     s1.accepts === s0.accepts, `accepts ${s0.accepts} → ${s1.accepts}`);
-  const t4 = await (async () => { await page.fill('#devWizUnitBr', '9'); return wizTest(); })();
+  const t4 = await (async () => { await fill(page, 'Unit', 9); return wizTest(); })();
   check('wizard Test of an absent unit (9) on the shared bus: ✗, says the bus itself works',
     /^✗/.test(t4) && /bus itself works/.test(t4), t4);
-  await page.evaluate(() => window.app.closeModal('deviceWizardModal'));
+  await page.evaluate(() => { window.app._ad.done = true; window.app.closeModal('addDeviceModal'); });
   const s4 = await freshStats(P.t);
   if (s4.accepts > s1.accepts)
     note(`a Test of an ABSENT unit on a shared bus times out and then REOPENS the shared socket (accepts ${s1.accepts} → ${s4.accepts}): every sibling reconnects and stalls for the test's timeout`);
@@ -373,10 +386,13 @@ try {
   }
   check('closing the Scan panel stops the scan on the server', jst === 'cancelled', jst);
   await page.evaluate(([b, p]) => window.app.addScannedDevice(b, p, 9, ''), [BR.t, P.t]);
-  await page.waitForSelector('#deviceWizardModal.active');
-  const pre = await page.evaluate(() => ({ b: window.app._devWiz.cf.bridge, u: window.app._devWiz.cf.unit_id }));
-  check('Add from a scan opens the wizard on that bus and unit', pre.b === BR.t && pre.u === 9, JSON.stringify(pre));
-  await page.evaluate(() => window.app.closeModal('deviceWizardModal'));
+  await page.waitForSelector('#addDeviceModal.active');
+  await page.waitForSelector('#csAddUnit');
+  await page.waitForTimeout(600);
+  const pre = await page.evaluate(() => ({ b: window.app._cf.csAdd.M.bridge, u: window.app._cf.csAdd.M.unit_id,
+                                           step: document.querySelector('#addDevRail [aria-current="step"]')?.dataset.shellStep }));
+  check('Add from a scan opens Add Device on that bus and unit (the Connection step)', pre.b === BR.t && pre.u === 9 && pre.step === 'connection', JSON.stringify(pre));
+  await page.evaluate(() => { window.app._ad.done = true; window.app.closeModal('addDeviceModal'); });
   const exp = await (await fetch(BASE + '/api/bridges/export')).text();
   check('bridges export as YAML', /bridges:/.test(exp) && exp.includes(BR.t));
   const imp = (await api('/api/bridges/import', { method: 'POST', body: JSON.stringify({ yaml: exp }) })).body;
@@ -422,21 +438,16 @@ try {
   await card(BR.g).waitFor();
   check('gateway bridge appears on the Devices page', (await card(BR.g).innerText()).includes(`:${P.g}`));
   await busButton(BR.g, P.g, 'addDeviceOnBus');
-  await page.waitForSelector('#devWizGw');
-  check('wizard on a gateway bus opens as Modbus TCP, reached through that gateway',
-    await page.isChecked('input[name="devWizProto"][value="tcp"]') && await page.inputValue('#devWizGw') === `${BR.g}::${P.g}`,
-    await page.inputValue('#devWizGw'));
-  await page.fill('#devWizUnit', '2');
-  const tg = await (async () => {
-    const out = page.locator('#devWizTestResult');
-    await out.evaluate(el => { el.textContent = ''; });
-    await page.click('#devWizTestBtn');
-    await page.waitForFunction(() => document.getElementById('devWizTestResult')?.textContent.trim(), null, { timeout: 20000 });
-    return (await out.textContent()).trim();
-  })();
-  check('wizard Test (gateway, unit 2) succeeds', /^✓/.test(tg), tg);
+  await page.waitForSelector('#csAddBus');
+  await page.waitForTimeout(600);
+  check('Add on a gateway bus opens on Ethernet, reached through that gateway',
+    await page.isChecked('#csAddPortKind-ethernet') && await page.inputValue('#csAddBus') === `${BR.g}::${P.g}`,
+    await page.inputValue('#csAddBus'));
+  await fill(page, 'Unit', 2);
+  const tg = await wizTest();
+  check('Add Test (gateway, unit 2) succeeds', /^✓/.test(tg), tg);
   await wizFinish(DEV.g2, 'E2E behind gateway');
-  await page.waitForSelector('#deviceWizardModal', { state: 'hidden' });
+  await page.waitForSelector('#addDeviceModal', { state: 'hidden' });
   v = await waitValues(DEV.g2, WANT.g2);
   check('device behind the gateway reads 7777 / 8888 (unit 2)', shown(v) === WANT.g2.join(), shown(v));
   const g2row = (await api('/api/devices')).body.devices.find(d => d.id === DEV.g2) || {};

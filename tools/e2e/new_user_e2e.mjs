@@ -1,6 +1,6 @@
 /* A NEW USER, start to finish: register maps written from a spec (CSV import,
  * YAML import, the visual editor), one device over every protocol added with
- * the Add Device wizard, EXACT decoded values checked against simulators that
+ * Add Device (What · Connection · Check · Name & save), EXACT decoded values checked against simulators that
  * hold known numbers, the word-order mistake found and fixed from Diagnostics
  * → Probe without a restart, a virtual meter re-serving a value on Modbus TCP
  * (plus its export/import), and the rules import/export smoke.
@@ -19,6 +19,7 @@
  *   cd tools/e2e && CHROMIUM_PATH=<chrome> MBG_URL=http://127.0.0.1:8099 node new_user_e2e.mjs
  */
 import { chromium } from 'playwright';
+import { openAdd, pickModel, answer, fill as fillIn, next, waitCheck, step } from './lib/add-device.mjs';
 import { watchDialogs } from './lib/dialogs.mjs';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
@@ -137,6 +138,11 @@ async function closeToasts() {
 }
 const tpl = async id => (await api(`/api/device-templates/${id}`)).body.device_template || {};
 
+// Add Device as a new user takes it (L3.9): the model (the map just made),
+// its Connection step — the port the protocol needs —, Test there, Next asks
+// the gateway (a refusal stays on Connection, said at its field), the Check,
+// Name & save, Create, Done
+const PORT_OF = { tcp: ['ethernet', 'address'], rtu: ['serial', 'here'], http: ['http', ''], mqtt: ['mqtt', ''] };
 async function addDevice({ proto, fill, template, id, name }) {
   await page.click('[data-page="devices"]');
   if (!(await page.isVisible('#devicesListView'))) {
@@ -146,25 +152,31 @@ async function addDevice({ proto, fill, template, id, name }) {
       note('Devices tab: after Add Device the measurements editor opens, and clicking "Devices" again stays there — only the ← arrow returns to the list');
     await page.click('#deviceRegistersView [data-action="closeDeviceRegisters"]');
   }
-  await page.locator('button[data-action="openDeviceWizard"]:visible').first().click();
-  await page.waitForSelector('#deviceWizardModal input[name="devWizProto"][value="tcp"]', { state: 'attached' });
-  await page.click(`#deviceWizardModal label:has(input[name="devWizProto"][value="${proto}"])`);
+  await openAdd(page);
+  await pickModel(page, template, template);
+  const [port, reach] = PORT_OF[proto];
+  await answer(page, 'PortKind', port);
+  if (reach) await answer(page, 'Reach', reach);
+  if (proto === 'rtu') { await answer(page, 'Speaks', 'modbus:rtu').catch(() => {}); await answer(page, 'Role', 'poll'); }
   const testOut = await fill();
-  await page.click('#devWizNext');
-  // step 1 asks the gateway first: a refusal stays on step 1, said there
-  await page.waitForFunction(() => window.app._devWiz.step === 2
-    || document.querySelector('#devWizBody .field-error[data-placed]') || document.getElementById('devWizFeedback')?.textContent.trim());
-  if (await page.evaluate(() => window.app._devWiz.step) === 1) return testOut;
-  await page.click(`.tpl-pick[data-tpl="${template}"]`);
-  await page.click('#devWizNext');
-  await page.fill('#devWizId', id);
-  await page.fill('#devWizName', name);
-  if (!(await page.isChecked('#devWizEnabled'))) await page.click('label:has(#devWizEnabled)');
-  await page.click('#devWizNext');
+  if (await next(page) === 'connection') return testOut;     // refused: said at its field
+  return finishAdd({ id, name, testOut });
+}
+async function finishAdd({ id, name, testOut }) {
+  await waitCheck(page, 30000);
+  await next(page);                                          // → Name & save
+  await page.fill('#adId', id);
+  await page.fill('#adName', name);
+  await page.locator('#adId').dispatchEvent('input');
+  if (!(await page.isChecked('#adEnabled'))) await page.click('label:has(#adEnabled)');
+  await page.waitForSelector('#adReviewBody .ad-strip', { timeout: 15000 }).catch(() => {});
+  await page.click('#addDevNext');
+  await page.waitForSelector('#adResult', { timeout: 20000 });
+  await page.click('#adResDone');
   return testOut;
 }
 async function wizardTest(resultId) {
-  await page.locator('#deviceWizardModal [data-action="devWizardTest"]:visible').first().click();
+  await page.click('#csAddTestBtn');
   await page.waitForFunction(id => document.getElementById(id)?.textContent.trim(), resultId, { timeout: 20000 });
   return (await page.textContent(`#${resultId}`)).trim();
 }
@@ -304,59 +316,56 @@ try {
   check('editor saved the MQTT map', (t.registers || []).length === 3 && t.protocol?.transports?.join() === 'mqtt',
     r.err || JSON.stringify(t.protocol));
 
-  // ═══ 2. Devices through the Add Device wizard ═══════════════════════════
+  // ═══ 2. Devices through Add Device (L3.9) ═══════════════════════════════
   await closeToasts();
   const tcpTest = await addDevice({ proto: 'tcp', template: T.tcp, id: D.tcp, name: 'E2E TCP meter', fill: async () => {
-    await page.fill('#devWizHost', '127.0.0.1');
-    await page.fill('#devWizPort', '15020');
-    await page.fill('#devWizUnit', '1');
-    return wizardTest('devWizTestResult');
+    await fillIn(page, 'Host', '127.0.0.1');
+    await fillIn(page, 'Port', '15020');
+    await fillIn(page, 'Unit', '1');
+    return wizardTest('csAddTestResult');
   } });
-  check('wizard Test (TCP) succeeds', /^✓/.test(tcpTest), tcpTest);
-  await page.waitForSelector('#deviceWizardModal', { state: 'hidden' });
+  check('Add Test (TCP) succeeds', /^✓/.test(tcpTest), tcpTest);
+  await page.waitForSelector('#addDeviceModal', { state: 'hidden' });
 
   const rtuTest = await addDevice({ proto: 'rtu', template: T.rtu, id: D.rtu, name: 'E2E RTU meter', fill: async () => {
-    await page.click('#deviceWizardModal label:has(input[name="devWizRtuMode"][value="rtu"])');
-    await page.fill('#devWizSerial', '/tmp/ttySIM');
-    await page.selectOption('#devWizBaud', '9600');
-    await page.fill('#devWizUnitR', '7');
-    return wizardTest('devWizTestResult');
+    await page.evaluate(() => { const a = document.getElementById('csAddSerialAdv'); if (a) a.open = true; });
+    await page.fill('#csAddSerial', '/tmp/ttySIM');
+    await page.locator('#csAddSerial').blur();
+    await page.waitForTimeout(400);
+    if (!(await page.getAttribute('#csAddBaud', 'aria-disabled'))) await page.selectOption('#csAddBaud', '9600');
+    await fillIn(page, 'Unit', '7');
+    return wizardTest('csAddTestResult');
   } });
-  check('wizard Test (RTU direct serial) succeeds', /^✓/.test(rtuTest), rtuTest);
-  await page.waitForSelector('#deviceWizardModal', { state: 'hidden' });
+  check('Add Test (RTU direct serial) succeeds', /^✓/.test(rtuTest), rtuTest);
+  await page.waitForSelector('#addDeviceModal', { state: 'hidden' });
 
   // HTTP: a new user's first try is the sim on loopback — refused (SSRF guard)
   const loopTest = await addDevice({ proto: 'http', template: T.http, id: D.http, name: 'E2E HTTP inverter', fill: async () => {
-    await page.fill('#devWizUrl', 'http://127.0.0.1:18089/status.json');
-    return wizardTest('devWizTestResult');
+    await page.fill('#csAddUrl', 'http://127.0.0.1:18089/status.json');
+    return wizardTest('csAddTestResult');
   } });
-  check('wizard Test refuses a loopback HTTP URL', /^✗/.test(loopTest), loopTest);
-  const fb = await page.innerText('#devWizBody');
-  check('…and step 1 says why, at the URL (private LAN / allow_nonlan)',
-    /private LAN|allow_nonlan/.test(fb) && await page.evaluate(() => window.app._devWiz.step) === 1, fb.slice(0, 300));
-  // still on step 1: the LAN address of the same sim (the last Test's
+  check('Add Test refuses a loopback HTTP URL', /^✗/.test(loopTest), loopTest);
+  const fb = await page.innerText('#addDeviceContent');
+  check('…and the Connection step says why, at the URL (private LAN / allow_nonlan)',
+    /private LAN|allow_nonlan/.test(fb) && await step(page) === 'connection', fb.slice(0, 300));
+  // still on Connection: the LAN address of the same sim (the last Test's
   // answer is cleared, so the next one is read, not the old one)
-  await page.fill('#devWizUrl', `http://${CTR_IP}:18089/status.json`);
-  await page.evaluate(() => { document.getElementById('devWizTestResult').textContent = ''; });
-  const httpTest = await wizardTest('devWizTestResult');
-  check('wizard Test (HTTP, LAN address) succeeds', /^✓/.test(httpTest), httpTest);
-  // refused on step 1, it never reached the template and the name: now it does
-  await page.click('#devWizNext');
-  await page.click(`.tpl-pick[data-tpl="${T.http}"]`);
-  await page.click('#devWizNext');
-  await page.fill('#devWizId', D.http);
-  await page.fill('#devWizName', 'E2E HTTP inverter');
-  if (!(await page.isChecked('#devWizEnabled'))) await page.click('label:has(#devWizEnabled)');
-  await page.click('#devWizNext');
-  await page.waitForSelector('#deviceWizardModal', { state: 'hidden' });
+  await page.fill('#csAddUrl', `http://${CTR_IP}:18089/status.json`);
+  await page.evaluate(() => { document.getElementById('csAddTestResult').textContent = ''; });
+  const httpTest = await wizardTest('csAddTestResult');
+  check('Add Test (HTTP, LAN address) succeeds', /^✓/.test(httpTest), httpTest);
+  // refused on Connection, it never reached the check and the name: now it does
+  await next(page);
+  await finishAdd({ id: D.http, name: 'E2E HTTP inverter' });
+  await page.waitForSelector('#addDeviceModal', { state: 'hidden' });
 
   const mqttTest = await addDevice({ proto: 'mqtt', template: T.mqtt, id: D.mqtt, name: 'E2E MQTT meter', fill: async () => {
-    await page.fill('#devWizBroker', BROKER);
-    await page.fill('#devWizMqttTopic', 'e2e/meter/#');
-    return wizardTest('devWizTestResult');
+    await page.fill('#csAddBroker', BROKER);
+    await page.fill('#csAddMqttTopic', 'e2e/meter/#');
+    return wizardTest('csAddTestResult');
   } });
-  check('wizard Test (MQTT) succeeds', /^✓/.test(mqttTest), mqttTest);
-  await page.waitForSelector('#deviceWizardModal', { state: 'hidden' });
+  check('Add Test (MQTT) succeeds', /^✓/.test(mqttTest), mqttTest);
+  await page.waitForSelector('#addDeviceModal', { state: 'hidden' });
 
   const devs = (await api('/api/devices')).body.devices || [];
   for (const [k, id] of Object.entries(D)) {
@@ -431,9 +440,12 @@ try {
   // ═══ 5. Virtual meter (emulator) ═════════════════════════════════════════
   await page.click('[data-page="vmeters"]');
   await page.waitForSelector('#vmAddInstanceBtn', { state: 'attached' });
-  if (await page.isDisabled('#vmAddInstanceBtn')
-      && /Add instance/.test(await page.innerText('[data-vmpanel="meters"]')))
-    note('Virtual Meters, first visit: "Use “Add instance”" while that button is disabled (no template yet) — nothing says to make a template first, on the Templates sub-tab');
+  if (await page.isDisabled('#vmAddInstanceBtn')) {
+    // the empty state (not the button's own label) must say what to do first
+    const empty = await page.innerText('#vmetersContent .empty-state').catch(() => '');
+    check('Virtual Meters, first visit: a disabled "Add instance" is never offered, the Templates tab is',
+      !/Use “Add instance”/.test(empty) && /Templates/.test(empty), empty.replace(/\s+/g, ' ').slice(0, 200));
+  }
   await page.click('#vmSubtabs [data-vmtab="templates"]');
   await page.click('#vmNewTplBtn');
   await page.waitForSelector('#vmTemplateModal.active');

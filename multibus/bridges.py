@@ -1,5 +1,5 @@
 # Multi-Bus Gateway — multi-protocol Modbus/HTTP/MQTT acquisition gateway.
-# Copyright (C) 2024-2026 Stefan Maldaianu <sm26449@diysolar.ro>
+# Copyright (C) 2024-2026 Stefan Maldaianu <stefan@multibus.dev>
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU Affero General Public License as published by
@@ -73,6 +73,54 @@ def load_types(directory: Path = TYPES_DIR) -> Dict[str, Dict[str, Any]]:
 TYPES = load_types()
 
 
+# ── a bridge's control API (our serial bridge: serial_config "api") ─────────
+class BridgeApiError(Exception):
+    """A call to a bridge's control API failed: ``status`` is the bridge's
+    own 4xx when it refused, else 502 (unreachable, or it failed)."""
+
+    def __init__(self, status: int, text: str):
+        super().__init__(text)
+        self.status, self.text = status, text
+
+
+def control_url(b: Dict[str, Any], path: str) -> str:
+    port = int(b.get("control_port") or TYPES.get(b.get("type"), {}).get("control_port", 7000))
+    return f"http://{b['host']}:{port}{path}"
+
+
+def _request(b: Dict[str, Any], path: str, data: Optional[bytes] = None):
+    import urllib.request
+    req = urllib.request.Request(control_url(b, path), data=data, method="POST" if data is not None else "GET",
+                                 headers={"Content-Type": "application/json"} if data is not None else {})
+    if b.get("token"):
+        req.add_header("Authorization", f"Bearer {b['token']}")
+    return req
+
+
+def api_get(b: Dict[str, Any], path: str, timeout: float = 4) -> Dict[str, Any]:
+    """GET one of the bridge's control routes (raises what urllib raises)."""
+    import urllib.request
+    with urllib.request.urlopen(_request(b, path), timeout=timeout) as resp:  # noqa: S310 — operator-configured LAN box
+        return json.loads(resp.read().decode() or "{}")
+
+
+def api_post(b: Dict[str, Any], key: str, what: str, fields: Dict[str, Any],
+             timeout: float = 6) -> Dict[str, Any]:
+    """POST ``/adapters/<key>/<what>`` (``serial``, ``enable``) on our bridge."""
+    import urllib.error
+    import urllib.parse
+    import urllib.request
+    req = _request(b, f"/adapters/{urllib.parse.quote(key, safe='')}/{what}", json.dumps(fields).encode())
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:  # noqa: S310
+            return json.loads(resp.read().decode() or "{}")
+    except urllib.error.HTTPError as e:
+        raise BridgeApiError(e.code if e.code in (400, 401, 404, 422) else 502,
+                             e.read().decode(errors="replace")[:300])
+    except Exception as e:  # noqa: BLE001
+        raise BridgeApiError(502, f"bridge unreachable: {e}")
+
+
 def validate_bridge(raw: Dict[str, Any], types: Dict[str, Dict] = None) -> List[str]:
     """Errors in words for one ``bridges:`` entry (empty = fine)."""
     types = TYPES if types is None else types
@@ -113,6 +161,11 @@ def validate_bridge(raw: Dict[str, Any], types: Dict[str, Dict] = None) -> List[
                     f"(the converter's TCP port, usually {t.get('default_port')})")
     if t is not None and len(ports) > int(t.get("max_ports", 99)):
         errs.append(f"ports: a {t['name']} has at most {t.get('max_ports')}")
+    from .bridge_diag import validate_thresholds
+    errs += validate_thresholds(raw.get("alerts"), "alerts")
+    for i, p in enumerate(ports):
+        if isinstance(p, dict):
+            errs += validate_thresholds(p.get("alerts"), f"ports[{i}].alerts")
     if "control_port" in raw:
         try:
             if not 1 <= int(raw["control_port"]) <= 65535:
@@ -139,10 +192,20 @@ def resolve_connection(conn: Dict[str, Any], bridges: List[Dict[str, Any]],
     out = dict(conn)
     out["host"] = b.get("host", "")
     out["port"] = int(port or 502)
+    # the bus's adapter (our serial bridge): recorded on the bridge's port
+    # entry, so every device on that bus is checked against the same one
+    entry = next((p for p in b.get("ports") or [] if str(p.get("port")) == str(out["port"])), {})
+    if entry.get("adapter"):
+        out["adapter"] = str(entry["adapter"])
     out["protocol"] = FRAMING_PROTOCOL.get(t.get("framing", "rtu"), "rtu-tcp")
-    if conn.get("protocol") == "rtu_tap" and t.get("framing", "rtu") == "rtu":
+    if conn.get("protocol") == "rtu_tap":
         # listen-only through a bridge that passes the bus's bytes on: the tap
-        # reads the bridge's port and never writes to it
+        # reads the bridge's port and never writes to it. A tap stays a tap
+        # whatever the bridge frames (ADR-0025, ADD-7): on a Modbus TCP
+        # gateway it hears nothing, but it never transmits.
+        if t.get("framing", "rtu") != "rtu":
+            logger.error("a listen-only device on bridge %r: its framing is %s, not rtu — the tap hears "
+                         "nothing there, and stays listening", conn.get("bridge"), t.get("framing"))
         out["protocol"] = "rtu_tap"
         out.pop("serial_port", None)
     out["max_connections"] = int(b.get("max_connections", t.get("max_connections", 1)) or 1)
@@ -234,8 +297,14 @@ def _port_open(host: str, port: int, timeout: float) -> bool:
         return False
 
 
+def lan_ports(types: Dict[str, Dict] = None) -> List[int]:
+    """Every TCP port a kind's ``lan_discovery`` looks at."""
+    types = TYPES if types is None else types
+    return sorted({int(p) for t in types.values() for p in (t.get("lan_discovery") or {}).get("ports") or []})
+
+
 def discover(hosts: List[str], types: Dict[str, Dict] = None, known: Dict[str, str] = None,
-             timeout: float = 0.4, unit_id: int = 1) -> List[Dict[str, Any]]:
+             timeout: float = 0.4, unit_id: int = 1, skip: Optional[set] = None) -> List[Dict[str, Any]]:
     """Which hosts on the LAN look like a bridge, and of which kind.
 
     Each kind says in its ``lan_discovery`` block which TCP ports to look at
@@ -290,10 +359,14 @@ def discover(hosts: List[str], types: Dict[str, Dict] = None, known: Dict[str, s
 
     from concurrent.futures import ThreadPoolExecutor
     # a host already added is not knocked on: a converter that takes one
-    # client would drop the gateway's own connection for the moment
-    jobs = [(h, p) for h in hosts if h not in known for p in sorted(by_port)]
-    out: List[Dict[str, Any]] = [{"host": h, "port": None, "bridge": b, "type": "", "detail": "already added"}
-                                 for h, b in known.items() if h in hosts]
+    # client would drop the gateway's own connection for the moment; nor is
+    # a host:port a device only listens to (ADR-0025: another master owns it)
+    known = {str(h).strip().lower(): b for h, b in known.items()}
+    skip = skip or set()
+    jobs = [(h, p) for h in hosts if h.lower() not in known for p in sorted(by_port)
+            if (h.lower(), p) not in skip]
+    out: List[Dict[str, Any]] = [{"host": h, "port": None, "bridge": known[h.lower()], "type": "",
+                                  "detail": "already added"} for h in hosts if h.lower() in known]
     with ThreadPoolExecutor(max_workers=min(64, max(1, len(jobs)))) as ex:
         for r in ex.map(one, jobs):
             if r:

@@ -3,11 +3,21 @@
 # boot with NO config.yaml enables login with a generated admin password,
 # printed once to the log). Every key below can also be set from the UI
 # (Config → Settings); the file is rewritten on each save.
+#
+# A fresh install starts with NO device: add yours from the UI (Devices →
+# Add Device, or Discover devices). Devices live in the `devices:` list.
 
+# The legacy primary device ("device #1", id umg512 — a Janitza UMG 512-PRO
+# read over the `modbus:` section below). Older installs have it; a fresh one
+# does not. true = the `modbus:` section describes that meter and it is read
+# and published (topics under mqtt.topic_prefix, Influx tag janitza_umg512).
+# A file without this key is an older install: it has device #1 exactly when
+# it holds a `modbus:` section, and the next save writes the key out.
+primary_device: false
 
 modbus:
-  # Janitza device IP address — or leave this and set it from the UI
-  # (Config → Settings) on first run; the app prompts you if it can't connect.
+  # The legacy primary device's connection (used only with primary_device:
+  # true). Every other device carries its own `connection:` block.
   host: 192.168.1.100
   # Modbus TCP port (default 502)
   port: 502
@@ -36,6 +46,13 @@ modbus:
   # device wakes. Off by default (a legitimately all-zero group would be
   # withheld); enable only for devices that sleep.
   drop_all_zero: false
+
+# The read preview's budget (Add device → Check, the device page's Preview):
+# at most this many reads per preview (1..20), and this many seconds of
+# listening on a bus another master polls (1..60). Settings → Modbus.
+preview:
+  max_requests: 4
+  listen_s: 10
 
 polling:
   # (per-group intervals live in selected_registers.json / the UI; there is
@@ -69,8 +86,11 @@ mqtt:
   # Authentication (leave empty if not required)
   username: ""
   password: ""
-  # Base topic prefix
-  topic_prefix: "multibus/umg512"
+  # The gateway's own topic root: <prefix>/status, <prefix>/site/meta, the
+  # virtual meters' state — and the legacy primary device's values, when there
+  # is one (older installs: "multibus/umg512"). Devices publish under
+  # default_topic_pattern (mbg/devices/<id>).
+  topic_prefix: "mbg/gateway"
   # Retain messages
   retain: true
   # QoS level (0, 1, or 2)
@@ -91,7 +111,9 @@ mqtt:
   ha_discovery:
     enabled: true
     prefix: "homeassistant"
-    device_name: "Janitza UMG 512-PRO"
+    # the legacy primary device's name in Home Assistant (only with
+    # primary_device: true; older installs: "Janitza UMG 512-PRO")
+    device_name: ""
 
 influxdb:
   # Enable InfluxDB publishing
@@ -108,6 +130,11 @@ influxdb:
   write_interval: 5
   # Publish mode: "changed" (only changed values) or "all" (all values every poll)
   publish_mode: "changed"
+  # In "changed" mode, rewrite an UNCHANGED value once it has not been written
+  # for this many seconds, so charts and "last value" panels always have a
+  # recent point (ADR-0029). Shorter = more points, longer = emptier panels.
+  # Whole seconds 0..86400; 0 = off. write_interval stays the minimum gap.
+  heartbeat_interval: 600
   # Store-and-forward buffer: points produced while InfluxDB is unreachable are
   # kept in RAM and replayed with their original timestamps on reconnect
   # (idempotent - InfluxDB dedupes on measurement+tags+timestamp).

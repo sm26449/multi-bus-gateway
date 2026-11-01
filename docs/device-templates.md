@@ -128,6 +128,16 @@ Built-in templates are read-only. **Duplicate** one to start from it.
 
 1. **Id, Name, Vendor, Model.** The id (`a-z 0-9 - _`) is permanent; the rest
    is for people.
+   - **Kind of equipment** (`kind`): one of the built-in kinds — meter,
+     inverter, battery, site, heat_pump, drive, ups, charger, sensor,
+     converter, other (`other` for a generic map). Every device made from
+     the map is filed under it, and a device type of that kind lists the map
+     (`GET /api/device-templates?type=…`). Every bundled map declares one.
+   - **Also suits these types of yours** (`types`): the user device types
+     (Templates → Device types) the map fits besides its kind, e.g. a heat
+     meter map for a type `chiller` that behaves like a heat pump. A list of
+     type ids; a type unknown on another gateway is kept and simply matches
+     nothing there.
 2. **How the device is read:**
    - **Ways to reach it:** tick Modbus TCP and/or RTU, RTU listen-only, HTTP,
      MQTT. Ticking HTTP or MQTT adds the **json_path** (and **topic**)
@@ -145,6 +155,48 @@ Built-in templates are read-only. **Duplicate** one to start from it.
      command, a setup step or a raw write, goes out as one FC6 per
      register, in order, and stops at the first refusal. The Delta VFD-EL
      answers only FC3, FC6 and FC8 ([delta-vfd-el.md](delta-vfd-el.md)).
+   - **Pause after connecting (s)** (`connect_settle_s`, Raw JSON only, in
+     `protocol`): for a gateway that ignores the first seconds after a TCP
+     connect, such as a Huawei SDongle or some serial bridges. Every new
+     connection waits this long before its first request, once per
+     (re)connect and never per read. The connection's own
+     `connect_settle_s` overrides it, and an explicit `0` turns it off.
+     Range 0..30. See [config-reference.md](config-reference.md).
+   - **Heard only** (`listen_only: true`, Raw JSON only, in `protocol`): for
+     a virtual-map bus whose mode each device chooses (`seplos_v2`,
+     `seplos_v2-tcp`), a map whose rows are only ever heard on a bus another
+     master polls. Saving a device from it with `connection.mode: poll` is
+     refused ("choose listen"). The Seplos V2 inter-pack tap
+     (`seplos_bms_v2_tap`, [seplos-v2.md §8](seplos-v2.md#8-a-parallel-bank-the-inter-pack-tap))
+     carries it. `rtu_tap` and `can` listen by themselves and do not take it.
+   - **Serial line** (`line`, Raw JSON only, in `protocol`): the vendor's
+     default line, `{"baudrate": 9600, "parity": "N", "bytesize": 8,
+     "stopbits": 1}` (each key optional; one left out is the gateway's
+     default: 9600, N, 8, 1). The Add form offers it for a new bus; a bus
+     that already has devices keeps its own line. Write it only from the
+     manual or a device you checked: `deye_hybrid_1p` (9600 8N1) and
+     `samsung_mim_b19n` (9600 8E1) carry it. Checked on save: baudrate
+     300..4000000, parity N/E/O, bytesize 5..8, stopbits 1..2.
+   - **Web API path** (`http.path`, Raw JSON only, in `protocol`): for an
+     HTTP/JSON map, the path and query of the call on the device's host,
+     starting with `/`, no spaces; `${unit_id}` stands for the device id
+     behind the host, `${device_id}` for the gateway's id of the device (no other
+     `${…}`). The installation wizard builds its Fronius URLs from it. The form then asks for the host and the id only. The
+     Fronius Solar API maps carry it, e.g.
+     `/solar_api/v1/GetMeterRealtimeData.cgi?Scope=Device&DeviceId=${unit_id}`.
+   - **Who usually polls it** (`master_hint`, Raw JSON only, in
+     `protocol`): one sentence, at most 300 characters, shown beside the
+     **Role on the bus: Master / Listen-only** question when a device is
+     added. The Eastron meters carry one: they are often an inverter's grid
+     meter, polled by it.
+   - **SunSpec map** (`sunspec: true`, Raw JSON only, in `protocol`): the
+     map is read in SunSpec layout, so a bus scan recognises the device by
+     the SunS marker at 40000 even though the rows start further on. The
+     Fronius SunSpec maps carry it.
+   - The template list (`GET /api/device-templates`) also says, from the
+     template, what connecting to it takes: the protocol it speaks, whether
+     it only listens, the ports it fits, its default unit, its setup writes
+     and whether a bus scan can recognise it (see [API.md](API.md)).
    - **Poll groups:** how often each group is read, in seconds. Rows say which
      group they are in. Use the fast group for power, the slow one for energy
      counters and identity.
@@ -341,7 +393,7 @@ someone asks. A Victron GX sends nothing until it gets
 - `payload` goes out every `every_s` seconds (5–3600) after that.
 - A device's connection may set its own `keepalive`, or `keepalive: false`
   to turn it off (when something else already asks). In the device's
-  **Configure → Connection** tab: *Keepalive*: as the template says, its own (every 5–3600 s),
+  connection editor (⋯ → **Edit connection…**): *Keepalive*: as the template says, its own (every 5–3600 s),
   or off.
 - A standby gateway sends it too: it is a read request.
 
@@ -359,13 +411,22 @@ credentials and TLS, so no copy of the password sits in the device.
 
 ## 6. Test it on the real device
 
-1. **Devices → Add Device:** choose the protocol and the connection.
+1. **Devices → Add Device.** On **What is it?** search for your template and
+   pick it. On **Connection** answer the questions in order (port, where the
+   bus is, role on the bus, protocol, line, address).
    - TCP: host, port, unit ID.
-   - RTU: serial port or the serial bridge, baud, parity, stop bits.
+   - RTU: a serial port of this host (picked from the list) or a bridge's
+     bus; the line (baud, parity, stop bits) and the address.
 
    **Test connection** proves the device answers. For Modbus, any protocol
    answer counts, even an exception.
-2. **Choose your template**, keep the suggested selection, **Create**.
+2. **Check** reads the template's rows once, read-only, before anything is
+   saved: each value with its unit and a quality pill (*ok*, *no answer*,
+   *illegal address*, *out of range*, *looks byte-swapped*, *no value
+   (sentinel)*). *illegal address* points at the address base (§2.1),
+   *looks byte-swapped* at the word order (§2.2). Fix the template and
+   **Run again**. Then **Name & save** → **Create**; the suggested selection
+   is kept.
 3. Open the device. **Overview** shows every value with its age. Compare
    two or three with the device's own display.
 4. Wrong values? Read §10. The usual suspects, in order:
@@ -436,6 +497,7 @@ A minimal complete template:
     "id": "acme_em3",
     "name": "ACME EM3 three-phase meter",
     "vendor": "ACME", "model": "EM3", "version": "1.0.0",
+    "kind": "meter", "types": ["sub_meter_cabinet"],
     "protocol": { "transports": ["tcp", "rtu"], "byte_order": "little",
                   "default_unit_id": 1, "max_registers_per_read": 60 },
     "poll_groups": { "realtime": { "interval": 1 }, "normal": { "interval": 5 },
@@ -492,6 +554,37 @@ A minimal complete template:
 | `write_topic` | — | MQTT: where a command publishes the row's new value ([Commands over MQTT](templates-advanced.md#commands-over-mqtt)) |
 | `write_payload` | `${value}` | MQTT: the text published; `${value}`, `${label}`, or a fixed text |
 | `description` | — | free text, shown as a tooltip |
+| `can_id`, `can_id_extended`, `start_bit`, `bit_length`, `byte_order` | — | CAN: the frame and the signal's bits, DBC semantics (`little` = Intel, `big` = Motorola); `address` stays synthetic (see *CAN rows* below) |
+
+### CAN rows
+
+A CAN row is an ordinary row with five more fields, in DBC's words:
+
+| Field | Meaning |
+|---|---|
+| `can_id` | the frame: `849` or `"0x351"`; several rows per id is normal |
+| `can_id_extended` | `true` for a 29-bit id (required for ids ≥ 0x800) |
+| `start_bit` | DBC start bit: Intel (`little`) the signal's LSB; Motorola (`big`) its MSB in DBC's numbering |
+| `bit_length` | 1..64 |
+| `byte_order` | `little` (DBC Intel, `@1`) or `big` (DBC Motorola, `@0`); required over 8 bits |
+
+The rest is what every row has. `data_type` gives the signedness and the
+container: `uint16` holds up to 16 bits, `int16`/`int32`/`int64` are
+sign-extended at `bit_length`, `float32`/`double` need exactly 32/64 bits,
+`string:N` is N×2 ASCII bytes in wire order (strings are little-endian only;
+`start_bit` names their first byte × 8). `scale` divides (DBC's `factor` is
+`1/scale`), `offset` is added after; `enum`, `bits` and `mask` decode as
+usual. `address` stays synthetic, as on MQTT rows, and keys the value store.
+
+The template declares `protocol.transports: [can]` (and may give
+`protocol.bitrate`). Saving checks that the bits fit in 8 bytes, that an id
+over 0x7FF says it is extended, that the type can hold the length, that every
+row of a CAN template names its frame, and that a Modbus or MQTT template has
+no CAN fields. Two rows on the same bits of one frame are a load **warning**,
+not an error: some protocols overlap on purpose. Not supported: CAN FD (over
+8 bytes), multiplexed signals, signals across two frames. The template
+editor has no CAN columns: edit the raw JSON or import. A CAN device only
+listens ([can.md](can.md)).
 
 Template-level fields (`protocol`, `poll_groups`, `categories`, …) and the
 advanced blocks are in [config-reference.md](config-reference.md#per-register-options).

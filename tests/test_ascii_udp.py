@@ -1,5 +1,5 @@
 # Multi-Bus Gateway — multi-protocol Modbus/HTTP/MQTT acquisition gateway.
-# Copyright (C) 2024-2026 Stefan Maldaianu <sm26449@diysolar.ro>  — AGPL-3.0-or-later
+# Copyright (C) 2024-2026 Stefan Maldaianu <stefan@multibus.dev>  — AGPL-3.0-or-later
 """Modbus ASCII (on a serial port, or tunnelled through TCP) and Modbus over
 UDP (3.91): read end to end through the same connection code as RTU/TCP,
 validated like them, and decoded by the bus monitor."""

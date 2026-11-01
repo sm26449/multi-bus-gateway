@@ -1,5 +1,5 @@
 # Multi-Bus Gateway — multi-protocol Modbus/HTTP/MQTT acquisition gateway.
-# Copyright (C) 2024-2026 Stefan Maldaianu <sm26449@diysolar.ro>
+# Copyright (C) 2024-2026 Stefan Maldaianu <stefan@multibus.dev>
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU Affero General Public License as published by
@@ -480,7 +480,7 @@ def test_read_lock_released_during_retry_backoff(monkeypatch):
         if got:
             conn.lock.release()
 
-    monkeypatch.setattr(mc.time, "sleep", _fake_sleep)
+    monkeypatch.setattr(mc, "_sleep", _fake_sleep)        # the client's own sleeps only (FLK-3)
     assert conn.read_registers(0, 2) is None       # fails after its retries
     assert held_during_sleep                        # a backoff actually happened
     assert not any(held_during_sleep)               # lock was FREE during every backoff

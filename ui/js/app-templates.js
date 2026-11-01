@@ -1,5 +1,5 @@
 /* Multi-Bus Gateway — multi-protocol Modbus/HTTP/MQTT acquisition gateway.
- * Copyright (C) 2024-2026 Stefan Maldaianu <sm26449@diysolar.ro>
+ * Copyright (C) 2024-2026 Stefan Maldaianu <stefan@multibus.dev>
  * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 // templates domain — augments JanitzaMonitor.prototype
@@ -27,7 +27,7 @@ Object.assign(JanitzaMonitor.prototype, {
         try { vmTpls = (await (await fetch('/api/virtual-meters/templates')).json()).templates || []; } catch (e) {}
 
         const activeTab = this._tmTab || 'devmaps';
-        const badgeBuiltin = `<span style="font-size:10.5px;font-weight:700;padding:1px 6px;border-radius:8px;background:rgba(59,130,246,.15);color:#3b82f6;">${t('templates.builtin', 'built-in')}</span>`;
+        const badgeBuiltin = `<span style="font-size:10.5px;font-weight:700;padding:1px 6px;border-radius:8px;background:var(--accent-tint);color:var(--accent-text);">${t('templates.builtin', 'built-in')}</span>`;
         const badgeUser = `<span style="font-size:10.5px;font-weight:700;padding:1px 6px;border-radius:8px;background:rgba(26,143,76,.15);color:#1a8f4c;">${t('templates.userTag', 'user')}</span>`;
 
         // ── Device maps ──
@@ -115,6 +115,7 @@ Object.assign(JanitzaMonitor.prototype, {
               <button class="config-main-tab ${activeTab === 'devmaps' ? 'active' : ''}" data-tmtab="devmaps"><i aria-hidden="true" class="bi bi-table"></i> ${t('templates.tab.devmaps', 'Device maps')} <span style="opacity:.6;">(${devTpls.length})</span></button>
               <button class="config-main-tab ${activeTab === 'emulations' ? 'active' : ''}" data-tmtab="emulations"><i aria-hidden="true" class="bi bi-hdd-network"></i> ${t('templates.tab.emu', 'Meter emulations')} <span style="opacity:.6;">(${vmTpls.length})</span></button>
               <button class="config-main-tab ${activeTab === 'fields' ? 'active' : ''}" data-tmtab="fields"><i aria-hidden="true" class="bi bi-tags"></i> ${t('templates.tab.fields', 'Canonical fields')}</button>
+              <button class="config-main-tab ${activeTab === 'types' ? 'active' : ''}" data-tmtab="types"><i aria-hidden="true" class="bi bi-bookmarks"></i> ${t('types.tab', 'Device types')}</button>
             </div>
             <div data-tmpanel="devmaps" ${activeTab === 'devmaps' ? '' : 'hidden'}>${errBanner}${warnBanner}${devToolbar}
                 ${devTpls.length && this._findBarHtml ? this._findBarHtml('templates') : ''}
@@ -125,7 +126,8 @@ Object.assign(JanitzaMonitor.prototype, {
                     <button type="button" class="btn btn-secondary btn-sm" data-find-clear-empty>${t('find.clear', 'Clear filters')}</button></div>
             </div>
             <div data-tmpanel="emulations" ${activeTab === 'emulations' ? '' : 'hidden'}>${vmToolbar}${vmCards}</div>
-            <div data-tmpanel="fields" id="tmFieldsPanel" ${activeTab === 'fields' ? '' : 'hidden'}></div>`;
+            <div data-tmpanel="fields" id="tmFieldsPanel" ${activeTab === 'fields' ? '' : 'hidden'}></div>
+            <div data-tmpanel="types" id="tmTypesPanel" ${activeTab === 'types' ? '' : 'hidden'}></div>`;
 
         // tab switch
         el.querySelectorAll('[data-tmtab]').forEach(b => b.addEventListener('click', () => {
@@ -133,8 +135,10 @@ Object.assign(JanitzaMonitor.prototype, {
             el.querySelectorAll('[data-tmtab]').forEach(x => x.classList.toggle('active', x === b));
             el.querySelectorAll('[data-tmpanel]').forEach(p => { p.hidden = p.dataset.tmpanel !== this._tmTab; });
             if (this._tmTab === 'fields') this.renderFieldsPanel();
+            if (this._tmTab === 'types') this.renderDeviceTypesPanel?.();
         }));
         if (activeTab === 'fields') this.renderFieldsPanel();
+        if (activeTab === 'types') this.renderDeviceTypesPanel?.();
         // search and filters hide cards in place (app-find.js)
         if (devTpls.length && this._findWireBar) {
             this._findWireBar('templates', viewChanged => this._tplFindApply(viewChanged));
@@ -170,7 +174,8 @@ Object.assign(JanitzaMonitor.prototype, {
     // a map read over Modbus (any framing), or none named yet
     _tplIsModbus(transports) {
         const tr = (transports || []).map(x => String(x).toLowerCase());
-        return !tr.length || tr.some(x => ['tcp', 'rtu', 'rtu-tcp', 'rtu_tap', 'ascii', 'udp'].includes(x));
+        // (a Seplos V2 map is a register map too: its driver's virtual words)
+        return !tr.length || tr.some(x => ['tcp', 'rtu', 'rtu-tcp', 'rtu_tap', 'ascii', 'udp', 'seplos_v2', 'seplos_v2-tcp'].includes(x));
     },
 
     async viewTemplate(id) {
@@ -281,11 +286,13 @@ Object.assign(JanitzaMonitor.prototype, {
     // managerMode: from the Template Manager the import SAVES a library template
     // (no device to assign to). From a device's Registers editor it imports and
     // assigns to that device (the original behaviour).
-    openCsvImport(managerMode = false, fmt = 'csv') {
+    async openCsvImport(managerMode = false, fmt = 'csv') {
+        // from a device's Measurements editor: its staged edits asked about first
+        if (!managerMode && this._regToolsLeave && !await this._regToolsLeave()) return;
         this._csvManagerMode = !!managerMode;
         this._importFmt = fmt === 'yaml' ? 'yaml' : 'csv';
         if (!managerMode) {
-            const id = this._regDevice || this._primaryDeviceId();
+            const id = this._regDevice || this._defaultDeviceId();
             if (id === this._primaryDeviceId()) {
                 this.showToast('info', this.t('registers.upload.primaryTitle', 'Uses built-in map'),
                                this.t('registers.upload.primaryMsg',
@@ -399,7 +406,7 @@ Object.assign(JanitzaMonitor.prototype, {
                 // Template Manager: save to the library only (no device assign).
                 await this._tplUploadPost(this._csvTemplate, false);
             } else {
-                const id = this._regDevice || this._primaryDeviceId();
+                const id = this._regDevice || this._defaultDeviceId();
                 await this._uploadMapAndAssign(this._csvTemplate, id, false);
             }
             this.closeModal('csvImportModal');
@@ -424,12 +431,8 @@ Object.assign(JanitzaMonitor.prototype, {
         try {
             const templates = (await (await fetch('/api/device-templates')).json()).templates || [];
             // The device-template handlers (new/upload/edit/delete) are shared with
-            // the standalone Template Manager, which has no wizard context.
-            if (this._devWiz) {
-                this._devWiz.templates = templates;
-                if (selectId) this._devWiz.data.template = selectId;
-                if (this._devWiz.step === 2) this._devWizRender();
-            }
+            // the standalone Template Manager; an open Add Device lists them anew
+            if (this._ad?.open && this._adTemplatesChanged) this._adTemplatesChanged(templates, selectId);
             if (this.currentPage === 'templates') this.renderTemplateManager();
         } catch (e) { console.error(e); }
     },
@@ -459,7 +462,7 @@ Object.assign(JanitzaMonitor.prototype, {
                 body: JSON.stringify({ template: data, overwrite }),
             });
             const res = await r.json();
-            if (r.status === 409 && !res.detail?.builtin) {
+            if (r.status === 409 && !res.detail?.builtin && !res.detail?.config_blocked) {
                 if (await this._tplOverwriteAsk(data?.device_template?.id || data?.id))
                     return this._tplUploadPost(data, true);
                 return;
@@ -746,11 +749,12 @@ Object.assign(JanitzaMonitor.prototype, {
                 <input class="input" id="tplModel" value="${this._esc(d.model || '')}">
             </div>
         </div>
+        ${this._tplTypeHtml(d)}
         ${this._tplProtocolHtml(proto, d)}
         ${this._tplAdvancedHtml ? this._tplAdvancedHtml(d) : ''}
         <datalist id="tplTypeList">${dataTypes.map(t => `<option value="${t}"></option>`).join('')}</datalist>
         <div style="display:flex;gap:8px;align-items:center;margin:8px 0;flex-wrap:wrap;">
-            <input type="text" id="tplSearch" class="input" placeholder="${this.t('common.search', 'Search…')}…"
+            <input type="text" id="tplSearch" class="input" placeholder="${this.t('common.search', 'Search…')}" aria-label="${this.t('common.search', 'Search…')}"
                    value="${this._esc(e.search || '')}" style="max-width:220px;">
             <button class="btn btn-secondary btn-sm" data-action="tplAddRow">
                 <i aria-hidden="true" class="bi bi-plus-lg"></i> ${this.t('devtpl.addRegister', 'Add measurement')}</button>
@@ -839,6 +843,37 @@ Object.assign(JanitzaMonitor.prototype, {
         });
     },
 
+    // what the map is for (ADR-0027): its built-in kind, and the user types
+    // it also suits — a type picked in Add Device lists the templates of its
+    // kind and the ones that name it
+    _tplTypeHtml(d) {
+        const t = (k, def, p) => this.t(k, def, p);
+        const builtins = (this._deviceTypes?.types || []).filter(x => x.builtin).map(x => x.id);
+        const kinds = builtins.length ? builtins : this._KIND_ORDER.filter(k => !(this._deviceTypeById || {})[k] || (this._deviceTypeById[k] || {}).builtin);
+        const users = (this._deviceTypes?.types || []).filter(x => !x.builtin).map(x => x.id);
+        const listed = Array.isArray(d.types) ? d.types : [];
+        const all = [...users, ...listed.filter(x => !users.includes(x))];
+        return `
+        <div class="form-row" style="align-items:flex-start;">
+            <div class="form-group">
+                <label class="form-label" for="tplKind">${t('devtpl.kind', 'Kind of equipment')}</label>
+                <select class="input" id="tplKind" aria-describedby="tplKindHint">
+                    <option value="" ${!d.kind ? 'selected' : ''}>${this._esc(t('devtpl.kindNone', 'Not said (guessed from its names)'))}</option>
+                    ${kinds.map(k => `<option value="${this._esc(k)}" ${d.kind === k ? 'selected' : ''}>${this._esc(this._kindLabel(k))}</option>`).join('')}
+                </select>
+                <div class="field-hint" id="tplKindHint">${t('devtpl.kindHint', 'Files every device made from it; a type of this kind lists this map.')}</div>
+            </div>
+            <fieldset class="form-group flex-2" style="border:0;padding:0;margin:0;" aria-describedby="tplTypesHint">
+                <legend class="form-label">${t('devtpl.types', 'Also suits these types of yours')}</legend>
+                ${all.length ? `<div style="display:flex;gap:6px 14px;flex-wrap:wrap;">${all.map(id => `
+                    <label class="checkbox-label"><input type="checkbox" data-tpl-type="${this._esc(id)}" ${listed.includes(id) ? 'checked' : ''}>
+                        <span>${this._esc(this._kindLabel(id))}${users.includes(id) ? '' : ` <span class="field-hint">(${this._esc(t('devtpl.typeUnknown', 'not on this gateway'))})</span>`}</span></label>`).join('')}</div>`
+                    : `<div class="field-hint">${t('devtpl.typesNone', 'No types of your own yet — Templates → Device types.')}</div>`}
+                <div class="field-hint" id="tplTypesHint">${t('devtpl.typesHint', 'A device of one of these types is offered this map even when its kind differs.')}</div>
+            </fieldset>
+        </div>`;
+    },
+
     _tplCollectMeta() {
         const d = this._tplEdit.data;
         this._tplDeclareCanonCats(d);
@@ -847,6 +882,12 @@ Object.assign(JanitzaMonitor.prototype, {
         d.name = g('tplName')?.value.trim() ?? d.name;
         d.vendor = g('tplVendor')?.value.trim() ?? d.vendor;
         d.model = g('tplModel')?.value.trim() ?? d.model;
+        if (g('tplKind')) { if (g('tplKind').value) d.kind = g('tplKind').value; else delete d.kind; }
+        const typeBoxes = [...document.querySelectorAll('[data-tpl-type]')];
+        if (typeBoxes.length) {
+            const types = typeBoxes.filter(b => b.checked).map(b => b.dataset.tplType);
+            if (types.length) d.types = types; else delete d.types;
+        }
         const canon = g('tplCanonical');
         if (canon) d.canonical = canon.checked;
         const p = d.protocol || (d.protocol = {});
@@ -914,7 +955,7 @@ Object.assign(JanitzaMonitor.prototype, {
         const t = (k, def) => this.t(k, def);
         const tr = (proto.transports || []).map(x => String(x).toLowerCase());
         const TRANSPORTS = [['tcp', 'Modbus TCP'], ['rtu', 'Modbus RTU'], ['rtu_tap', t('devtpl.trTap', 'RTU listen-only')],
-                            ['http', 'HTTP/JSON'], ['mqtt', 'MQTT']];
+                            ['http', 'HTTP/JSON'], ['mqtt', 'MQTT'], ['seplos_v2', 'Seplos V2'], ['seplos_v2-tcp', 'Seplos V2/TCP']];
         const bo = proto.byte_order || 'big';
         // word order, unit id and read size mean something only over Modbus
         const modbus = this._tplIsModbus(tr);
@@ -980,12 +1021,23 @@ Object.assign(JanitzaMonitor.prototype, {
         </details>`;
     },
 
+    // the transports after a checkbox toggle: what the boxes say for the ones
+    // shown, and every declared one without a box (udp, rtu-tcp, ascii…) kept
+    // as it was — a toggle used to drop them (review SV2-R8)
+    _tplTransportsKept(prev, shown, checked) {
+        const boxes = new Set((shown || []).map(x => String(x).toLowerCase()));
+        const kept = (prev || []).filter(x => !boxes.has(String(x).toLowerCase()));
+        return [...new Set([...kept, ...(checked || [])])];
+    },
+
     _tplWireProtocol() {
         const d = this._tplEdit.data;
         const p = d.protocol || (d.protocol = {});
         document.querySelectorAll('#devTplBody .tpl-tr').forEach(cb => cb.addEventListener('change', () => {
             this._tplCollectMeta();
-            p.transports = [...document.querySelectorAll('#devTplBody .tpl-tr:checked')].map(x => x.value);
+            const shown = [...document.querySelectorAll('#devTplBody .tpl-tr')].map(x => x.value);
+            const checked = [...document.querySelectorAll('#devTplBody .tpl-tr:checked')].map(x => x.value);
+            p.transports = this._tplTransportsKept(p.transports, shown, checked);
             if (p.transports.length && !this._tplIsModbus(p.transports)) {
                 // an HTTP / MQTT map carries no Modbus settings
                 ['functions', 'max_registers_per_read', 'byte_order', 'default_unit_id'].forEach(k => delete p[k]);
@@ -1245,7 +1297,7 @@ Object.assign(JanitzaMonitor.prototype, {
                 body: JSON.stringify({ device_template: d, ...(create ? { create: true } : {}) }),
             });
             let res = await r.json();
-            if (r.status === 409) {
+            if (r.status === 409 && !res.detail?.config_blocked) {
                 if (res.detail?.builtin) {
                     errBox.textContent = this.t('devtpl.builtinTaken', 'A built-in template already has the id "{id}" — choose another id.')
                         .replace('{id}', d.id);
@@ -1336,7 +1388,7 @@ Object.assign(JanitzaMonitor.prototype, {
               </div>
             </details>
             <div style="display:flex;gap:10px;align-items:center;margin:10px 0;flex-wrap:wrap;">
-              <input type="text" id="tfSearch" class="input" style="max-width:260px;" placeholder="${t('common.search', 'Search…')}" value="${this._esc(this._tfSearch || '')}">
+              <input type="text" id="tfSearch" class="input" style="max-width:260px;" placeholder="${t('common.search', 'Search…')}" aria-label="${t('common.search', 'Search…')}" value="${this._esc(this._tfSearch || '')}">
               <select id="tfCatFilter" class="input" style="max-width:240px;" aria-label="${this._esc(t('fields.categoryShort', 'Category'))}" ${this._act('_tfSetCat', [], { value: true, on: 'change' })}>
                 <option value="" ${cat ? '' : 'selected'}>${t('fields.allCats', 'All categories')} (${Object.keys(fields).length})</option>
                 ${own ? `<option value="__mine" ${cat === '__mine' ? 'selected' : ''}>${t('fields.mineOnly', 'Only yours')} (${own})</option>` : ''}

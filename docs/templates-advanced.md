@@ -443,8 +443,11 @@ bitmasks     balancing_bits → "Cell {n}"
 
 **What for.** **Scan** on a bus ([rtu-over-network.md §5](rtu-over-network.md#5-finding-the-slaves-watching-the-bus-moving-things))
 asks every unit ID who answers. When a slave matches this template's
-recognition, the scan proposes the template, and **Add** opens the wizard
-with it selected.
+recognition, the scan proposes the template, and **Add** opens Add Device
+with it selected. The same recognition names the units in Add Device →
+**Many of the same on one bus**, and the **Check** step compares a device's
+answer with the template picked (a mismatch offers the template that
+matches).
 
 **How it works.** All the declared checks must hold:
 - **Registers that must read** (up to 8): an address, its table (holding or
@@ -576,11 +579,11 @@ must be fitted. A note says it where the user will see it, instead of in a
 manual nobody opens.
 
 **Where it shows.**
-- In the add-device wizard, under the template list once the template is
-  picked. A template with a warning carries a ⚠ next to its name.
+- In Add Device → **What is it?**, under the list once the template is
+  picked; its card carries a **Note** mark (with ⚠ when a note is a warning).
 - At the top of every device made from the template.
-- On the command a warning names: the Commands tab marks it, and the mark's
-  tooltip is the note.
+- On the command a warning names: the *Commands* tab marks it, and the
+  mark's tooltip is the note.
 
 **Each note has:**
 - a **level**: `info` or `warning`;
@@ -712,7 +715,10 @@ A save refuses, naming the row or block and the reason:
   expression that does not evaluate, bounds that contradict each other;
 - display fields that do not exist, too many glance fields, a tiles pattern
   that does not compile;
-- a recognition register without a condition.
+- a recognition register without a condition;
+- a `protocol.line`, `protocol.http.path`, `protocol.master_hint` or
+  `protocol.sunspec` out of shape (see [device-templates.md](device-templates.md), *How the device is
+  read*).
 
 A template file already on disk that breaks one of the checks added in 3.91
 still **loads**: an upgrade never stops a device. The log names the problem,

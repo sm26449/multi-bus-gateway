@@ -1,5 +1,5 @@
 # Multi-Bus Gateway — multi-protocol Modbus/HTTP/MQTT acquisition gateway.
-# Copyright (C) 2024-2026 Stefan Maldaianu <sm26449@diysolar.ro>  — AGPL-3.0-or-later
+# Copyright (C) 2024-2026 Stefan Maldaianu <stefan@multibus.dev>  — AGPL-3.0-or-later
 """A device's meters, each in a role (meter_links.py): a UPS with a meter on
 its input and one on its output, a heat pump with one on its supply. Roles
 from a fixed catalog, one link per role, no loop through the meters, the

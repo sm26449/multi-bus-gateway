@@ -19,7 +19,8 @@ defaults track this document.
    file/UI on each boot. Secrets set via env (`MQTT_PASSWORD`, `INFLUXDB_TOKEN`)
    are *shadowed*: a UI save writes the config-file value
    back to disk, never the env secret.
-3. **`config/selected_registers.json`** (primary device) and
+3. **`config/selected_registers.json`** (the legacy primary device; ignored
+   without one) and
    **`config/devices/<id>/selected_registers.json`** (every other device) — the
    per-device register selection, poll groups, energy fields and calculated
    registers.
@@ -31,7 +32,25 @@ the keys listed below, with defaults for anything missing) — but see the
 If `config.yaml` fails to parse at boot, the gateway restores the last-known-good
 snapshot instead of running on defaults, keeps the broken file as
 `config.yaml.bad`, and disables saves until it is repaired (visible in
-`/api/status` → `config`).
+`/api/status` → `config`). A save tried meanwhile answers 409 with what to
+repair (`detail.config_blocked: true`).
+
+**A section in the wrong shape** (a scalar or a list where a section of
+`key: value` lines belongs, e.g. `mqtt: true`):
+
+| Section | In another shape | Empty (`null`) |
+|---|---|---|
+| `modbus`, `mqtt`, `influxdb` | **the whole load is refused** as above (`.bad`, last good copy, saves blocked); the log names the key. Their defaults would lose the address, the broker, the credentials and the token for good on the next save | its defaults |
+| `ui`, `ui.auth`, `ui.tls`, `security` | **the whole load is refused**, the key named: their defaults would remove the login, TLS or the allowlist | **refused too** |
+| `opcua`, `polling`, `alerts`, `http_output`, `rest_push`, `opcua_output`, `pq_recorder`, `gateway`; `polling.groups` and each group in it; `mqtt.ha_discovery` | read as its defaults (a group: skipped), one WARNING naming the key; the rest of the file loads | its defaults, silently |
+
+One shape is understood rather than refused: `mqtt.ha_discovery: true|false`
+(the per-device form) is read as `{enabled: true|false}` with the default
+prefix, with a WARNING.
+
+**A load that read a section as its defaults never refreshes
+`config.yaml.good`** (one WARNING says so): the last good copy keeps the real
+section until the file is repaired.
 
 ## Environment variables
 
@@ -114,10 +133,14 @@ A standalone gap-backfill tool for InfluxDB; it reads its own environment:
 | top-level key | default | meaning |
 |---|---|---|
 | `config_version` | written automatically | version of the gateway that last saved the file (kept as the first key). A downgrade loading a newer-stamped file warns, raises a `config-downgrade` alert and flags `/api/status` → `config_status.written_by_newer`: saving from the older version drops settings the newer one introduced. See [upgrade-guide.md](upgrade-guide.md). |
+| `identity_scope` | `gateway` on a fresh install | how **new** devices are named. `gateway`: topic `mbg/<gateway.id>/devices/<id>`, bucket `<gateway.id>-<id>`, HA unique_id `mbg_<gateway.id>_dev_<id>_…` — two gateways can share one broker and one InfluxDB. `legacy`: `mbg/devices/<id>`, bucket `<id>`, HA `mbg_dev_<id>_…`. A file **without** the key (every install before 3.97) is `legacy`, and the next save writes it out. Existing devices keep their stored prefix, bucket and HA node (`devices[].mqtt.ha_node`, written for devices created under `gateway`; none = `mbg_dev_<id>`) under either scope: changing it (Settings → General) names new devices only. A snapshot restore or backup import keeps the live scope and id unless asked (`restore_identity=true`). Another value is reported and read as `legacy`. To switch an older file to `gateway` by hand, also remove a `default_topic_pattern` / `default_bucket_pattern` it wrote out, or use Settings, which does both. |
+| `gateway.id` | `mbg-` + 6 hex characters, generated on a fresh install | this gateway's id (`^[a-z0-9][a-z0-9-]{1,31}$`), the `{gateway}` of the default patterns. Kept once saved. Written when set; a `gateway` scope without one gets one generated and written at once. `gateway` is reserved. Changing it names devices created afterwards only (topic, bucket and HA node). An invalid value is reported and ignored. |
+| `primary_device` | `false` on a fresh install | whether the **legacy primary device** exists — device #1, id `umg512`, a Janitza UMG 512-PRO read over the flat `modbus:` section (topics under `mqtt.topic_prefix`, Influx tag `janitza_umg512`, HA device `janitza_umg512`). A fresh install has none: add devices from the UI. A file **without** the key (written before 3.96) is an older install: it has device #1 exactly when it holds a `modbus:` section (or `MODBUS_HOST` is set), keeps `mqtt.topic_prefix: multibus/umg512` and `ha_discovery.device_name: Janitza UMG 512-PRO` where it did not name them, and the next save writes all three out. Set `false` on a file an older gateway saved for a bench with no such meter — and again after a downgrade and re-upgrade (an older gateway drops the key and brings the meter back). `MODBUS_HOST`, or an explicit `true`, also keeps the old prefix and HA name where the file is silent. An import or restore that changes it answers `restart_required`. Without a primary, a history/energy query must name a device. An unreadable file keeps device #1 (saves are blocked until it is repaired). The id `umg512` stays reserved either way. |
 
 ### `modbus:` — the primary device connection
 
-The primary device is always Modbus TCP; its connection lives in this flat
+Read only when `primary_device` is true (an older install). The primary device
+is always Modbus TCP; its connection lives in this flat
 section. (Serial/RTU and other transports are available on additional
 `devices:` entries, below.)
 
@@ -136,6 +159,7 @@ section. (Serial/RTU and other transports are available on additional
 | `drop_all_zero` | `false` (opt-in) | data-readiness gate for sleepy devices: a poll group whose numeric values are ALL exactly zero (≥2 of them) is dropped and the cache keeps last-good values |
 | `serialize_endpoint` | `true` | queue this device's Modbus transactions behind every other device that shares the same `host:port`. Cheap gateways (a Fronius DataManager, most RS-485-over-TCP bridges) serialize internally and serve a handful of clients: several devices polling one of them at once go **slower**, not faster. Costs nothing when a device has the endpoint to itself; set `false` to restore free-for-all access |
 | `endpoint_min_gap_s` | `0.0` | breathing room between consecutive transactions on this access point. A master device is a small computer with its own job — a Fronius DataManager has to poll its RS-485 side while it answers us — and hit back-to-back it starves that side. The symptom is not a polite slowdown but collapse: measured on a production one, demanding 32 transactions a minute returned 21.6 with 6.5 % errors, while demanding 26 returned 26. Our own long-lived Fronius collector never had that problem because it waits a full second after every device and 200 ms between register blocks, leaving the datalogger idle about a fifth of the time **on purpose**. The gap belongs to the access point, so when several endpoints share one the most cautious declaration wins. Costs exactly `gap × transactions` of wire time, so budget it: 0.3 s at 26 tx/min is 7.8 s a minute. `0` keeps the old back-to-back behaviour |
+| `connect_settle_s` | unset (the template's `protocol.connect_settle_s`, else `0`) | a pause after every successful connect, before the first request. Some gateways ignore or refuse what arrives in the first seconds after a TCP connect (a Huawei SDongle, its WLAN on port 6607, some serial bridges), and the first batch after every reconnect then burns its whole retry budget. Runs once per (re)connect, in `connect()` and in the reconnect inside a read, never per read. It is held under the transport lock, so a unit sharing the socket waits too, and it belongs to the access point: when several units share one, the largest value wins, as with `endpoint_min_gap_s`. A template can carry a default in its `protocol` block; the connection's own value overrides it, and an explicit `0` turns it off. Clamped to 0..30 s. Keep it below `endpoint_wait_s`, or a sibling waiting for its turn during the pause skips that cycle (`bus_busy`). `0` keeps the old behaviour |
 | `endpoint_wait_s` | `10.0` | how long a read may wait for its turn on a shared endpoint before skipping the cycle. A missed turn is **not** a device failure: nothing is counted against the link, and a single `bus_busy` event per episode says the gateway is the bottleneck |
 | `share_transport` | `true` | use ONE socket for every device behind the same access point, the way a master device is meant to be talked to. A socket per unit never made units independent — they still queue inside the master — and a master that serves a handful of clients simply runs out of them. Per-unit counters, latency, error taxonomy, reachability and health are unaffected: units share a wire, never an identity. A directly-attached serial line (`protocol: rtu`) never shares. Set `false` for a socket per unit |
 | `max_connections` | `1` | how many sockets that access point is worth, with the units shared out between them (sticky by unit id, so a unit always rides the same one). Transactions overlap **across** connections and queue **within** each. One is the honest default: a master that serializes internally — a Fronius DataManager, measured at ~0.4 s per read alone and ~3 s with five callers racing — gains nothing from a second and loses a client slot. A master with an engine per line (an RS-485 bridge with several, a PLC front end) cuts its sweep almost proportionally. Which one yours is, is a **measurement**: `scripts/calibrate_endpoint.py` makes it. Range 1..8 |
@@ -156,16 +180,16 @@ its interval — the two numbers an interval is chosen from.
 | `broker` | `mosquitto` | the bundled compose broker; point it at your own from the UI |
 | `port` | `1883` | |
 | `username` / `password` | `""` | |
-| `topic_prefix` | `multibus/umg512` | primary device's prefix |
+| `topic_prefix` | `mbg/gateway` | the gateway's own root (`<prefix>/status`, `<prefix>/site/meta`, virtual-meter state) and the primary device's prefix where there is one. An older install whose file does not name it keeps `multibus/umg512` (see `primary_device`). |
 | `retain` | `true` | |
 | `qos` | `0` | |
 | `publish_mode` | `changed` | `changed` or `all` |
 | `heartbeat_interval` | `0` (off) | in `changed` mode, force a republish of an *unchanged* value after this many seconds so steady readings keep a fresh timestamp (HA doesn't grey the entity out) |
 | `ha_discovery.enabled` | `true` | Home Assistant MQTT discovery |
 | `ha_discovery.prefix` | `homeassistant` | |
-| `ha_discovery.device_name` | `Janitza UMG 512-PRO` | primary device's HA name |
+| `ha_discovery.device_name` | `""` | the primary device's HA name (only with `primary_device: true`; an older install whose file does not name it keeps `Janitza UMG 512-PRO`). Without a primary, other devices and virtual meters carry no `via_device` and the virtual meters' HA ids are `mbg_vmeter_<id>` (with one: `janitza_vmeter_<id>`, unchanged). |
 | `allow_write_entities` | `false` (opt-in) | expose writable registers as HA number/select entities and subscribe to their command topics. **Double-gated**: a command executes only when this AND `security.allow_writes` are true, the register is declared writable, and the value is within its envelope. Refused while `mqtt.username` is empty: an anonymous broker session would turn any LAN publish into a hardware write (3.80.0). |
-| `default_topic_pattern` | `mbg/devices/{device}` | topic-prefix pattern seeded onto **new** devices (`{device}` = device id). Namespace convention: device values under `mbg/devices/<id>/…`; `mbg/vmeter/<id>/…` is reserved for virtual-meter MQTT publishing. Pre-existing devices keep their persisted prefixes. |
+| `default_topic_pattern` | the scope's: `mbg/devices/{device}` (`legacy`), `mbg/{gateway}/devices/{device}` (`gateway`) | topic-prefix pattern seeded onto **new** devices (`{device}` = device id, `{gateway}` = `gateway.id`, under either scope; `{gateway}` needs an id). An explicit pattern wins over the scope's. A legacy file keeps it written out (as every save before 3.97); under `gateway` only a chosen one is written. Namespace convention: device values under `mbg/devices/<id>/…` or `mbg/<gateway>/devices/<id>/…`; `mbg/vmeter/<id>/…` is reserved for virtual-meter MQTT publishing. Pre-existing devices keep their persisted prefixes. The prefix a new device gets is checked (unique, no overlap, no `+`/`#`; see docs/API.md). |
 | `compat_aliases` | `[]` | topic-migration dual-publish: every publish whose topic starts with `from` is *also* published under `to`, with `leaves` renaming individual tails — old consumers keep receiving byte-identical topics while they migrate. Example: `[{from: meters/umg512, to: janitza/umg512, leaves: {energy/active/import: energy/active/consumed}}]`. Remove the entry once no subscriber uses the old prefix. |
 | `tls_enabled` | `false` (opt-in) | broker TLS (8883) |
 | `tls_ca_cert` / `tls_client_cert` / `tls_client_key` | `""` | container-local paths; client pair adds mutual TLS |
@@ -182,7 +206,8 @@ its interval — the two numbers an interval is chosen from.
 | `bucket` | `multibus` | primary device's bucket |
 | `write_interval` | `5` | seconds |
 | `publish_mode` | `changed` | `changed` or `all` |
-| `default_bucket_pattern` | `{device}` | bucket pattern seeded onto **new** devices |
+| `default_bucket_pattern` | the scope's: `{device}` (`legacy`), `{gateway}-{device}` (`gateway`) | bucket pattern seeded onto **new** devices; `{gateway}` as in `mqtt.default_topic_pattern`, and written out the same way |
+| `heartbeat_interval` | `600` (written into the file) | in `changed` mode, rewrite an *unchanged* value once it has not been written for this many seconds, so state timelines and "last value" panels always have a recent point; `write_interval` stays the minimum gap; whole seconds `0`–`86400`, `0` = off. A config.yaml without the key gets `600` written into it on its first load (one INFO log line); like any save from the UI, that one-time rewrite drops the file's comments and YAML anchors (`config.example.yaml` already has the key, so a fresh copy of it is never rewritten). From then on the file's value is the only one that runs (Settings → InfluxDB). A device or an installation sets its own in its `influxdb:` block (a device's **Outputs → InfluxDB** shows "gateway: N s" beside an empty field); a value that is not whole seconds is ignored with a warning (the gateway's applies). An installation's totals and its extra InfluxDB outputs use the installation's value, else the gateway's, so a total that stays at 0 W all night is still rewritten. **Upgrade note:** in a high-availability pair (available in MBG Pro) run the same version on both nodes — a newer node adds this key to a file synced from an older one. |
 | `buffer_minutes` | `120` | store-and-forward: keep at most this much history while InfluxDB is down; replayed with original timestamps on reconnect |
 | `buffer_max_points` | `200000` | hard cap (drop-oldest) |
 | `buffer_persist` | `true` | persist the buffer to disk (see `INFLUX_BUFFER_PATH`) so it survives a restart during an outage |
@@ -214,8 +239,24 @@ its interval — the two numbers an interval is chosen from.
 | `allowlist` | `[]` (open) | IPs/CIDRs allowed to reach the HTTP API/UI. Loopback and the docker gateway are always allowed. An entry that does not parse **denies every client** until it is fixed (3.83.0) — the API refuses such an entry, so this only happens to a hand-edited file. |
 | `allow_nonlan_http_devices` | `false` (opt-in) | SSRF guard: HTTP/JSON device URLs must point at a private LAN host unless this is true |
 | `allow_writes` | `false` (opt-in) | master **arming** switch for Modbus writes (FC5/6/15/16). When armed, any device that is not `write_locked` can be written — declared registers with their template encoding + whatever guards were declared; undeclared registers via the raw path (`unguarded: true` in the payload). Every write is authenticated, rate-limited and audited. |
-| `primary_write_locked` | `true` | per-device write LOCK for the primary. Read-only used to be hardcoded; it is now this flag, defaulting to locked so the historical behavior survives upgrades. Unlock deliberately. Non-primary devices carry `write_locked` in their `devices[]`/`endpoints:` entry (default unlocked) — toggle from the device's Commands tab (or Edit, when it has no commands). |
+| `primary_write_locked` | `true` | per-device write LOCK for the primary. Read-only used to be hardcoded; it is now this flag, defaulting to locked so the historical behavior survives upgrades. Unlock deliberately. Non-primary devices carry `write_locked` in their `devices[]`/`endpoints:` entry. A device, installation or adopted device made from the UI or the API is stored locked (`write_locked: true`), and a restored one comes back locked with its command bindings off; an entry written by hand without the key stays unlocked, as before. Switch it from the device's ⋯ menu: **Unlock writes…** (it asks first) / **Lock writes**. |
 | `write_rate_limit_per_s` | `10.0` | per-client-IP write rate limit on the write API; excess gets 429; `0` disables |
+
+### `preview:` — the read preview's budget
+
+What a read preview may cost: Add Device → **Check**, and **Preview** on a
+device's page. Set in Settings → Modbus → **Read preview budget**, or with
+`GET/POST /api/config/preview`. Defaults: `PREVIEW_BUDGET` in
+`multibus/config.py`.
+
+| Key | Default | Notes |
+|-----|---------|-------|
+| `max_requests` | `4` (written into the file) | at most this many read requests per preview, whole number `1`–`20` |
+| `listen_s` | `10` (written into the file) | how long a preview listens on a bus another master polls (it never transmits there), whole seconds `1`–`60` |
+
+A file without the section gets it written in on its first load, in one
+rewrite with one INFO line (as `influxdb.heartbeat_interval`); nothing else in
+the file changes. A value out of range runs as its default, with a warning.
 
 ### `polling:`
 
@@ -310,14 +351,30 @@ the reason-bitmask semantics.
 Each entry describes one extra device (the primary comes from the flat sections
 above). A malformed entry is skipped with a warning — it never blocks boot.
 
+A save through the API (create, edit, `PATCH`) checks the advanced connection
+keys it sets to a new value, each in its range: `retry_attempts`
+0..10, `retry_delay` 0..60, `stale_after_s` 0..86400, `max_gap` 0..125,
+`illegal_registers` (addresses 0..65535, up to 1000), `startup_jitter_s`
+0..3600, `max_connections` 1..8, `endpoint_wait_s` 0.1..600,
+`endpoint_min_gap_s` 0..60, `connect_settle_s` 0..30, and the switches
+`drop_all_zero`, `serialize_endpoint`, `share_transport` as true/false. A
+value already stored (written by hand) is not judged again until a save
+changes it. The ranges and defaults live in `multibus/conn_advanced.py`.
+
+`energy_counter_resets: [{at, ts, reason}]` is written by **Replace hardware**
+(`PATCH /api/devices/{id}?intent=replace`): when a meter's counter started
+again from a low value. Every save keeps it; do not edit it by hand.
+
 ```yaml
 devices:
   - id: sdm630_garage            # required, unique, [A-Za-z0-9][A-Za-z0-9_.-]*
     name: Garage SDM630
     template: eastron_sdm630     # device-template id
     enabled: true
+    kind: meter                  # the device's type: a built-in kind or one of your device_types (absent = the template's)
+    write_locked: true           # stored true for every device made from the UI or the API; absent = false
     connection:
-      protocol: tcp              # tcp | udp | rtu | ascii | rtu-tcp | ascii-tcp | http | mqtt | rtu_tap
+      protocol: tcp              # tcp | udp | rtu | ascii | rtu-tcp | ascii-tcp | http | mqtt | rtu_tap | seplos_v2 | seplos_v2-tcp | can
       # tcp / udp / rtu-tcp / ascii-tcp:
       host: 192.168.1.60
       port: 502
@@ -344,9 +401,16 @@ devices:
       #   availability {topic, online, offline}, stale_after_s, vars {name: value},
       #   keepalive {topic, first_payload, payload, every_s} or false (overrides
       #   the template's protocol.keepalive), tls_ca (CA file) / tls_insecure
+      # can (CAN input, listen-only): carrier (socketcan), channel (can0),
+      #   bitrate (what the bus runs at — shown; the host sets it), stale_after_s
+      # seplos_v2 (serial_port + line) / seplos_v2-tcp (host + port): unit_id = the
+      #   pack address, mode: poll | listen
     mqtt:
       topic_prefix: meters/${device_id}   # ${device_id} / ${id} substituted
       ha_discovery: true
+      # ha_node: mbg_<gateway>_dev_<id>   # written for a device created under identity_scope
+      #                                   # gateway; absent = mbg_dev_<id>. Never change it by hand:
+      #                                   # it is the Home Assistant device every entity hangs on
       enabled: true              # route this device's values to MQTT
       # its own publishing; absent = the gateway's (mqtt: above, Settings → MQTT)
       # publish_mode: changed     # changed | all (every reading)
@@ -359,6 +423,7 @@ devices:
       # its own publishing; absent = the gateway's (influxdb: above)
       # publish_mode: changed     # changed | all
       # write_interval: 5         # s; at most one point per value this often
+      # heartbeat_interval: 600   # s; rewrite an unchanged value; 0 = never
     http_output: {enabled: false}
     opcua: {enabled: true}       # served on the OPC UA server; fields: [..] = only those values
                                  # (absent = served, every value; a device made in the UI gets false)
@@ -373,15 +438,32 @@ sends Modbus TCP frames in UDP datagrams (devices whose manual says UDP);
 `rtu_tap` is a LISTEN-ONLY observer
 of a bus mastered by someone else (never transmits — decodes the existing
 master↔slave traffic) — see [rtu-serial.md](rtu-serial.md).
+`seplos_v2` / `seplos_v2-tcp` are not Modbus: they read a Seplos V2 BMS over
+its ASCII protocol (a serial port here, or a bridge's raw TCP port), read-only,
+with `mode: poll` (the gateway asks the pack) or `mode: listen` (it decodes a
+master pack's exchanges and never transmits). The mode is required for a new
+device; a stored one without it reads as `poll`. A template that only listens
+(`protocol.listen_only`, e.g. `seplos_bms_v2_tap`) refuses `mode: poll`. One
+device per pack address on a port. See
+[seplos-v2.md](seplos-v2.md).
+`can` listens to a CAN bus through a carrier: `carrier: socketcan`,
+`channel` (default `can0`), `bitrate` (default `500000`, 10000–1000000; what
+the bus runs at, shown only — the host sets it), `stale_after_s` (1–3600; the Add form proposes `5`, a file without it gets
+the connection default `30`). Frames are decoded by the template's signal rows, nothing is
+ever transmitted, and the device cannot be written. The interface itself
+must be listen-only on the host. Added from Add Device (port **CAN**) or the
+API. See [can.md](can.md).
 
-Three more keys tie a device into an installation and give it named actions
+More keys tie a device into an installation, give it named actions and parts
 (user-facing walk-through in [MANUAL.md §5b and §14b](MANUAL.md)):
 
 | Key | Default | Meaning |
 |-----|---------|---------|
 | `group_id` | `""` | which group of its endpoint the unit belongs to (`inverters`, `meters`…); the aggregator sums powers per group, never across groups |
 | `role` | `""` | what the unit is inside the installation (`inverter`, `meter`, `site`…) — a label the plant page and the aggregator read, not a permission |
-| `commands` | `[]` | command bindings: `[{name, from_template, enabled, faces, confirm, lease_s}]` enables a preset the template ships (or carries a full inline recipe); see [commands-design.md](commands-design.md) |
+| `commands` | `[]` | command bindings: `[{name, from_template, enabled, faces, confirm, lease_s, safe}]` enables a preset the template ships (or carries a full inline recipe); see [commands-design.md](commands-design.md). Edited per command with `PUT /api/devices/{id}/commands/{name}` |
+| `channels` | `{}` | this device's pace for a template channel, over the template's: `{<channel or command name>: {min_interval_s, min_on_s, min_off_s, max_starts_per_h, max_age_s}}`, each 0..86400 (`max_age_s` at least 1, `max_starts_per_h` whole). Absent = the template's (`max_age_s` 30 s). An installation group carries the same under `groups[].channels`. Edited from the device's **Commands & bindings…** or `PUT /api/devices/{id}/channels/{key}` |
+| `components` | `[]` | parts a device holds that are devices of their own (a GX's batteries and sensors): `[{type, instance, name?, enabled?}]`; each becomes a device `<parent>-<type>-<instance>` read through its parent's connection. A malformed or repeated entry is skipped with a warning |
 
 ### `endpoints:` — N units of the same device behind one endpoint
 
@@ -420,9 +502,9 @@ endpoints:
 
 An endpoint is ONE endpoint, so the sinks that belong to the endpoint are declared
 once: `write_locked`, `http_output` and `rest_push` sit on the endpoint and are
-propagated to every materialized unit. They are edited from any unit's Outputs
-tab (the panel says it applies endpoint-wide; the write lock from its Commands
-or Read via tab) or from the endpoint page.
+propagated to every materialized unit. They are edited from any unit's ⋯ →
+Outputs… (the panel says it applies endpoint-wide; the write lock from its ⋯ →
+Unlock writes… / Lock writes) or from the endpoint page.
 
 Editing an endpoint re-materializes its units only when something they are BUILT
 from changed (connection, template, unit membership, routing, the endpoint-level
@@ -559,10 +641,63 @@ vanished endpoint; a freshness verdict does not.
 | `encryption` | `required` | `required` (Basic256Sha256 sign & encrypt only), `optional` (also none — passwords in clear), `off` |
 | `allow_anonymous` | `false` | otherwise the gateway's accounts; 5 wrong passwords lock a name for 5 min |
 | `update_s` | `1.0` | how often values are pushed into the address space (0.2..60) |
-| `public_url` | `""` | behind a load balancer: `opc.tcp://<balancer>:<port>/<path>` — the path served and the host the certificate names; the server still listens on `host`/`port`. A standby takes its partner's certificate with the configuration copy |
+| `public_url` | `""` | behind a load balancer (a high-availability pair, available in MBG Pro): `opc.tcp://<balancer>:<port>/<path>` — the path served and the host the certificate names; the server still listens on `host`/`port`. A standby takes its partner's certificate with the configuration copy |
 
 The self-signed server certificate and key live in `config/opcua/`. See
 [opcua.md](opcua.md).
+
+### `rules:` and `commands:` — removed in 3.97
+
+The kill switches `rules.recheck` (added in 3.94) and `commands.raw_lanes`
+(added in 3.95), with their environment variables `MBG_RULES_RECHECK` and
+`MBG_RAW_LANES`, were removed in 3.97; their `on` behaviour is the only one:
+
+- a rule's write is asked again under the bus lock, just before it goes out:
+  paused, yielded to another rule, or held by the channel since the rule
+  decided → `cancelled`, sent again when it may
+  ([rules.md §3.9](rules.md#39-several-rules-on-one-target-layers)); a rule's
+  correction (`reassert_s`) waits for the channel's pace, emergency wants
+  exempt;
+- raw register writes — an HA entity on a register,
+  `POST /api/devices/{id}/write`, a raw write's dead-man revert — travel the
+  device's lane like commands: the MQTT worker never waits for a bus, a newer
+  value of the same register replaces one still waiting, a write that waited
+  longer than 30 s expires, every HA outcome is told on `<prefix>/cmd/result`.
+
+A `config.yaml` that still holds `rules: {recheck: …}` or
+`commands: {raw_lanes: …}` loads as before; the keys are ignored with one INFO
+log line on each load until the next save drops them. The environment variables are ignored
+the same way. `/api/status` no longer reports `rules_recheck` / `raw_lanes`.
+Not behind any switch either: a register any command of the device writes — at
+any position, on the same slave — is never written raw (HA, REST, `unguarded`
+included).
+
+### `device_types:` — your own device types
+
+The types a device, a template and an installation group may name besides
+the built-in kinds (meter, inverter, battery, site, heat_pump, drive, ups,
+charger, sensor, converter, other — the ones that carry behaviour). Edited
+from Templates → Device types or `/api/device-types` (admin); written only
+when there is one. Part of every snapshot, the HA mirror and the export
+(it lives in this file).
+
+```yaml
+device_types:
+  - id: chiller                    # a-z 0-9 _, 2–32, not a built-in nor one of its aliases (system, gx, vfd…)
+    labels: {en: Chiller, ro: Răcitor}   # en required: the fallback for every other language
+    icon: snow                     # one of the fixed set (GET /api/device-types → icons); default other
+    behaves_like: heat_pump        # a built-in kind; default other
+```
+
+A device names its type under its own `kind:` key (the key is unchanged:
+`kind: ups` and `kind: chiller` are both read as the device's type). What
+goes out — the device list's `kind`, `<dev>/meta` `kind` — is the type's
+built-in kind, a user type's `behaves_like`: a consumer never sees an
+unknown kind; `type` and `type_label` say the rest. An installation group's
+`role` may be a user type too. A type is not deleted while a device, a
+deleted device that can still be restored, a template or a group uses it.
+An entry that cannot be read is skipped at load (a warning), kept in the
+file, and its devices fall back to their derived kind.
 
 ### `alerts:` (opt-in)
 
@@ -644,24 +779,31 @@ of every snapshot directory. One list under `sequences:` — each
 ### `attributes.yaml` — facts about the equipment
 
 Next to `config.yaml`; edited from Settings → Site, an installation's page, a
-device's Attributes tab, or the API. Written only through the config store
+device's ⋯ → About (attributes), or the API. Written only through the config store
 (locked, atomic, 0600). Part of every snapshot, the HA mirror and the
 export. Coordinates are only in the export when it includes identity.
 
 ```yaml
 schema: 1
-settings: {location_publish: coarse}        # coarse | exact | off
+settings: {location_publish: coarse, publish_serials: false}   # coarse | exact | off; serials off by default
 site:         {location: {latitude_deg: 48.86, longitude_deg: 2.35}}
 installation: {pv: {}}
 device:
   umg512: {grid_connection: {role: connection_point, max_import_kw: 10, max_export_kw: 8}}
   pv-u1:  {pv_input: [{mppt: 1, modules: 24, module_wp: 450, kwp: 10.8, azimuth_deg: 180, tilt_deg: 30}]}
+  hp:     {identity: {description: "Pump room", location: "garage, cabinet 2", labels: [hvac, floor-1],
+                      manufacturer: Samsung, model: AE160, serial_number: SN-0042, installed_on: "2024-05-17"}}
 ```
 
 The catalog (categories, fields, limits) and its rules:
-[attributes.md](attributes.md). A device template may declare `kind:
-inverter | meter | battery | sensor | site`; the attributes that fit are
-offered first.
+[attributes.md](attributes.md). A device template declares its `kind:` (a
+built-in kind, see `device_types:`); the attributes that fit are offered
+first. `identity` (device and installation level) holds the description,
+where it is mounted, labels and the nameplate; `identity.serial_number` is
+published only with `settings.publish_serials: true`. A device created with
+attributes (Add Device → **Name & save**, or `POST /api/devices` with
+`attributes`) gets them here under `device.<id>`; the Edit device dialog's
+**Identity** section saves them with the device's one **Save**.
 
 ## Per-register options
 

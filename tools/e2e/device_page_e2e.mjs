@@ -1,20 +1,21 @@
 // Multi-Bus Gateway — multi-protocol Modbus/HTTP/MQTT acquisition gateway.
-// Copyright (C) 2024-2026 Stefan Maldaianu <sm26449@diysolar.ro>  — AGPL-3.0-or-later
+// Copyright (C) 2024-2026 Stefan Maldaianu <stefan@multibus.dev>  — AGPL-3.0-or-later
 //
-// The device page as a user meets it (lot 8a): its tabs in three groups —
-// Live, Configure, Diagnose — walked by keyboard (one tab stop per bar,
-// arrows between, Enter opens), reached by link (`edit` is the earlier name
-// of `connection`, a group's name opens its tab, a tab a viewer may not
-// open lands on the Overview), a tab that cannot show anything says why;
-// the header says the device's kind and health and keeps its actions in
-// one ⋯ menu that gives the focus back; the Meters tab names the meters
-// that measure a device, saves only the thresholds that were changed (the
-// defaults are never written, a reset sends {}), says in words why a value
-// is not published, and a meter's own page lists what it measures; a device
-// measured only by its meters is added from Add Device (no connection,
-// then "Meters & kind"), renamed from its Identity tab without an address,
-// and keeps its last meter; a viewer sees the Meters read-only; on a phone
-// the header takes two lines and the tab strip one row that scrolls.
+// The device page as a user meets it (lot 8a, L3.3): its tabs in four
+// groups — Live, Data, Setup, Diagnose — walked by keyboard (one tab stop
+// per bar, arrows between, Enter opens), reached by link (a tab that left —
+// `edit`, `connection`, `meters`… — opens Setup at its section, a group's
+// name opens its tab), a tab that cannot show anything says why; the header
+// says the device's kind and health and keeps its actions in one ⋯ menu
+// that gives the focus back; the meters editor (⋯ → Meters…) names the
+// meters that measure a device, saves only the thresholds that were changed
+// (the defaults are never written, a reset sends {}), says in words why a
+// value is not published, and a meter's own editor lists what it measures;
+// a device measured only by its meters is added from Add Device (no
+// connection, then "Meters & kind"), renamed from the Edit modal's Identity
+// without an address, and keeps its last meter; a viewer reads the Meters
+// in Setup; on a phone the header takes two lines and the tab strip one row
+// that scrolls.
 //
 // Against the throwaway gateway of the installation_safety fixture, writes
 // on (every address the container's own loopback):
@@ -23,7 +24,7 @@
 // It adds dp-* devices and removes them at the end.
 import { chromium } from 'playwright';
 import { watchDialogs } from './lib/dialogs.mjs';
-import { openDeviceTab, openDeviceGroup } from './lib/device-page.mjs';
+import { openDeviceTab, openDeviceGroup, openDeviceEditor, saveDeviceEditor } from './lib/device-page.mjs';
 
 const BASE = process.env.MBG_URL || 'http://127.0.0.1:18087';
 const OUT = process.env.OUT || '';
@@ -88,7 +89,7 @@ try {
 
   // ── groups and tabs ──
   const groups = await page.locator('#deviceWsGroups [role=tab]').evaluateAll(els => els.map(e => e.dataset.dgroup));
-  check('three groups, as tabs: Live, Configure, Diagnose', groups.join() === 'live,configure,diagnose', groups.join());
+  check('four groups, as tabs: Live, Data, Setup, Diagnose', groups.join() === 'live,data,setup,diagnose', groups.join());
   const panelOk = await page.evaluate(() => {
     const p = document.getElementById('dgrpPanel');
     const g = document.querySelector('#deviceWsGroups .active');
@@ -109,10 +110,10 @@ try {
   check('one tab stop per bar (roving tabindex)', stops.join() === '1,1', stops.join());
   await page.focus('#dgrp-live');
   await page.keyboard.press('ArrowRight');
-  check('→ moves to Configure without opening it', (await focused(page)) === 'dgrp-configure' && (await activeGroup(page)) === 'live');
+  check('→ moves to Data without opening it', (await focused(page)) === 'dgrp-data' && (await activeGroup(page)) === 'live');
   await page.keyboard.press('Enter');
   await page.waitForTimeout(400);
-  check('Enter opens Configure on its first tab', (await activeGroup(page)) === 'configure' && (await active(page)) === 'connection', await active(page));
+  check('Enter opens Data on its first tab', (await activeGroup(page)) === 'data' && (await active(page)) === 'measurements', await active(page));
   await page.keyboard.press('End');
   check('End moves to the last group', (await focused(page)) === 'dgrp-diagnose');
   await page.keyboard.press('Enter');
@@ -122,10 +123,14 @@ try {
 
   // ── by link ──
   await go(page, '#/devices/sunfield-u1/edit');
-  check('#…/edit opens Connection, the address says connection',
-        (await active(page)) === 'connection' && /\/connection$/.test(await page.evaluate(() => location.hash)), await page.evaluate(() => location.hash));
+  check('#…/edit (a tab that left) opens Setup at its connection, the address says setup',
+        (await active(page)) === 'setup' && /\/setup$/.test(await page.evaluate(() => location.hash))
+        && await page.evaluate(() => document.activeElement?.closest('[data-setup]')?.dataset.setup) === 'connection',
+        await page.evaluate(() => location.hash));
   await go(page, '#/devices/sunfield-u1/configure');
-  check('a group\'s name opens that group', (await activeGroup(page)) === 'configure');
+  check('#…/configure (the group that left) opens Setup', (await activeGroup(page)) === 'setup');
+  await go(page, '#/devices/sunfield-u1/data');
+  check('a group\'s name opens that group', (await activeGroup(page)) === 'data');
   await go(page, '#/devices/dp-plain/monitor');
   const off = await page.evaluate(() => {
     const n = document.querySelector('#deviceDetailView [data-dpanel="monitor"] .dpanel-off');
@@ -156,7 +161,8 @@ try {
   check('…and its health, in words', /\S/.test(await page.locator('#ddvMeta .ddv-verdict').innerText()));
   await page.click('#ddvActions');
   const items = await page.locator('#ddvActionsMenu [role=menuitem]:visible').allInnerTexts();
-  check('⋯ opens the actions: Kind and Delete', items.some(x => /Kind/.test(x)) && items.some(x => /Delete/.test(x)), items.join(' | '));
+  // the item was "Kind…" until L2 named it "Type…" (1fa53ca)
+  check('⋯ opens the actions: Type and Delete', items.some(x => /^Type/.test(x)) && items.some(x => /Delete/.test(x)), items.join(' | '));
   check('…the first item takes the focus', await page.evaluate(() => document.activeElement?.getAttribute('role') === 'menuitem'));
   await page.keyboard.press('ArrowDown');
   await page.keyboard.press('Escape');
@@ -192,15 +198,17 @@ try {
   const meta = await page.locator('#ddvMeta').innerText();
   check('…the header names its meters by name, and says they are not reporting',
         /Meter dp-in, Meter dp-out/.test(meta) && /meters are not reporting/i.test(meta), meta);
-  check('…and offers no Test (it has nothing to test)', await page.locator('#ddvHeadTest').count() === 0);
+  check('…its Test is held, saying it has nothing to test (L3.10: the header keeps Test, with why)',
+        (await page.getAttribute('#ddvHeadTest', 'aria-disabled')) === 'true' && /measured by its meters/i.test(await page.getAttribute('#ddvHeadTest', 'title') || ''));
   check('…its kind can only be one a meter-only device may be', await (async () => {
     const r1 = await api('/api/devices/dp-ups/organise', { method: 'PATCH', body: JSON.stringify({ kind: 'meter' }) });
     const r2 = await api('/api/devices/dp-ups/organise', { method: 'PATCH', body: JSON.stringify({ kind: null }) });
     return r1.status === 422 && r2.status === 422;
   })());
-  await openDeviceGroup(page, 'configure');
+  await openDeviceEditor(page, 'meters');
   await page.waitForSelector('#mtrRows[data-ready]');
-  check('Configure opens on its Meters', (await active(page)) === 'meters');
+  check('⋯ → Meters… opens its meters editor', await page.locator('#ddvEditBar').isVisible()
+        && /Meters/.test(await page.locator('#ddvEditTitle').innerText()));
   const roles = await page.$$eval('#mtrRows select[id^="mtrRole-"]', els => els.map(e => e.value));
   check('the two meters, in their roles', roles.join() === 'input,output', roles.join());
   check('a stored link shows its own fields (no counter guessed)',
@@ -245,7 +253,8 @@ try {
   await page.fill('#mtrOpt-tolerance_pct', '');
 
   // ── a row with a role and no meter is said, never dropped ──
-  await go(page, '#/devices/dp-plain/meters');
+  await go(page, '#/devices/dp-plain');
+  await openDeviceEditor(page, 'meters');
   await page.waitForSelector('#mtrRows[data-ready]');
   check('an empty row guesses no role', (await page.inputValue('#mtrRole-0')) === '');
   const plainPuts = [];
@@ -259,62 +268,76 @@ try {
   await page.unroute('**/api/devices/dp-plain/meters');
   const prim = (await api('/api/devices')).body.devices.find(d => d.primary);
   if (prim) {
-    await go(page, `#/devices/${prim.id}/meters`);
+    await go(page, `#/devices/${prim.id}`);
+    await openDeviceEditor(page, 'meters');
     await page.waitForSelector('#mtrMeasures');
     check('the primary meter\'s Meters says what it measures (no rows of its own)',
           await page.locator('#mtrRows').count() === 0 && /Measures/.test(await page.locator('#mtrMeasures').innerText()));
   }
-  await go(page, '#/devices/dp-ups/meters');
+  await go(page, '#/devices/dp-ups');
+  await openDeviceEditor(page, 'meters');
   await page.waitForSelector('#mtrRows[data-ready]');
 
   // ── Identity: renamed without an address (MD-N3) ──
   const puts = [];
-  await page.route('**/api/devices/dp-ups', r => { if (r.request().method() === 'PUT') puts.push(r.request().postDataJSON()); r.continue(); });
+  await page.route('**/api/devices/dp-ups', r => { if (['PUT', 'PATCH'].includes(r.request().method())) puts.push(r.request().postDataJSON()); r.continue(); });
+  // its editor (Edit…, L3.4): the modal at its Identity — no Connection section
   await openDeviceTab(page, 'connection');
-  check('its Connection tab is its Identity: no address to fill', await page.locator('#ddvHost, #ddvSerial, #ddvUrl, #ddvBroker').count() === 0);
+  check('its editor is its Identity: no Connection section, no address to fill',
+        (await page.getAttribute('#devEditModal .dev-shell-tab[aria-selected="true"]', 'data-shell-sec')) === 'identity'
+        && !(await page.locator('#devEditTab-connection').count())
+        && await page.locator('#ddvHost, #ddvSerial, #ddvUrl, #ddvBroker').count() === 0);
   await page.fill('#ddvName', 'UPS rack one');
-  await page.click('[data-dpanel="connection"] [data-action="saveDeviceDetail"]');
-  await page.waitForFunction(() => /✓/.test(document.getElementById('ddvFeedback')?.textContent || ''));
-  check('renamed: saved, and only {protocol: none} was sent as its connection',
-        (await row('dp-ups')).name === 'UPS rack one' && JSON.stringify((puts[0] || {}).connection) === '{"protocol":"none"}', JSON.stringify(puts[0]));
+  const savedUps = await saveDeviceEditor(page);
+  check('renamed: saved, and no connection was sent (its identity alone)',
+        savedUps?.ok() && (await row('dp-ups')).name === 'UPS rack one'
+        && JSON.stringify((puts[0] || {}).sections) === '{"identity":{"name":"UPS rack one"}}', JSON.stringify(puts[0]));
   await page.unroute('**/api/devices/dp-ups');
 
   // ── a meter's own page: what it measures ──
-  await go(page, '#/devices/dp-in/meters');
+  await go(page, '#/devices/dp-in');
+  await openDeviceEditor(page, 'meters');
   await page.waitForSelector('#mtrMeasures');
   const meas = await page.locator('#mtrMeasures').innerText();
-  check('a meter\'s page lists what it measures, and in which role', /UPS rack one/.test(meas) && /Input/.test(meas), meas);
+  check('a meter\'s meters editor lists what it measures, and in which role', /UPS rack one/.test(meas) && /Input/.test(meas), meas);
   await page.click('#mtrMeasures a');
   await page.waitForTimeout(1500);
-  check('…a link to that device\'s Meters', (await page.evaluate(() => location.hash)) === '#/devices/dp-ups/meters' && (await active(page)) === 'meters');
+  check('…a link to that device\'s Meters (its Setup, at Meters)', /^#\/devices\/dp-ups\//.test(await page.evaluate(() => location.hash))
+        && (await active(page)) === 'setup'
+        && await page.evaluate(() => document.activeElement?.closest('[data-setup]')?.dataset.setup) === 'meters', await page.evaluate(() => [location.hash, document.querySelector('#deviceWsTabs .config-main-tab.active')?.dataset.dtab, document.activeElement?.outerHTML.slice(0, 90)].join(' ')));
 
   // ── Add Device: no connection, measured by meters ──
   await page.evaluate(() => window.app.navigateTo('devices'));
+  // (L3.9: Add Device's "It doesn't communicate" way — What · Meters · Name & save)
   await page.evaluate(() => window.app.openDeviceWizard());
-  await page.waitForSelector('#devWizBody input[name="devWizProto"][value="none"]', { state: 'attached' });
-  await page.click('label:has(input[name="devWizProto"][value="none"])');
-  await page.click('#devWizNext');
-  await page.waitForSelector('#wizMtrKinds');
-  check('step 2 is "Meters & kind"', /meters/i.test(await page.locator('#devWizSteps [data-step="2"]').innerText()));
-  const kinds = await page.$$eval('input[name="wizMtrKind"]', els => els.map(e => e.value));
+  await page.waitForSelector('#addDeviceModal.active');
+  await page.waitForFunction(() => !document.querySelector('#addDevMain[aria-busy="true"]'));
+  await page.click('[data-ad-way="measured"]');
+  await page.waitForSelector('#adKinds');
+  check('the measured way: What · Meters · Name & save', /Meters/.test(await page.locator('#addDevRail').innerText()));
+  const kinds = await page.$$eval('input[name="adKind"]', els => els.map(e => e.value));
   check('the kinds the gateway offers: UPS first, never a meter or "other"', kinds[0] === 'ups' && !kinds.includes('meter') && !kinds.includes('other'), kinds.join());
-  await page.click('#devWizNext');
+  await page.click('#addDevNext', { force: true });   // aria-disabled still answers: it says why
   await page.waitForTimeout(400);
-  check('Next without a kind: said at the kind', (await page.getAttribute('#wizMtrKinds', 'aria-invalid')) === 'true');
-  await page.click('label:has(input[name="wizMtrKind"][value="charger"])');
-  await page.selectOption('#wizMtrRole-0', 'consumption');
-  await page.selectOption('#wizMtrDev-0', 'dp-plain');
+  check('Next without a kind: it says so, nothing moves', /Say what it is/.test(await page.locator('#addDevSummary').innerText())
+        && await page.evaluate(() => document.querySelector('#addDevRail [aria-current="step"]')?.dataset.shellStep) === 'what');
+  await page.click('label:has(input[name="adKind"][value="charger"])');
+  await page.click('#addDevNext');
+  await page.waitForSelector('#adMtrRole-0');
+  await page.selectOption('#adMtrRole-0', 'consumption');
+  await page.selectOption('#adMtrDev-0', 'dp-plain');
   await page.waitForTimeout(500);
-  await page.click('#devWizNext');
-  await page.waitForSelector('#devWizName');
-  await page.fill('#devWizName', 'Charger dp');
-  await page.fill('#devWizId', 'dp-wiz');
-  await page.click('#devWizNext');
-  await page.waitForFunction(() => /\/devices\/dp-wiz\/meters$/.test(location.hash), null, { timeout: 8000 }).catch(() => {});
+  await page.click('#addDevNext');
+  await page.waitForSelector('#adName');
+  await page.fill('#adName', 'Charger dp');
+  await page.fill('#adId', 'dp-wiz');
+  await page.click('#addDevNext');
+  await page.waitForFunction(() => /\/devices\/dp-wiz\//.test(location.hash), null, { timeout: 8000 }).catch(() => {});
+  await page.waitForSelector('#ddvEditBar:not([hidden])').catch(() => {});
   const made = await row('dp-wiz');
-  check('created measured by its meter, and opened on its Meters',
+  check('created measured by its meter, and opened on its meters editor',
         made && made.protocol === 'none' && made.kind === 'charger' && (made.meters || [])[0]?.device === 'dp-plain'
-        && (await active(page)) === 'meters', JSON.stringify(made && { p: made.protocol, k: made.kind, m: made.meters }));
+        && /Meters/.test(await page.locator('#ddvEditTitle').innerText()), JSON.stringify(made && { p: made.protocol, k: made.kind, m: made.meters }));
   await page.waitForSelector('#mtrRows[data-ready] .mtr-rm button');
   check('…its only meter cannot be removed (it IS its meter)',
         (await page.getAttribute('#mtrRows .mtr-rm button', 'aria-disabled')) === 'true');
@@ -326,11 +349,13 @@ try {
   const v = await open('viewer', { hash: '#/devices/dp-ups/connection' });
   await v.waitForSelector('#deviceWsGroups');
   await v.waitForTimeout(800);
-  check('viewer: a link to an admin tab lands on the Overview', (await active(v)) === 'overview');
-  await openDeviceTab(v, 'meters');
-  await v.waitForSelector('#mtrRows[data-ready]');
-  check('viewer: the Meters read-only — no Save, no Add, the lists locked',
-        !(await v.locator('#mtrSave').count()) && !(await v.locator('#mtrAdd').count()) && await v.locator('#mtrRole-0').isDisabled());
+  check('viewer: a link to Connection lands on Setup, read-only (L3-F16)', (await active(v)) === 'setup');
+  await go(v, '#/devices/dp-ups/meters');
+  await v.waitForSelector('[data-dpanel="setup"] [data-setup="meters"]');
+  const vm = await v.locator('[data-dpanel="setup"] [data-setup="meters"]').innerText();
+  check('viewer: the Meters read in Setup — both meters, no field, no Save',
+        /dp-in/.test(vm) && /dp-out/.test(vm) && !(await v.locator('#mtrSave').count())
+        && !(await v.locator('[data-dpanel="setup"] input:visible, [data-dpanel="setup"] select:visible').count()), vm);
   check('viewer: no Delete in ⋯', !(await v.locator('#ddvDeleteBtn:visible').count()));
   check('no page errors (viewer)', v.errs.length === 0, v.errs.join(' | '));
   await v.close();
@@ -342,13 +367,14 @@ try {
     await ph.waitForTimeout(800);
     const wide = await ph.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
     check(`phone (${theme}): the page never scrolls sideways`, wide <= 1, String(wide));
-    await openDeviceGroup(ph, 'configure');
+    await openDeviceGroup(ph, 'live');
     const strip = await ph.evaluate(() => {
       const b = [...document.querySelectorAll('#deviceWsTabs [role=tab]')].filter(t => !t.hidden);
       return new Set(b.map(t => Math.round(t.getBoundingClientRect().top))).size;
     });
     check(`phone (${theme}): the tabs are one row`, strip === 1, String(strip));
     if (OUT) {
+      await openDeviceEditor(ph, 'meters');
       await ph.waitForSelector('#mtrRows[data-ready]');
       await ph.screenshot({ path: `${OUT}/devpage-meters-phone-${theme}.png`, fullPage: true });
     }
@@ -363,10 +389,10 @@ try {
       await d.close();
       const w = await open(null, { theme });
       await w.evaluate(() => window.app.openDeviceWizard());
-      await w.waitForSelector('#devWizBody input[name="devWizProto"][value="none"]', { state: 'attached' });
-      await w.click('label:has(input[name="devWizProto"][value="none"])');
-      await w.click('#devWizNext');
-      await w.waitForSelector('#wizMtrKinds');
+      await w.waitForSelector('#addDeviceModal.active');
+      await w.waitForFunction(() => !document.querySelector('#addDevMain[aria-busy="true"]'));
+      await w.click('[data-ad-way="measured"]');
+      await w.waitForSelector('#adKinds');
       await w.waitForTimeout(600);
       await w.screenshot({ path: `${OUT}/devpage-wizard-meteronly-${theme}.png` });
       await w.close();

@@ -1,5 +1,5 @@
 /* Multi-Bus Gateway — multi-protocol Modbus/HTTP/MQTT acquisition gateway.
- * Copyright (C) 2024-2026 Stefan Maldaianu <sm26449@diysolar.ro>
+ * Copyright (C) 2024-2026 Stefan Maldaianu <stefan@multibus.dev>
  * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 // calculated registers domain — augments JanitzaMonitor.prototype
@@ -10,6 +10,8 @@
 Object.assign(JanitzaMonitor.prototype, {
 
     async _initCalculated(deviceId) {
+        // the full editor's other part shown and back: what it staged is kept
+        if (this._calc && this._calc.dirty && this._calc.deviceId === deviceId && this._calcStaged()) { this._calcRender(); return; }
         this._calc = { deviceId, items: [], fields: [], presets: [], userTemplates: [],
                        functions: [], operators: [], editing: null, fieldFilter: '' };
         const host = document.querySelector('#deviceDetailView [data-dpanel="calculated"]');
@@ -67,14 +69,14 @@ Object.assign(JanitzaMonitor.prototype, {
                 ${this._calcUnitHint()}
                 <div class="calc-toolbar">
                     <button data-admin class="btn btn-primary btn-sm" data-action="calcAdd"><i aria-hidden="true" class="bi bi-plus-lg"></i> ${t('calc.add', 'Add')}</button>
-                    <div class="calc-preset">
-                        <label class="form-label" style="margin:0">${t('calc.fromPreset', 'From preset')}</label>
+                    <div class="calc-preset ddv-edit-only">
+                        <label class="form-label" style="margin:0" for="calcPresetSel">${t('calc.fromPreset', 'From preset')}</label>
                         <select id="calcPresetSel" class="input input-sm"><option value="">—</option>${presetOpts}</select>
                         <button data-admin class="btn btn-secondary btn-sm" ${this._act('_calcPresetSel', ['apply'])}>${t('calc.use', 'Use')}</button>
                         <button data-admin class="btn btn-ghost btn-sm" ${this._ib(t('calc.deletePreset', 'Delete selected preset'))} ${this._act('_calcPresetSel', ['delete'])}><i aria-hidden="true" class="bi bi-trash"></i></button>
                     </div>
                 </div>
-                ${this._calc.editing ? this._calcEditorHtml() : ''}
+                ${this._calc.editing ? `<div class="ddv-edit-only">${this._calcEditorHtml()}</div>` : ''}
                 <div class="calc-saved">
                     <div class="calc-saved-head">${t('calc.yourList', 'Your calculated measurements')} (${this._calc.items.length})</div>
                     ${this._calcListHtml()}
@@ -127,9 +129,9 @@ Object.assign(JanitzaMonitor.prototype, {
                 </button>`).join('');
             return `<div class="calc-empty">
                 <div class="calc-empty-title">${t('calc.emptyTitle', 'No calculated measurements yet')}</div>
-                <div class="calc-empty-sub">${t('calc.emptySub', 'Derive new values with a formula — start from a preset:')}</div>
+                <div class="calc-empty-sub" data-admin>${t('calc.emptySub', 'Derive new values with a formula — start from a preset:')}</div>
                 <div class="calc-preset-cards">${cards}</div>
-                <div class="calc-empty-sub" style="margin-top:10px;">${t('calc.emptyOr', '…or use + Add above for a blank formula.')}</div>
+                <div class="calc-empty-sub" data-admin style="margin-top:10px;">${t('calc.emptyOr', '…or + Add for a blank formula.')}</div>
             </div>`;
         }
         return `<div class="calc-list">` + this._calc.items.map((c, i) => `
@@ -390,8 +392,8 @@ Object.assign(JanitzaMonitor.prototype, {
             if (!box) return;
             if (!expr) { box.textContent = ''; box.className = 'calc-preview'; return; }
             try {
-                const r = await fetch(`/api/devices/${encodeURIComponent(this._calc.deviceId)}/calculated/test`,
-                    { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ expr }) });
+                const r = await window.DeviceStore.devWrite(this._calc.deviceId, 'POST',
+                    `/api/devices/${encodeURIComponent(this._calc.deviceId)}/calculated/test`, { expr });
                 const d = await r.json();
                 if (d.ok && d.stateful) {
                     box.className = 'calc-preview';
@@ -408,6 +410,26 @@ Object.assign(JanitzaMonitor.prototype, {
 
     calcCancel() { this._calc.editing = null; this._calcRender(); },
 
+    // staged: the device page's full-screen Measurements editor (L3.11b)
+    _calcStaged() {
+        return !!(this._ddvEditing && this._ddvFullEditor === 'measurements' && this._view?.type === 'device'
+                  && this._calc && this._devDetail?.id === this._calc.deviceId);
+    },
+
+    // the staged list, written by the editor's Save: '' or why it was not
+    async _calcSaveStaged() {
+        const calc = this._calc;
+        if (!calc || !calc.dirty) return '';
+        const r = await window.DeviceStore.devWrite(calc.deviceId, 'POST',
+            `/api/devices/${encodeURIComponent(calc.deviceId)}/calculated`, { calculated: calc.items });
+        const d = await r.json().catch(() => ({}));
+        if (!r.ok) return (d.detail?.errors || [this._respError(r, d)]).join(' · ');
+        calc.items = d.calculated || calc.items;
+        calc.dirty = false;
+        if (this._calc === calc) this._calcRender();
+        return '';
+    },
+
     async calcSave() {
         const d = this._calc.editing.draft;
         d.expr = (document.getElementById('calcExpr')?.value || '').trim();
@@ -420,9 +442,22 @@ Object.assign(JanitzaMonitor.prototype, {
         const items = this._calc.items.slice();
         if (this._calc.editing.index == null) items.push(d); else items[this._calc.editing.index] = d;
         const fb = document.getElementById('calcFeedback');
+        // the full-screen Measurements editor stages it: written by its one Save
+        if (this._calcStaged()) {
+            if (!d.name || !d.expr) {
+                if (fb) { fb.textContent = this.t('calc.needNameExpr', 'A name and a formula, both.'); fb.className = 'save-feedback err'; }
+                return;
+            }
+            this._calc.items = items;
+            this._calc.editing = null;
+            this._calc.dirty = true;
+            this._calcRender();
+            this._regStage();
+            return;
+        }
         try {
-            const r = await fetch(`/api/devices/${encodeURIComponent(this._calc.deviceId)}/calculated`,
-                { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ calculated: items }) });
+            const r = await window.DeviceStore.devWrite(this._calc.deviceId, 'POST',
+                `/api/devices/${encodeURIComponent(this._calc.deviceId)}/calculated`, { calculated: items });
             if (!r.ok) {
                 const errs = (await r.json()).detail?.errors || ['save failed'];
                 if (fb) { fb.textContent = errs.join(' · '); fb.className = 'save-feedback err'; }
@@ -447,9 +482,16 @@ Object.assign(JanitzaMonitor.prototype, {
         }) || this._calc !== calc) return;
         const items = this._calc.items.slice();
         items.splice(i, 1);
+        if (this._calcStaged()) {
+            this._calc.items = items;
+            this._calc.dirty = true;
+            this._calcRender();
+            this._regStage();
+            return;
+        }
         try {
-            const r = await fetch(`/api/devices/${encodeURIComponent(this._calc.deviceId)}/calculated`,
-                { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ calculated: items }) });
+            const r = await window.DeviceStore.devWrite(this._calc.deviceId, 'POST',
+                `/api/devices/${encodeURIComponent(this._calc.deviceId)}/calculated`, { calculated: items });
             if (!r.ok) throw new Error('delete failed');
             this._calc.items = (await r.json()).calculated;
             this._calcRender();

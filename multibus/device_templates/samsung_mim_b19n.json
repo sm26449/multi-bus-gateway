@@ -2,6 +2,7 @@
   "device_template": {
     "schema_version": 1,
     "id": "samsung_mim_b19n",
+    "kind": "heat_pump",
     "name": "Samsung MIM-B19N Modbus interface (DVM / EHS)",
     "vendor": "Samsung",
     "model": "MIM-B19N / MIM-B19NT",
@@ -10,6 +11,7 @@
     "description": "Samsung Modbus Interface Module on a DVM/EHS outdoor unit (R1-R2), read over Modbus RTU 9600 8E1. Outdoor block at 0-2, then the indoor unit at address 0 (a hydro kit / EHS, an indoor unit) at 50-79: on/off, mode, set and room temperatures, water in/out, water set point, domestic hot water. Indoor unit N sits at 50 + N*50 + offset (duplicate the rows for more units). The setup steps activate the module's extra values (NASA message ids written to 6000/7000 — a write to the interface module, not a command to the unit). Control registers are written only through the template's Commands (range-checked, spaced 2 s apart, verified by read-back): every write to a holding register is a control command to the unit, so none is enabled until you enable it on the device.",
     "source_document": "Samsung DB68-07538A-03 Installation manual, Modbus Interface Module MIM-B19N/MIM-B19NT, Table 2 (Modbus register table), p. 13-16; the addresses match a Node-RED flow that read the same unit (FC3, address 50 x28). Field-checked 2026-10-08 on a DVM-S with an HE hydro kit at IU 0: 0x7FFF on the hot water temperature = no tank sensor. Extra registers: Table 3 of DB68-07538A-03 (2022) for the official IDs; community IDs from ZimKev's MIM-B19N notes (EHS) and the 'More Hidden Registers' list.",
     "protocol": {
+      "line": {"baudrate": 9600, "parity": "E", "bytesize": 8, "stopbits": 1},
       "transports": [
         "rtu",
         "tcp"

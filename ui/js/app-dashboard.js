@@ -1,5 +1,5 @@
 /* Multi-Bus Gateway — multi-protocol Modbus/HTTP/MQTT acquisition gateway.
- * Copyright (C) 2024-2026 Stefan Maldaianu <sm26449@diysolar.ro>
+ * Copyright (C) 2024-2026 Stefan Maldaianu <stefan@multibus.dev>
  * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 // dashboard domain — augments JanitzaMonitor.prototype
@@ -715,7 +715,7 @@ Object.assign(JanitzaMonitor.prototype, {
             const knownIds = new Set(known.map(([id]) => id));
             const extra = [...groups.keys()].filter(id => !knownIds.has(id)).map(id => {
                 const r = groups.get(id).find(x => x.category_label) || {};
-                return [id, r.category_label || (id.charAt(0).toUpperCase() + id.slice(1))];
+                return [id, this._catName(id, r.category_label)];
             });
             const ordered = known.filter(([id]) => id !== 'other').concat(extra, known.filter(([id]) => id === 'other'));
             const html = ordered
@@ -1180,7 +1180,7 @@ Object.assign(JanitzaMonitor.prototype, {
                    ${depth > 1 ? ` style="padding-left:${12 + depth * 14}px"` : ''}
                     data-search="${this._esc(words(d))}">
                 <span class="dot" style="background:${off ? 'transparent' : this._healthDot(h)}"></span>
-                ${this._kindIconHtml(d.kind)}<span class="dsw-name">${this._esc(label)}</span>
+                ${this._kindIconHtml(d.type || d.kind)}<span class="dsw-name">${this._esc(label)}</span>
                 ${off ? `<span class="dsw-health">${this._esc(this.t('pick.disabled', 'disabled'))}</span>`
                     : (h && h !== 'ok') ? `<span class="dsw-health">${this._esc(h)}</span>` : ''}
             </button>`;
@@ -1288,9 +1288,7 @@ Object.assign(JanitzaMonitor.prototype, {
     // Persist the DASHBOARD device's register list (?device= for non-primary).
     async _saveDashRegisters() {
         const qs = this._dashIsPrimary() ? '' : ('?device=' + encodeURIComponent(this._dashDeviceId()));
-        const r = await fetch('/api/registers/selected' + qs, {
-            method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(this._dashRegs()) });
+        const r = await this._selSave(this._dashSel, qs, this._dashRegs());
         if (!r.ok) throw new Error('HTTP ' + r.status);
     },
 
@@ -1452,11 +1450,7 @@ Object.assign(JanitzaMonitor.prototype, {
         // Save to server
         try {
             const qs = this._dashIsPrimary() ? '' : ('?device=' + encodeURIComponent(this._dashDeviceId()));
-            const response = await fetch('/api/registers/selected' + qs, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(this._dashRegs())
-            });
+            const response = await this._selSave(this._dashSel, qs, this._dashRegs());
 
             if (!response.ok) throw new Error('Failed to save');
 

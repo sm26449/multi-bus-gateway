@@ -1,5 +1,5 @@
 # Multi-Bus Gateway — multi-protocol Modbus/HTTP/MQTT acquisition gateway.
-# Copyright (C) 2024-2026 Stefan Maldaianu <sm26449@diysolar.ro>  — AGPL-3.0-or-later
+# Copyright (C) 2024-2026 Stefan Maldaianu <stefan@multibus.dev>  — AGPL-3.0-or-later
 """Commands — the universal write path (docs/commands-design.md).
 
 A command is *what* a controller wants ("power_limit = 60 %"); its recipe is
@@ -120,6 +120,12 @@ class CommandDef:
     # parameters ("${value} > 0"); empty: it neither starts nor stops it
     # (a set point). The channel's motor timers count from these.
     on: str = ''
+    # a newer value of the same setting replaces one still waiting for its
+    # bus (ADR-0018); false for a pulse (reset_fault), where each one counts
+    coalesce: bool = True
+    # a Modbus device whose polled reading is trusted: a command it already
+    # holds is not written (ADR-0018 D6). Opt-in; no built-in template sets it
+    skip_if_set: bool = False
 
     @property
     def value_param(self) -> Optional[ParamDef]:
@@ -136,6 +142,8 @@ class CommandDef:
             **({'refresh_s': self.refresh_s} if self.refresh_s else {}),
             **({'channel': self.channel} if self.channel else {}),
             **({'on': self.on} if self.on else {}),
+            **({'coalesce': False} if not self.coalesce else {}),
+            **({'skip_if_set': True} if self.skip_if_set else {}),
         }
 
 
@@ -154,7 +162,9 @@ def parse_command_def(name: str, raw: Dict) -> CommandDef:
                       safe=dict(raw.get('safe') or {}), readback_group=str(raw.get('readback_group', '') or ''),
                       alias=raw.get('alias'), confirm=bool(raw.get('confirm', True)),
                       refresh_s=float(raw.get('refresh_s', 0) or 0),
-                      channel=str(raw.get('channel', '') or ''), on=str(raw.get('on', '') or ''))
+                      channel=str(raw.get('channel', '') or ''), on=str(raw.get('on', '') or ''),
+                      coalesce=raw.get('coalesce', True) is not False,
+                      skip_if_set=raw.get('skip_if_set') is True)
 
 
 def turns_on(cmd: CommandDef, params: Dict[str, Any]) -> Optional[bool]:

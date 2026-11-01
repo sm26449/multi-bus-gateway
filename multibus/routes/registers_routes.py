@@ -1,5 +1,5 @@
 # Multi-Bus Gateway — multi-protocol Modbus/HTTP/MQTT acquisition gateway.
-# Copyright (C) 2024-2026 Stefan Maldaianu <sm26449@diysolar.ro>
+# Copyright (C) 2024-2026 Stefan Maldaianu <stefan@multibus.dev>
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU Affero General Public License as published by
@@ -32,6 +32,9 @@ from typing import Dict, List, Optional
 from fastapi import APIRouter, Body, HTTPException, Query, Request
 from fastapi.responses import JSONResponse, Response
 
+from .. import write_guard
+
+from ..can_signal import can_fields
 from ._models import RegisterBatchQuery, RegisterQuery, SelectedRegisterUpdate
 from ..canonical_fields import CANONICAL_FIELDS
 from ..value_decode import apply_corrections
@@ -269,6 +272,7 @@ def build(ctx) -> APIRouter:
             "ui_widget": x.ui_widget,
             "ui_config": x.ui_config,
             "thresholds": x.thresholds if hasattr(x, 'thresholds') else None,
+            **can_fields(x),
         }
 
     # Memoized catalog: rebuilding 4000+ entries + JSON-serializing ~1 MB on the
@@ -316,6 +320,7 @@ def build(ctx) -> APIRouter:
                 "nan": getattr(x, "nan", None),
                 "register_type": getattr(x, 'register_type', 'holding'),
                 "poll_group": x.poll_group,
+                **can_fields(x),
             })
         catalog = {"measurements": cats,
                    "device_template": {"id": t.id, "name": t.name,
@@ -406,11 +411,43 @@ def build(ctx) -> APIRouter:
                                        f"device '{dev_cfg.id}'")
         return src
 
+    # ── the selection's own revision (ADR-0030) ─────────────────────────
+    # A selection lives in its own file, not in the device's entry: it has
+    # its own ETag, as attributes have their rev. It hashes the stored rows
+    # only (the Calculated tab's pseudo-rows ride the GET but are not saved
+    # here), so a calculated edit never makes a selection stale.
+    def _selection_rev(answer: Dict) -> str:
+        from ..calc_engine import CALC_ADDR_BASE
+        rows = [x for x in (answer.get("registers") or []) if (x.get("address") or 0) < CALC_ADDR_BASE]
+        return write_guard.rev(rows)
+
+    async def _selection_check(if_match: str, kw: Dict) -> None:
+        cur = await _selected_answer(kw.get("device", ""), kw.get("source", ""))
+        tag = _selection_rev(cur)
+        if not write_guard.matches(if_match, tag):
+            raise HTTPException(status_code=412, detail={
+                "errors": ["If-Match: the measurement selection changed since it was read — "
+                           "reload it and apply the change again"],
+                "current": {"registers": cur.get("registers") or [], "source": cur.get("source", "")},
+                "etag": tag})
+
+    async def _selection_tag(kw: Dict):
+        try:
+            return _selection_rev(await _selected_answer(kw.get("device", ""), kw.get("source", "")))
+        except HTTPException:
+            return None
+
     @r.get("/api/registers/selected")
-    async def get_selected_registers(device: str = Query(default=""),
+    async def get_selected_registers(response: Response, device: str = Query(default=""),
                                      source: str = Query(default="")):
         """Get currently selected registers (optionally for a specific device,
-        and for one of its sources)."""
+        and for one of its sources), with the selection's ``ETag`` (what
+        ``If-Match`` names on the POST)."""
+        ans = await _selected_answer(device, source)
+        response.headers["ETag"] = _selection_rev(ans)
+        return ans
+
+    async def _selected_answer(device: str = "", source: str = "") -> Dict:
         if device:
             _i, dev_cfg, _c = registry.find(device)
             if dev_cfg is None:
@@ -463,7 +500,7 @@ def build(ctx) -> APIRouter:
         _pi, _pcfg, _pc = registry.find(device) if device else (None, None, None)
         return {
             "registers": [_selected_register_out(x) for x in config.selected_registers]
-                         + _calc_pseudo_registers(config.primary_device.id),
+                         + _calc_pseudo_registers(config.primary_id),
             "poll_groups": {
                 name: {"interval": g.interval, "description": g.description}
                 for name, g in config.poll_groups.items()
@@ -473,6 +510,7 @@ def build(ctx) -> APIRouter:
         }
 
     @r.post("/api/registers/selected")
+    @write_guard.guarded('own-rev', check=_selection_check, tag=_selection_tag)
     async def update_selected_registers(registers: List[SelectedRegisterUpdate],
                                         device: str = Query(default=""),
                                         source: str = Query(default="")):
@@ -484,6 +522,27 @@ def build(ctx) -> APIRouter:
             hook = getattr(ctx, 'rule_fields_changed', None)
             if hook:
                 hook()
+
+    def _fill_can_fields(reg_list: List[Dict], device: str, source: str) -> None:
+        """A CAN row saved without its frame (an add that did not carry it)
+        takes it from the device's template by name — without it the CAN
+        driver would never read the row."""
+        from ..can_signal import can_fields, is_can_row
+        dev_cfg = config.get_device(device) if device else None
+        if dev_cfg is None or all(is_can_row(d) for d in reg_list):
+            return
+        tids = [s.template for s in (dev_cfg.sources or [])
+                if s.template and (not source or s.id == source)] + [dev_cfg.template]
+        by_name: Dict[str, Dict] = {}
+        for tid in tids:
+            t = template_registry.get(tid) if tid else None
+            for r in (getattr(t, 'registers', None) or []):
+                f = can_fields(r)
+                if f:
+                    by_name.setdefault(r.name, f)
+        for d in reg_list:
+            if not is_can_row(d) and d.get('name') in by_name:
+                d.update(by_name[d['name']])
 
     async def _save_selected_registers(registers: List[SelectedRegisterUpdate],
                                        device: str = "", source: str = ""):
@@ -543,12 +602,14 @@ def build(ctx) -> APIRouter:
                         "widget": x.ui_widget,
                     },
                     "thresholds": x.thresholds.dict() if x.thresholds else None,
+                    **can_fields(x),
                 }
                 for x in registers
             ]
+            _fill_can_fields(reg_list, device, source)
 
             # Non-primary device: own file + hot-reload of ITS pollers only.
-            if device and device != config.primary_device.id:
+            if device and device != config.primary_id:
                 _i, dev_cfg, dev_client = registry.find(device)
                 if dev_cfg is None:
                     raise HTTPException(status_code=404, detail="device not found")
@@ -644,8 +705,13 @@ def build(ctx) -> APIRouter:
                 _clear_dropped(topics_before, dev_cfg)
                 return {"status": "ok", "count": len(reg_list), "device": device}
 
-            _ptpl = template_registry.get(config.primary_device.template) \
-                if (template_registry and getattr(config.primary_device, 'template', '')) else None
+            _prim = config.primary_device
+            if _prim is None:
+                # no device #1 here (ADR-0024): a selection for it would be
+                # announced as a meter that is not there
+                raise HTTPException(status_code=404, detail="device not found")
+            _ptpl = template_registry.get(_prim.template) \
+                if (template_registry and getattr(_prim, 'template', '')) else None
             _carry_unedited(reg_list, _stored_rows(config.registers_path), _ptpl)
             topics_before = _unit_topics(None)
             config.save_selected_registers(reg_list)

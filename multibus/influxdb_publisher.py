@@ -1,5 +1,5 @@
 # Multi-Bus Gateway — multi-protocol Modbus/HTTP/MQTT acquisition gateway.
-# Copyright (C) 2024-2026 Stefan Maldaianu <sm26449@diysolar.ro>
+# Copyright (C) 2024-2026 Stefan Maldaianu <stefan@multibus.dev>
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU Affero General Public License as published by
@@ -606,28 +606,33 @@ class InfluxDBPublisher:
             return None
 
     def _should_write(self, address: int, value: Any, device_id: str = "",
-                      mode: Optional[str] = None, interval: Optional[float] = None) -> bool:
+                      mode: Optional[str] = None, interval: Optional[float] = None,
+                      heartbeat: Optional[int] = None) -> bool:
         """
         Check if value should be written based on mode and interval.
         Does NOT update cache — call _confirm_write() after successful write.
         Cache keys carry the device id (Tier 2) so two devices exposing the
-        same register address never suppress each other.
+        same register address never suppress each other. ``heartbeat``: the
+        device's own (None = Settings → InfluxDB) — in `changed` mode an
+        unchanged value is written again once it has been quiet that long
+        (ADR-0029); write_interval stays the minimum gap. Measured on the
+        monotonic clock, so a wall-clock step neither floods nor silences it.
         """
-        current_time = time.time()
+        now = time.monotonic()
         key = (device_id, address)
 
         with self._cache_lock:
+            last = self.last_write_time.get(key)
             # Rate limiting
-            if key in self.last_write_time:
-                elapsed = current_time - self.last_write_time[key]
-                if elapsed < (self.config.write_interval if interval is None else interval):
+            if last is not None:
+                if now - last < (self.config.write_interval if interval is None else interval):
                     return False
 
             # Change detection
             if (mode or self.publish_mode) == 'changed':
-                if key in self.last_values:
-                    if self.last_values[key] == value:
-                        return False
+                if key in self.last_values and self.last_values[key] == value:
+                    hb = self.config.heartbeat_interval if heartbeat is None else heartbeat
+                    return bool(hb) and hb > 0 and last is not None and now - last >= hb
 
             return True
 
@@ -639,7 +644,7 @@ class InfluxDBPublisher:
         key = (device_id, address)
         with self._cache_lock:
             self.last_values[key] = value
-            self.last_write_time[key] = time.time()
+            self.last_write_time[key] = time.monotonic()
 
     def _build_point(self, register: SelectedRegister, safe_val: Any, ts: float,
                      poll_group: Optional[str] = None,
@@ -793,10 +798,13 @@ class InfluxDBPublisher:
                             device_tag: Optional[str] = None,
                             device_id: str = "",
                             extra_tags: Optional[Dict[str, str]] = None,
-                            mode: Optional[str] = None, interval: Optional[float] = None):
-        """Write register data from a poll group. ``mode`` and ``interval``:
-        the device's own publishing (its `influxdb:` block), None = the
-        gateway's (Settings → InfluxDB). Works whether or not InfluxDB
+                            mode: Optional[str] = None, interval: Optional[float] = None,
+                            heartbeat: Optional[int] = None):
+        """Write register data from a poll group. ``mode``, ``interval`` and
+        ``heartbeat``: the device's own publishing (its `influxdb:` block),
+        None = the gateway's (Settings → InfluxDB). A heartbeat point is an
+        ordinary point of the reading being published: there is no timer, so
+        a device that stops reading stops writing. Works whether or not InfluxDB
         is reachable — points produced during an outage go to the replay buffer.
         ``bucket``/``device_tag``/``device_id`` route one device's data
         (Tier 2); omitted = the legacy global routing (device #1)."""
@@ -811,7 +819,7 @@ class InfluxDBPublisher:
                 if register is None or not register.influxdb_enabled:
                     continue
 
-                if not self._should_write(address, value, device_id, mode, interval):
+                if not self._should_write(address, value, device_id, mode, interval, heartbeat):
                     self.writes_skipped += 1
                     continue
 
@@ -937,6 +945,7 @@ class InfluxDBPublisher:
                                    if self.last_confirm_ts else None),
             'auth_failed': self.auth_failed,
             'publish_mode': self.publish_mode,
+            'heartbeat_interval': self.config.heartbeat_interval,
             'registered_addresses': len(self._register_map),
             'disconnection_count': self.disconnection_count,
             'buffer_points': len(self._buffer),

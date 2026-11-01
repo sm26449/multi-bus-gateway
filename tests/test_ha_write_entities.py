@@ -1,5 +1,5 @@
 # Multi-Bus Gateway — multi-protocol Modbus/HTTP/MQTT acquisition gateway.
-# Copyright (C) 2024-2026 Stefan Maldaianu <sm26449@diysolar.ro>  — AGPL-3.0-or-later
+# Copyright (C) 2024-2026 Stefan Maldaianu <stefan@multibus.dev>  — AGPL-3.0-or-later
 """HA write-entities: a writable register is published as a number/select and
 its command topic is subscribed + routed to the gated write handler. Off by
 default (no write_rules → plain sensors, no subscriptions)."""
@@ -242,7 +242,13 @@ def _handler_and_client(tmp_path):
     app, _ = create_api(cfg, None, mock_mqtt, None,
                         devices=[(d, None) for d in cfg.devices] + [(dev, fake)])
     app.state.template_registry._templates["ctrl_tpl"] = _ctrl_tpl()
-    handler = mock_mqtt.set_command_write_handler.call_args[0][0]
+    raw_handler = mock_mqtt.set_command_write_handler.call_args[0][0]
+
+    def handler(*a):
+        # a raw HA write is a lane job (ADR-0022 D5): the MQTT worker hands it
+        # over and returns; these checks read what the lane wrote
+        raw_handler(*a)
+        app.state.command_dispatch.drain(5)
     fake.app = app                                       # for store-refresh assertions
     return handler, fake, cfg
 

@@ -1,5 +1,5 @@
 /* Multi-Bus Gateway — multi-protocol Modbus/HTTP/MQTT acquisition gateway.
- * Copyright (C) 2024-2026 Stefan Maldaianu <sm26449@diysolar.ro>
+ * Copyright (C) 2024-2026 Stefan Maldaianu <stefan@multibus.dev>
  * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 /**
@@ -243,6 +243,7 @@ Object.assign(JanitzaMonitor.prototype, {
         // overwrote the editor's opener, and closing the editor stranded focus
         modal._returnFocus = document.activeElement;
         modal.classList.add('active');
+        this._modalTrackTyped(modal);            // what is typed from now on is unsaved (L3-F15)
         // Stacking: every .modal shares z-index 1000, so which of two OPEN
         // modals paints on top used to be DOM order — the enum builder
         // (declared early in index.html) rendered BEHIND the template editor
@@ -271,7 +272,7 @@ Object.assign(JanitzaMonitor.prototype, {
         // closed ANOTHER modal too — one press dismissed both the enum
         // builder and the template editor under it (audit 2026-10-01).
         const onKey = (e) => {
-            if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); this.closeModal(modalId); return; }
+            if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); this._dismissModal(modalId); return; }
             if (e.key !== 'Tab') return;
             const f = this._modalFocusables(modal);
             if (!f.length) return;
@@ -283,12 +284,94 @@ Object.assign(JanitzaMonitor.prototype, {
         modal.addEventListener('keydown', onKey);
     },
 
-    closeModal(modalId) {
-        // no id → the TOP-most open modal (highest z-index), not the first in
-        // DOM order — with nested modals the old query closed the OUTER one
-        const modal = modalId ? document.getElementById(modalId)
+    // no id → the TOP-most open modal (highest z-index), not the first in
+    // DOM order — with nested modals the old query closed the OUTER one
+    _modalTop(modalId) {
+        return modalId ? document.getElementById(modalId)
             : [...document.querySelectorAll('.modal.active')]
                 .sort((a, b) => (+b.style.zIndex || 0) - (+a.style.zIndex || 0))[0];
+    },
+
+    // ── unsaved edits in a modal (L3-F15) ───────────────────────────────
+    // The user edited it: a trusted input or change event inside it since it
+    // opened (modal._userEdited, sticky; what the page fills in itself never
+    // sets it). Refined per field: each field's value when the user first
+    // reached it (focus) — changed back, it is not unsaved; a field the form
+    // has since redrawn still counts as edited.
+    // Esc and ✕ ask before such a modal closes (the page's own dialog, Keep
+    // editing focused); Save and Cancel close it as they always did. A modal
+    // may say for itself (modal._dirty()) or opt out (data-no-dirty-guard);
+    // a search box (type=search) or a field marked data-no-dirty never counts.
+    // The backdrop never closes a modal, so there is nothing to guard there.
+    _modalFieldVal(el) {
+        return (el.type === 'checkbox' || el.type === 'radio') ? el.checked : el.value;
+    },
+
+    _modalIsField(el) {
+        return !!el && /^(INPUT|SELECT|TEXTAREA)$/.test(el.tagName) && !el.readOnly
+            && !['hidden', 'file', 'button', 'submit', 'reset', 'search'].includes(el.type)
+            && !el.hasAttribute('data-no-dirty');
+    },
+
+    _modalTrackTyped(modal) {
+        modal._typed = new Map();
+        modal._userEdited = false;
+        if (modal._typedWired) return;
+        modal._typedWired = true;
+        modal.addEventListener('focusin', e => {
+            const el = e.target;
+            if (modal._typed && this._modalIsField(el) && !modal._typed.has(el)) modal._typed.set(el, this._modalFieldVal(el));
+        });
+        const edited = e => { if (e.isTrusted && this._modalIsField(e.target)) modal._userEdited = true; };
+        modal.addEventListener('input', edited);
+        modal.addEventListener('change', edited);
+    },
+
+    _modalDirty(modal) {
+        if (!modal || ['appDialog', 'appKeyDialog'].includes(modal.id) || modal.hasAttribute('data-no-dirty-guard')) return false;
+        if (typeof modal._dirty === 'function') return !!modal._dirty();
+        if (!modal._userEdited) return false;
+        const typed = [...(modal._typed || [])];
+        if (!typed.length) return true;
+        // a field the form redrew: the edit is still there to lose
+        if (typed.some(([el]) => !el.isConnected || !modal.contains(el))) return true;
+        return typed.some(([el, v]) => !el.disabled && this._modalFieldVal(el) !== v);
+    },
+
+    _confirmDiscard() {
+        return this.confirmAction({
+            title: this.t('dialog.discardTitle', 'Discard your changes?'),
+            message: this.t('dialog.discardMsg', 'What you changed here is not saved. Close it anyway?'),
+            confirmLabel: this.t('dialog.discard', 'Discard'),
+            cancelLabel: this.t('dialog.keepEditing', 'Keep editing'),
+            danger: true,
+        });
+    },
+
+    // Esc (and ✕, _wireModalDismiss): closes — after asking, when unsaved
+    async _dismissModal(modalId) {
+        const modal = this._modalTop(modalId);
+        if (!modal) return;
+        if (this._modalDirty(modal) && !await this._confirmDiscard()) return;
+        this.closeModal(modal.id || modalId);
+    },
+
+    // ✕ on a modal with unsaved edits asks first; its own action runs after
+    // a Discard (every ✕ has one: closeModal or a modal's own close)
+    _wireModalDismiss() {
+        document.addEventListener('click', ev => {
+            const x = ev.target.closest && ev.target.closest('.modal .modal-close');
+            if (!x) return;
+            if (x._discardOk) { x._discardOk = false; return; }
+            if (!this._modalDirty(x.closest('.modal'))) return;
+            ev.preventDefault();
+            ev.stopImmediatePropagation();
+            this._confirmDiscard().then(ok => { if (ok) { x._discardOk = true; x.click(); } });
+        }, true);
+    },
+
+    closeModal(modalId) {
+        const modal = this._modalTop(modalId);
         if (!modal) return;
         if (modal._keepOpen && modal._keepOpen()) return;
         modal.classList.remove('active');
@@ -341,9 +424,16 @@ Object.assign(JanitzaMonitor.prototype, {
             this._closeFirstRun();
             return;
         }
+        // a first run is a gateway with no device yet: one that has devices,
+        // none answering, is not set up by this offer — its devices' pages
+        // say why they do not read (L3-UX-12: it opened over 15 devices)
+        if ((devices || []).length) { this._closeFirstRun(); return; }
         // setting a device up is an admin's job: never offered to anyone else
         if (this._authEnabled && this._role !== 'admin') return;
         if (this._everConnected || !this._firstRunGraceOver || this._firstRunShown) return;
+        // never over a dialog the user is in (Add Device half filled): the
+        // offer waits for the next status tick with nothing open
+        if (document.querySelector('.modal.active')) return;
         this._firstRunShown = true;
         this.openModal('firstRunModal');
     },
@@ -357,8 +447,12 @@ Object.assign(JanitzaMonitor.prototype, {
 
     firstRunOpenSettings() {
         this.closeModal('firstRunModal');
-        // Connection settings live on the device now (Devices → device → Edit)
-        this.openDeviceDetail(this._primaryDeviceId()).then(() => this._switchDeviceTab('connection'));
+        // a gateway with no device yet (a fresh install has none) starts by
+        // adding one; else the first device's connection is what to fix
+        const id = this._defaultDeviceId();
+        if (!id) { this.openDeviceWizard(); return; }
+        // Connection settings live on the device now (its ⋯ → Edit connection…)
+        this.openDeviceDetail(id).then(() => this.ddvEdit('connection'));
     },
 
     // ============ Toast Notifications ============
@@ -434,6 +528,24 @@ Object.assign(JanitzaMonitor.prototype, {
         let s = (this._t && this._t[key]) || fallback || key;
         if (params) s = s.replace(/\{(\w+)\}/g, (m, name) => name in params ? String(params[name]) : m);
         return s;
+    },
+
+    // a category's name in the page's language: the dictionary's, else ''
+    _catWord(cat) {
+        const c = String(cat || 'other');
+        const has = k => !!(this._t && this._t[k]);
+        if (has(`sec.${c}`)) return this.t(`sec.${c}`);
+        if (has(`cat.${c}`)) return this.t(`cat.${c}`);
+        return '';
+    },
+
+    // what a category is called on screen: the template's own label for it,
+    // else the dictionary's name, else its key made readable ("power_factor"
+    // → "Power factor") — one naming for every list grouped by category
+    _catName(cat, label) {
+        if (label) return String(label);
+        const c = String(cat || 'other');
+        return this._catWord(c) || (c.charAt(0).toUpperCase() + c.slice(1)).replace(/_/g, ' ');
     },
 
     // a count said in the language's own plural: `${key}.${category}` (one,
@@ -644,6 +756,8 @@ Object.assign(JanitzaMonitor.prototype, {
 
         // Load initial data
         await this.loadConfig();
+        // the device-type catalog every list, filter and menu reads (ADR-0027)
+        await this._loadDeviceTypes?.();
         // Default widget colors (phase convention + categories) — needed at
         // boot, not just on the Settings page; failure keeps built-ins.
         fetch('/api/config/general').then(r => r.ok ? r.json() : null).then(g => {
@@ -691,6 +805,17 @@ Object.assign(JanitzaMonitor.prototype, {
 
     navigateTo(page, opts = {}) {
         const prevPage = this.currentPage;
+        // a device page's editor holds what is not saved (a full editor's
+        // staged edits, an editor's typed ones, the Edit modal): asked first,
+        // as Back is (one leave guard, review of L3.11b M1). navigateTo is
+        // synchronous: the answer "leave" navigates again with _leave set
+        // (the same page again — a language switch — is not a leave)
+        if (!opts._leave && !opts._opening && (page !== prevPage || opts.fromNav) && this._ddvLeave
+            && ((this._ddvFullDirty && this._ddvFullDirty()) || (this._ddvEditing && this._ddvEditDirty && this._ddvEditDirty())
+                || (this._devEdit?.open && this._deDirty && this._deDirty()))) {
+            this._ddvLeave().then(ok => { if (ok) this.navigateTo(page, { ...opts, _leave: true }); });
+            return;
+        }
         // unsaved security settings: ask before leaving them behind, and put
         // the stored values back when the answer is "leave"
         // (navigateTo is synchronous: it stops here, and the answer "leave"
@@ -763,7 +888,8 @@ Object.assign(JanitzaMonitor.prototype, {
                 // back on a device page left open: its tab starts again
                 // (its embedded page and log poll were stopped on the way out)
                 const tab = document.querySelector('#deviceWsTabs .config-main-tab.active[data-dtab]');
-                if (tab) this._switchDeviceTab(tab.dataset.dtab);
+                if (this._ddvEditing) this.ddvEdit(this._ddvEditing);      // the editor left open
+                else if (tab) this._switchDeviceTab(tab.dataset.dtab);
                 const rv = this._devDetail.entry?.read_via || [];
                 this._footerOverride = rv.length ? rv : null;
             }
@@ -998,24 +1124,6 @@ Object.assign(JanitzaMonitor.prototype, {
     // Modbus transports on a serial port of this host (RTU or ASCII framing)
     _isSerialProto(p) { return p === 'rtu' || p === 'ascii'; },
 
-    // A saved device's connection, as a PUT/test payload sends it back: a
-    // bridged device keeps only its bridge reference; serial, network and
-    // HTTP keep their own fields. null for MQTT (its password never reaches
-    // the browser) — the caller then must not resend the connection.
-    _connPayloadOf(dev) {
-        if (!dev) return null;
-        const c = dev.connection || {};
-        const p = c.protocol || dev.protocol || 'tcp';
-        if (dev.bridge) return { ...(p === 'rtu_tap' ? { protocol: 'rtu_tap' } : {}), bridge: dev.bridge,
-                                 bridge_port: dev.bridge_port, unit_id: c.unit_id ?? dev.unit_id, timeout: c.timeout ?? 3 };
-        if (p === 'http') return { protocol: 'http', url: c.url || dev.http_url || '' };
-        if (p === 'mqtt') return null;
-        if (this._isSerialProto(p) || p === 'rtu_tap')
-            return { protocol: p, serial_port: c.serial_port || dev.serial?.serial_port, baudrate: c.baudrate || dev.serial?.baudrate,
-                     parity: c.parity || dev.serial?.parity, stopbits: c.stopbits || dev.serial?.stopbits, unit_id: c.unit_id ?? dev.unit_id };
-        return { protocol: p, host: c.host || dev.host, port: c.port || dev.port, unit_id: c.unit_id ?? dev.unit_id, timeout: c.timeout ?? 3 };
-    },
-
     // What a template tells its users (a limitation, a model it does not fit,
     // a step to take first) — shown where the template is picked and on every
     // device made from it. `fields` names the rows/commands a note is about.
@@ -1064,7 +1172,7 @@ Object.assign(JanitzaMonitor.prototype, {
 
     // ── what a copy/paste brings (mirrors multibus/text_check.py) ──────────
     _PASTE_FORMULA_IDS: ['calcExpr', 'advExpr', 'rlSignal', 'rlWhen', 'rlUntil', 'rlSchedWhen', 'rlTrimSignal'],
-    _PASTE_TOPIC_IDS: ['ddvMqttTopic', 'devWizMqttTopic', 'ddvKaTopic', 'tplKaTopic', 'tplAvTopic'],
+    _PASTE_TOPIC_IDS: ['ddvMqttTopic', 'csAddMqttTopic', 'ddvKaTopic', 'tplKaTopic', 'tplAvTopic'],
     _PASTE_INSTEAD: {
         0x2212: '-', 0x2010: '-', 0x2011: '-', 0x2012: '-', 0x2013: '-', 0x2014: '-',
         0x00A0: ' ', 0x202F: ' ', 0x2009: ' ', 0x2007: ' ', 0x3000: ' ',
@@ -1197,6 +1305,7 @@ Object.assign(JanitzaMonitor.prototype, {
 
     setupEventListeners() {
         this._wireActionDelegation();
+        this._wireModalDismiss();     // ✕ on unsaved edits asks first (L3-F15)
         // Register search (debounced)
         document.getElementById('registerSearch').addEventListener('input', (e) => {
             this.registerSearchPage = 1;
@@ -1281,12 +1390,12 @@ Object.assign(JanitzaMonitor.prototype, {
     },
 
     handleKeyboardShortcuts(e) {
-        // Escape - close active modal
+        // Escape - close active modal (asking first when it holds unsaved edits)
         if (e.key === 'Escape') {
             const activeModal = document.querySelector('.modal.active');
             if (activeModal) {
                 e.preventDefault();
-                this.closeModal();
+                this._dismissModal();
             }
         }
 
@@ -1350,9 +1459,16 @@ Object.assign(JanitzaMonitor.prototype, {
             // because the session is dead (the server answers 403 before
             // accepting; the browser only sees "closed"), in which case
             // _verifySession stops the page and shows the login screen.
-            const retry = () => setTimeout(() => this.connectWebSocket(), 3000);
-            if (opened) retry();
-            else this._verifySession().then((alive) => { if (alive) retry(); });
+            // A refusal while the session lives (an IP allowlist, a proxy
+            // that rewrites Host, status unreachable) backs off 3, 6, 12…
+            // up to 60 s instead of re-dialling every 3 s forever (WS-LOG-1).
+            const retry = (ms) => setTimeout(() => this.connectWebSocket(), ms);
+            if (opened) { this._wsRefused = 0; retry(3000); }
+            else this._verifySession().then((alive) => {
+                if (!alive) return;
+                const n = this._wsRefused = (this._wsRefused || 0) + 1;
+                retry(Math.min(60000, 3000 * 2 ** Math.min(n - 1, 5)));
+            });
         };
 
         this.ws.onerror = (error) => {
@@ -1373,7 +1489,7 @@ Object.assign(JanitzaMonitor.prototype, {
     // merging into currentValues (which stays the primary's store — Monitor and
     // the registers table contractually read it).
     _dashDeviceId() {
-        return this.dashDevice || this._primaryDeviceId();
+        return this.dashDevice || this._defaultDeviceId();
     },
     _dashIsPrimary() {
         return this._dashDeviceId() === this._primaryDeviceId();
@@ -1387,6 +1503,11 @@ Object.assign(JanitzaMonitor.prototype, {
     _dashRegs() {
         return this.dashRegisters || [];
     },
+    // how the dashboard reads its device's selection
+    _dashQS() {
+        return this._dashIsPrimary() ? '' : ('?device=' + encodeURIComponent(this._dashDeviceId()));
+    },
+
     async _refreshDashRegisters() {
         const dev = this._dashDeviceId();
         try {
@@ -1405,12 +1526,13 @@ Object.assign(JanitzaMonitor.prototype, {
             // device's values
             if (dev !== this._dashDeviceId()) return;
             this.dashRegisters = d.registers || [];
+            this._dashSel = this._selRev ? this._selRev(qs, r) : null;   // the tag of these rows (ADR-0030)
             // how the template presents this unit (sections, bitmasks, alarms)
             this.dashDisplay = d.display || {};
         } catch (e) { this.dashRegisters = this.dashRegisters || []; }
     },
     async _setDashDevice(id) {
-        const dev = id || this._primaryDeviceId();
+        const dev = id || this._defaultDeviceId();
         this.dashDevice = dev === this._primaryDeviceId() ? null : dev;
         try { localStorage.setItem('mbg-dash-device', this.dashDevice || ''); } catch (e) { /* private mode */ }
         this.valueHistory = {};                    // sparkline history is per device
@@ -1539,5 +1661,12 @@ Object.assign(JanitzaMonitor.prototype, {
         // the device list, else the id the server named in its WS init; ''
         // means "the primary" to every API route, so it is a safe default
         return (this._devices || []).find(d => d.primary)?.id || this._primaryIdHint || '';
+    },
+
+    _defaultDeviceId() {
+        // the device a page opens on: device #1 where there is one, else the
+        // first device — a fresh install has no primary (ADR-0024), and ''
+        // would show the empty store of a meter that is not there
+        return this._primaryDeviceId() || (this._devices || [])[0]?.id || '';
     }
 });

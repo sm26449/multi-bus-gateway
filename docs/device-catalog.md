@@ -4,7 +4,7 @@
 
 Every built-in device map, with its Modbus transport (function code + byte/word order), the exact register table, and the **source it was verified against**. We do not fabricate maps — each entry cites its provenance. **Confidence varies by entry:** some are *vendor-verified* (confirmed against the manufacturer manual or a field-tested driver — e.g. ABB B23 vs the ABB manual, Schneider iEM3000 vs volkszaehler/mbmd, Carlo Gavazzi EM24 vs Victron), while others are *community-sourced* and their description says to verify against your specific unit's manual before billing-grade use (e.g. the Eastron SDM entries). Read each entry's Source line. `scale` is a divisor — engineering value = raw / scale.
 
-**24 device maps.**
+**31 device maps.**
 
 | Map | Vendor | Model | Registers | Transport |
 |---|---|---|---|---|
@@ -14,6 +14,7 @@ Every built-in device map, with its Modbus transport (function code + byte/word 
 | [BLE sensor (Theengs / BTHome → MQTT)](#ble-sensor-theengs--bthome--mqtt) | Theengs | BLE advertisement sensor | 5 | MQTT |
 | [Carlo Gavazzi EM24 (AV5/AV53, 3-phase)](#carlo-gavazzi-em24-av5av53-3-phase) | Carlo Gavazzi | EM24-DIN AV5(3) | 17 | FC03 / little |
 | [Delta VFD-EL frequency drive](#delta-vfd-el-frequency-drive) | Delta Electronics | VFD-EL (e.g. VFD022EL43A) | 16 | FC03 / big |
+| [Deye single-phase hybrid inverter (read-only)](#deye-single-phase-hybrid-inverter-read-only) | Deye | SUN-xK-SG0xLP1 (e.g. SUN-8K-SG05LP1-EU) | 64 | FC03 / little |
 | [Eastron SDM120 (single-phase)](#eastron-sdm120-single-phase) | Eastron | SDM120 Modbus | 10 | FC04 / big |
 | [Eastron SDM630 (3-phase)](#eastron-sdm630-3-phase) | Eastron | SDM630 Modbus V2 | 29 | FC04 / big |
 | [Fronius Smart Meter 65A-3 (RTU)](#fronius-smart-meter-65a-3-rtu) | Fronius | Smart Meter 65A-3 | 30 | FC03 / little |
@@ -23,11 +24,17 @@ Every built-in device map, with its Modbus transport (function code + byte/word 
 | [Fronius installation (Solar API site totals)](#fronius-installation-solar-api-site-totals) | — | — | 9 | HTTP/JSON |
 | [Fronius SunSpec inverter (int+SF, via datalogger)](#fronius-sunspec-inverter-intsf-via-datalogger) | Fronius | Symo / Primo / Eco (SunSpec 103) | 69 | FC03 / big |
 | [Fronius SunSpec meter (int+SF, via datalogger)](#fronius-sunspec-meter-intsf-via-datalogger) | Fronius | Smart Meter 63A/50kA (SunSpec 203) | 48 | FC03 / big |
+| [Huawei DTSU666-H meter (via SUN2000)](#huawei-dtsu666-h-meter-via-sun2000) | Huawei | DTSU666-H / DDSU666-H power meter behind a SUN2000 | 21 | FC03 / big |
+| [Huawei LUNA2000 battery (via SUN2000)](#huawei-luna2000-battery-via-sun2000) | Huawei | LUNA2000 behind a SUN2000 hybrid inverter | 23 | FC03 / big |
+| [Huawei SUN2000 inverter](#huawei-sun2000-inverter) | Huawei | SUN2000 (KTL-L1 / KTL-M0/M1/M2 and similar) | 56 | FC03 / big |
 | [Generic MQTT (JSON)](#generic-mqtt-json) | Generic | MQTT JSON source | 3 | MQTT |
+| [Pylontech CAN (BMS → inverter link, listen-only)](#pylontech-can-bms--inverter-link-listen-only) | Pylontech (protocol) | Pylontech-compatible BMS CAN | 30 | CAN (listen-only) |
 | [Samsung MIM-B19N Modbus interface (DVM / EHS)](#samsung-mim-b19n-modbus-interface-dvm--ehs) | Samsung | MIM-B19N / MIM-B19NT | 60 | FC03 / big |
 | [Schneider iEM3000 (3-phase)](#schneider-iem3000-3-phase) | Schneider Electric | iEM3155 / iEM3255 / iEM3455 / iEM3555 | 22 | FC03 / big |
 | [Seplos BMS V3 bank (via seplos-bms-mqtt)](#seplos-bms-v3-bank-via-seplos-bms-mqtt) | Seplos | BMS V3 bank | 28 | MQTT |
 | [Seplos BMS V3 (via seplos-bms-mqtt)](#seplos-bms-v3-via-seplos-bms-mqtt) | Seplos | BMS V3 | 58 | MQTT |
+| [Seplos BMS V2 pack (ASCII protocol, read-only)](#seplos-bms-v2-pack-ascii-protocol-read-only) | Seplos | BMS V2 | 107 | Seplos V2 ASCII (virtual map) |
+| [Seplos BMS V2 pack (inter-pack tap, listen-only)](#seplos-bms-v2-pack-inter-pack-tap-listen-only) | Seplos | BMS V2 | 22 | Seplos V2 ASCII (virtual map) |
 | [Seplos BMS V3 pack (RTU tap, listen-only)](#seplos-bms-v3-pack-rtu-tap-listen-only) | Seplos | BMS V3 | 84 | RTU tap FC01+FC04 / big |
 | [Tasmota device (relays, energy, Wi-Fi)](#tasmota-device-relays-energy-wi-fi) | Tasmota | any Tasmota device | 12 | MQTT |
 | [Victron GX (Venus OS) over MQTT](#victron-gx-venus-os-over-mqtt) | Victron Energy | GX device (Cerbo, Ekrano, Venus GX) | 38 | MQTT |
@@ -160,7 +167,7 @@ _Large built-in map (4126 registers) — not dumped here._ Categories: thd_harmo
 
 ## Delta VFD-EL frequency drive
 
-**id** `delta_vfd_el` · **vendor** Delta Electronics · **model** VFD-EL (e.g. VFD022EL43A) · **version** 0.3.0 · **registers** 16
+**id** `delta_vfd_el` · **vendor** Delta Electronics · **model** VFD-EL (e.g. VFD022EL43A) · **version** 0.4.0 · **registers** 16
 
 - **Transport:** FC03 (read holding registers) · byte order **big-endian, high word first (ABCD)**
 - **Source / provenance:** Delta VFD-EL User Manual, revision 2016/03 (6ELE, V1.14): Group 9 communication parameters p. 102, function codes p. 105 (03H read n≤20 words, 06H write, 08H loop detection), address list p. 108-110 (2000H-2002H, 2100H-210AH, parameter address GGnnH), Pr 02.00 p. 36. Not yet field-checked: the 0.01 Hz scaling of 2001H, 2101H bit 10, block reads of 2100H-210AH and the Pr 02.01 values are to be confirmed on a VFD022EL43A.
@@ -192,10 +199,98 @@ _Large built-in map (4126 registers) — not dumped here._ Categories: thd_harmo
 |---|---|---|---|
 | `run_state` | `run_state` | `status_word % 4` | 4 states |
 | `running` | `running` | `1 if status_word % 4 == 3 else 0` | — |
+| `igbt_hot` | `igbt_hot` | `1 if igbt_temperature >= 80 else 0` | — |
 | `reverse` | `reverse` | `1 if (status_word // 8) % 4 >= 2 else 0` | 2 states |
 | `frequency_from_comm` | `frequency_from_comm` | `(status_word // 256) % 2` | — |
 | `command_from_comm` | `command_from_comm` | `(status_word // 1024) % 2` | — |
 | `output_apparent_power` | `output_apparent_power` | `1.732 * output_voltage * output_current` | — |
+
+## Deye single-phase hybrid inverter (read-only)
+
+**id** `deye_hybrid_1p` · **vendor** Deye · **model** SUN-xK-SG0xLP1 (e.g. SUN-8K-SG05LP1-EU) · **version** 0.3.0 · **registers** 64
+
+- **Transport:** FC03 (read holding registers) · byte order **little-endian, low word first (CDAB / word-swapped)**
+- **Source / provenance:** Deye single-phase hybrid Modbus map as published by the ha-solarman project (deye_hybrid.yaml, SUN-xK-SG01LP1/SG03LP1/SG05LP1) and cross-read against kellerza/sunsynk (src/sunsynk/definitions/single_phase.py: the same Deye/Sunsynk single-phase firmware; there a negative factor marks a signed register, not an inversion) and Deye's 'Modbus RTU protocol' for single-phase energy storage inverters. Reference only, no code copied. Checked on a SUN-8K-SG05LP1 (protocol 0x0201) on 2026-10-27; each row says whether it was. The GEN port, BMS block and battery settings (0.3.0) come from the same maps; the BMS temperature (319) from the Deye document only.
+
+> Deye single-phase low-voltage hybrid inverter (SUN-xK-SG0xLP1 family, e.g. SUN-8K-SG05LP1-EU), READ-ONLY: FC03 holding registers only, no writable register and no command, so no rule or command can bind to it. Wire the inverter's RS485 "Modbus" port (not the BMS/CAN port, not the Wi-Fi logger port), Modbus RTU 9600 8N1, unit ID 1. Reads identity and serial, the running state, PV1/PV2 voltage, current and power, grid voltage, current, frequency and power, the inverter and load power, battery voltage, current, power, SOC and temperature, the GEN port (an AC-coupled microinverter there: its power, voltage and daily and total energy), the BMS block as the inverter receives it (voltage, current, temperature, SOC, charge/discharge current limits and voltages), the battery type and rated capacity settings, the load voltage, daily and total energies as counters, the inverter temperatures and the warning/fault words (bits named by the Fxx code the display shows). 32-bit totals are low word first, so the template's word order is little (CDAB); the total grid import is split across 78 and 80 (79 is the frequency) and is rebuilt as the calculated energy_active_import. Signs follow the gateway's canonical conventions: battery_power and battery_current + charging (Deye reports + discharging, so both are inverted with a negative scale), power_grid + import / - export (as Deye reports it), power_load negative = consuming (inverted). First checked on hardware on a SUN-8K-SG05LP1 (2026-10-27, no BMS connected): the rows that agreed say so, the rest are still to be verified on site against the inverter display.
+
+| Address (dec / hex) | Name | Description | Type | Scale | Unit | Poll |
+|---|---|---|---|---|---|---|
+| 0 / 0x0000 | `device_type` | Device type | uint16 | 1 | — | static |
+| 2 / 0x0002 | `protocol_version` | Modbus protocol version | uint16 | 1 | — | static |
+| 3 / 0x0003 | `serial` | Serial number | string:5 | 1 | — | static |
+| 16 / 0x0010 | `rated_power` | Rated power | uint32 | 10 | W | static |
+| 59 / 0x003B | `vendor_state` | Running state code | uint16 | 1 | — | normal |
+| 62 / 0x003E | `gen_energy_today` | GEN port energy today | uint16 | 0.01 | Wh | energy |
+| 63 / 0x003F | `energy_lifetime` | Cumulative production (active) | uint32 | 0.01 | Wh | energy |
+| 70 / 0x0046 | `battery_energy_charged_today` | Battery charged today | uint16 | 0.01 | Wh | energy |
+| 71 / 0x0047 | `battery_energy_discharged_today` | Battery discharged today | uint16 | 0.01 | Wh | energy |
+| 72 / 0x0048 | `battery_energy_charged_total` | Battery charged (total) | uint32 | 0.01 | Wh | energy |
+| 74 / 0x004A | `battery_energy_discharged_total` | Battery discharged (total) | uint32 | 0.01 | Wh | energy |
+| 76 / 0x004C | `grid_energy_import_today` | Grid import today | uint16 | 0.01 | Wh | energy |
+| 77 / 0x004D | `grid_energy_export_today` | Grid export today | uint16 | 0.01 | Wh | energy |
+| 78 / 0x004E | `grid_import_total_low` | Grid import total (low word) | uint16 | 1 | — | energy |
+| 79 / 0x004F | `frequency` | Grid frequency | uint16 | 100 | Hz | fast |
+| 80 / 0x0050 | `grid_import_total_high` | Grid import total (high word) | uint16 | 1 | — | energy |
+| 81 / 0x0051 | `energy_active_export` | Grid export (total) | uint32 | 0.01 | Wh | energy |
+| 84 / 0x0054 | `load_energy_today` | Load today | uint16 | 0.01 | Wh | energy |
+| 85 / 0x0055 | `load_energy_total` | Load (total) | uint32 | 0.01 | Wh | energy |
+| 90 / 0x005A | `temperature_transformer` | DC transformer temperature | uint16 | 10 | °C | normal |
+| 91 / 0x005B | `temperature_heatsink` | Heatsink temperature | uint16 | 10 | °C | normal |
+| 92 / 0x005C | `gen_energy_total_low` | GEN port energy total (low word) | uint16 | 1 | — | energy |
+| 95 / 0x005F | `gen_energy_total_high` | GEN port energy total (high word) | uint16 | 1 | — | energy |
+| 96 / 0x0060 | `energy_active_generated` | PV production (total) | uint32 | 0.01 | Wh | energy |
+| 101 / 0x0065 | `warning_word_1` | Warning word 1 | uint16 | 1 | — | normal |
+| 102 / 0x0066 | `warning_word_2` | Warning word 2 | uint16 | 1 | — | normal |
+| 103 / 0x0067 | `fault_word_1` | Fault word 1 | uint16 | 1 | — | normal |
+| 104 / 0x0068 | `fault_word_2` | Fault word 2 | uint16 | 1 | — | normal |
+| 105 / 0x0069 | `fault_word_3` | Fault word 3 | uint16 | 1 | — | normal |
+| 106 / 0x006A | `fault_word_4` | Fault word 4 | uint16 | 1 | — | normal |
+| 108 / 0x006C | `energy_today` | PV production today | uint16 | 0.01 | Wh | energy |
+| 109 / 0x006D | `voltage_dc_mppt1` | PV1 voltage | uint16 | 10 | V | fast |
+| 110 / 0x006E | `current_dc_mppt1` | PV1 current | uint16 | 10 | A | fast |
+| 111 / 0x006F | `voltage_dc_mppt2` | PV2 voltage | uint16 | 10 | V | fast |
+| 112 / 0x0070 | `current_dc_mppt2` | PV2 current | uint16 | 10 | A | fast |
+| 150 / 0x0096 | `voltage_l1_n` | Grid voltage | uint16 | 10 | V | fast |
+| 157 / 0x009D | `load_voltage` | Load voltage | uint16 | 10 | V | fast |
+| 160 / 0x00A0 | `current_l1` | Grid current | int16 | 100 | A | fast |
+| 164 / 0x00A4 | `inverter_current` | Inverter output current | int16 | 100 | A | fast |
+| 166 / 0x00A6 | `gen_power` | GEN port power (microinverter) | int16 | 1 | W | fast |
+| 169 / 0x00A9 | `power_grid` | Grid power (inverter GRID port) | int16 | 1 | W | fast |
+| 172 / 0x00AC | `grid_ct_power` | Grid power (external CT) | int16 | 1 | W | fast |
+| 175 / 0x00AF | `power_active_total` | Inverter power | int16 | 1 | W | fast |
+| 178 / 0x00B2 | `power_load` | Load power (− consuming) | int16 | -1 | W | fast |
+| 181 / 0x00B5 | `gen_voltage` | GEN port voltage | uint16 | 10 | V | fast |
+| 182 / 0x00B6 | `battery_temperature` | Battery temperature | uint16 | 10 | °C | normal |
+| 183 / 0x00B7 | `pack_voltage` | Battery voltage | uint16 | 100 | V | fast |
+| 184 / 0x00B8 | `soc` | Battery SOC | uint16 | 1 | % | fast |
+| 186 / 0x00BA | `power_dc_mppt1` | PV1 power | uint16 | 1 | W | fast |
+| 187 / 0x00BB | `power_dc_mppt2` | PV2 power | uint16 | 1 | W | fast |
+| 190 / 0x00BE | `battery_power` | Battery power | int16 | -1 | W | fast |
+| 191 / 0x00BF | `battery_current` | Battery current | int16 | -100 | A | fast |
+| 200 / 0x00C8 | `battery_type` | Battery type | uint16 | 1 | — | static |
+| 204 / 0x00CC | `battery_rated_capacity` | Battery rated capacity | uint16 | 1 | Ah | static |
+| 312 / 0x0138 | `charge_voltage_limit` | BMS charge voltage | uint16 | 100 | V | normal |
+| 313 / 0x0139 | `discharge_voltage_limit` | BMS discharge voltage | uint16 | 100 | V | normal |
+| 314 / 0x013A | `charge_current_limit` | BMS charge current limit | uint16 | 1 | A | normal |
+| 315 / 0x013B | `discharge_current_limit` | BMS discharge current limit | uint16 | 1 | A | normal |
+| 316 / 0x013C | `bms_soc` | BMS SOC | uint16 | 1 | % | fast |
+| 317 / 0x013D | `bms_voltage` | BMS voltage | uint16 | 100 | V | fast |
+| 318 / 0x013E | `bms_current` | BMS current | int16 | 1 | A | fast |
+| 319 / 0x013F | `bms_temperature` | BMS temperature | uint16 | 10 | °C | normal |
+| 320 / 0x0140 | `bms_max_charge_current` | BMS max charge current | uint16 | 1 | A | normal |
+| 321 / 0x0141 | `bms_max_discharge_current` | BMS max discharge current | uint16 | 1 | A | normal |
+
+**Derived measurements** — computed from the registers above and seeded into every device made from this template, so each unit publishes them identically.
+
+| Name | MQTT topic | Formula | Decoded |
+|---|---|---|---|
+| `energy_active_import` | `energy_active_import` | `(grid_import_total_high * 65536 + grid_import_total_low) * 100` | — |
+| `gen_energy_total` | `gen_energy_total` | `(gen_energy_total_high * 65536 + gen_energy_total_low) * 100` | — |
+| `power_pv` | `power_pv` | `power_dc_mppt1 + power_dc_mppt2` | — |
+| `status_text` | `status/text` | `vendor_state` | 6 states |
+| `status_alarm` | `status/alarm` | `1 if (vendor_state == 3 or vendor_state == 4) else 0` | — |
+| `status_active` | `status/active` | `1 if vendor_state == 2 else 0` | — |
 
 ## Eastron SDM120 (single-phase)
 
@@ -580,6 +675,150 @@ The URL carries no ${unit_id}: an installation is one thing, so this group holds
 | 40121 / 0x9CB9 | `energy_active_import_l3` | L3 imported active energy | uint32 | 1 | Wh | normal |
 | 40123 / 0x9CBB | `wh_sf` | WH Scale Factor | int16 | 1 | — | normal |
 
+## Huawei DTSU666-H meter (via SUN2000)
+
+**id** `huawei_dtsu666_via_sun2000` · **vendor** Huawei · **model** DTSU666-H / DDSU666-H power meter behind a SUN2000 · **version** 0.1.0 · **registers** 21
+
+- **Transport:** FC03 (read holding registers) · byte order **big-endian, high word first (ABCD)**
+- **Source / provenance:** Huawei 'Solar Inverter Modbus Interface Definitions', power meter registers 37100-37137; cross-read against wlcrs/huawei-solar-lib (grid_exported_energy 37119, grid_accumulated_energy 37121, power_meter_active_power 37113). Not yet checked on hardware.
+
+> The grid meter a Huawei SUN2000 reads on its own RS485 bus (DTSU666-H three-phase or DDSU666-H single-phase), served by the INVERTER at 37100-37137: status, phase and line voltages, phase currents, total and per-phase active power, reactive power, PF, frequency, exported/imported and reactive energy. Add it as a second device on the same connection and unit ID as the huawei_sun2000 device, only where the site has the meter. Sign: Huawei counts + as export (feed-in); this template inverts active power and phase currents with a negative scale so they follow the gateway's meter convention, + = import from the grid; register 37119 (Huawei's 'positive' energy) is the export counter, 37121 the import counter. Reactive power keeps Huawei's sign. Field notes: enable Modbus TCP on the SDongle in FusionSolar (Dongle parameters -> Modbus TCP -> Enable unrestricted); unit ID = the inverter's RS485 address (usually 1); the dongle serves ONE Modbus client only, so keep a single gateway connection and poll every 10-30 s; port 502 on the SDongle, 6607 on the inverter's own WLAN access point; Modbus RTU direct on the inverter's RS485 is 9600 8N1. The inverter is the master of its RS485 bus to the DTSU666 meter: never add a second master there, use the listen-only rtu_tap mode to watch it. SunSpec (40000) is a quick alternative without battery, meter or alarms.
+
+| Address (dec / hex) | Name | Description | Type | Scale | Unit | Poll |
+|---|---|---|---|---|---|---|
+| 37100 / 0x90EC | `meter_status` | Meter status | uint16 | 1 | — | normal |
+| 37101 / 0x90ED | `voltage_l1_n` | Phase A voltage | int32 | 10 | V | fast |
+| 37103 / 0x90EF | `voltage_l2_n` | Phase B voltage | int32 | 10 | V | fast |
+| 37105 / 0x90F1 | `voltage_l3_n` | Phase C voltage | int32 | 10 | V | fast |
+| 37107 / 0x90F3 | `current_l1` | Phase A current | int32 | -100 | A | fast |
+| 37109 / 0x90F5 | `current_l2` | Phase B current | int32 | -100 | A | fast |
+| 37111 / 0x90F7 | `current_l3` | Phase C current | int32 | -100 | A | fast |
+| 37113 / 0x90F9 | `power_active_total` | Active power | int32 | -1 | W | fast |
+| 37115 / 0x90FB | `power_reactive_total` | Reactive power | int32 | 1 | var | fast |
+| 37117 / 0x90FD | `power_factor_total` | Power factor | int16 | 1000 | — | fast |
+| 37118 / 0x90FE | `frequency` | Frequency | int16 | 100 | Hz | fast |
+| 37119 / 0x90FF | `energy_active_export` | Exported energy | int32 | 0.1 | Wh | energy |
+| 37121 / 0x9101 | `energy_active_import` | Imported energy | int32 | 0.1 | Wh | energy |
+| 37123 / 0x9103 | `energy_reactive_total` | Accumulated reactive energy | int32 | 0.1 | varh | energy |
+| 37125 / 0x9105 | `meter_type` | Meter type | uint16 | 1 | — | static |
+| 37126 / 0x9106 | `voltage_l1_l2` | Line voltage A-B | int32 | 10 | V | normal |
+| 37128 / 0x9108 | `voltage_l2_l3` | Line voltage B-C | int32 | 10 | V | normal |
+| 37130 / 0x910A | `voltage_l3_l1` | Line voltage C-A | int32 | 10 | V | normal |
+| 37132 / 0x910C | `power_active_l1` | Phase A active power | int32 | -1 | W | fast |
+| 37134 / 0x910E | `power_active_l2` | Phase B active power | int32 | -1 | W | fast |
+| 37136 / 0x9110 | `power_active_l3` | Phase C active power | int32 | -1 | W | fast |
+
+## Huawei LUNA2000 battery (via SUN2000)
+
+**id** `huawei_luna2000` · **vendor** Huawei · **model** LUNA2000 behind a SUN2000 hybrid inverter · **version** 0.1.0 · **registers** 23
+
+- **Transport:** FC03 (read holding registers) · byte order **big-endian, high word first (ABCD)**
+- **Source / provenance:** Huawei 'Solar Inverter Modbus Interface Definitions', energy storage registers 37000-37048 and 37758-37787; cross-read against wlcrs/huawei-solar-lib (storage_* and storage_unit_1_* definitions). Not yet checked on hardware.
+
+> The LUNA2000 battery a Huawei SUN2000 hybrid inverter manages, served by the INVERTER: the storage aggregate block at 37758-37787 (rated capacity, SOC, running status, bus voltage and current, charge/discharge power, total and daily charged/discharged energy) carries the canonical names; battery unit 1 at 37000-37025 (status, power, bus voltage, SOC, working mode, rated powers, fault ID, temperature, remaining time) and the maximum charge/discharge power (37046/37048) are diagnostics. Add it as a further device on the same connection and unit ID as the huawei_sun2000 device, only where the site has a LUNA2000. Sign: Huawei reports + while charging, which is already the gateway's battery_power/battery_current convention: nothing is inverted. Read-only: no working-mode or charge command. Field notes: enable Modbus TCP on the SDongle in FusionSolar (Dongle parameters -> Modbus TCP -> Enable unrestricted); unit ID = the inverter's RS485 address (usually 1); the dongle serves ONE Modbus client only, so keep a single gateway connection and poll every 10-30 s; port 502 on the SDongle, 6607 on the inverter's own WLAN access point; Modbus RTU direct on the inverter's RS485 is 9600 8N1. The inverter is the master of its RS485 bus to the DTSU666 meter: never add a second master there, use the listen-only rtu_tap mode to watch it. SunSpec (40000) is a quick alternative without battery, meter or alarms.
+
+| Address (dec / hex) | Name | Description | Type | Scale | Unit | Poll |
+|---|---|---|---|---|---|---|
+| 37000 / 0x9088 | `unit1_status` | Unit 1 running status | uint16 | 1 | — | normal |
+| 37001 / 0x9089 | `unit1_power` | Unit 1 charge/discharge power | int32 | 1 | W | fast |
+| 37003 / 0x908B | `unit1_bus_voltage` | Unit 1 bus voltage | uint16 | 10 | V | normal |
+| 37004 / 0x908C | `unit1_soc` | Unit 1 SOC | uint16 | 10 | % | normal |
+| 37006 / 0x908E | `working_mode` | Working mode | uint16 | 1 | — | normal |
+| 37007 / 0x908F | `unit1_rated_charge_power` | Unit 1 rated charge power | uint32 | 1 | W | static |
+| 37009 / 0x9091 | `unit1_rated_discharge_power` | Unit 1 rated discharge power | uint32 | 1 | W | static |
+| 37014 / 0x9096 | `unit1_fault_id` | Unit 1 fault ID | uint16 | 1 | — | normal |
+| 37021 / 0x909D | `unit1_bus_current` | Unit 1 bus current | int16 | 10 | A | normal |
+| 37022 / 0x909E | `unit1_temperature` | Unit 1 temperature | int16 | 10 | °C | normal |
+| 37025 / 0x90A1 | `unit1_remaining_time` | Unit 1 remaining charge/discharge time | uint16 | 1 | min | normal |
+| 37046 / 0x90B6 | `max_charge_power` | Maximum charge power | uint32 | 1 | W | static |
+| 37048 / 0x90B8 | `max_discharge_power` | Maximum discharge power | uint32 | 1 | W | static |
+| 37758 / 0x937E | `rated_capacity` | Rated capacity | uint32 | 1 | Wh | static |
+| 37760 / 0x9380 | `soc` | SOC | uint16 | 10 | % | fast |
+| 37762 / 0x9382 | `battery_status` | Running status | uint16 | 1 | — | normal |
+| 37763 / 0x9383 | `pack_voltage` | Bus voltage | uint16 | 10 | V | fast |
+| 37764 / 0x9384 | `battery_current` | Bus current | int16 | 10 | A | fast |
+| 37765 / 0x9385 | `battery_power` | Charge/discharge power | int32 | 1 | W | fast |
+| 37780 / 0x9394 | `battery_energy_charged_total` | Charged (total) | uint32 | 0.1 | Wh | energy |
+| 37782 / 0x9396 | `battery_energy_discharged_total` | Discharged (total) | uint32 | 0.1 | Wh | energy |
+| 37784 / 0x9398 | `battery_energy_charged_today` | Charged today | uint32 | 0.1 | Wh | energy |
+| 37786 / 0x939A | `battery_energy_discharged_today` | Discharged today | uint32 | 0.1 | Wh | energy |
+
+## Huawei SUN2000 inverter
+
+**id** `huawei_sun2000` · **vendor** Huawei · **model** SUN2000 (KTL-L1 / KTL-M0/M1/M2 and similar) · **version** 0.1.0 · **registers** 56
+
+- **Transport:** FC03 (read holding registers) · byte order **big-endian, high word first (ABCD)**
+- **Source / provenance:** Huawei 'Solar Inverter Modbus Interface Definitions' (Huawei SUN2000 Modbus interface, register 30000-32114 tables, device status codes, State/Alarm bit fields); cross-read against wlcrs/huawei-solar-lib register definitions. Not yet checked on hardware.
+
+> Huawei SUN2000 string or hybrid inverter over Modbus TCP (SDongle or the inverter's WLAN) or Modbus RTU, read-only: identity 30000-30076 (model, serial, PN, firmware, strings, MPPTs, rated and maximum power), the State 1/2/3 and Alarm 1/2/3 bit fields at 32000-32010, PV1-PV8 voltage and current from 32016, the AC block 32064-32094 (input power, line and phase voltages and currents, active and reactive power, PF, frequency, efficiency, internal temperature, insulation, device status, fault code, startup/shutdown time) and the total (32106) and daily (32114) yield, served in Wh. Big-endian, high word first. The DTSU666 meter and the LUNA2000 battery behind the inverter have their own templates (huawei_dtsu666_via_sun2000, huawei_luna2000): add them as further devices on the same connection and unit ID, only where the site has them. PV5-PV8 are a separate read, so a model with four strings that refuses them does not lose PV1-PV4. Field notes: enable Modbus TCP on the SDongle in FusionSolar (Dongle parameters -> Modbus TCP -> Enable unrestricted); unit ID = the inverter's RS485 address (usually 1); the dongle serves ONE Modbus client only, so keep a single gateway connection and poll every 10-30 s; port 502 on the SDongle, 6607 on the inverter's own WLAN access point; Modbus RTU direct on the inverter's RS485 is 9600 8N1. The inverter is the master of its RS485 bus to the DTSU666 meter: never add a second master there, use the listen-only rtu_tap mode to watch it. SunSpec (40000) is a quick alternative without battery, meter or alarms.
+
+| Address (dec / hex) | Name | Description | Type | Scale | Unit | Poll |
+|---|---|---|---|---|---|---|
+| 30000 / 0x7530 | `model` | Model | string:15 | 1 | — | static |
+| 30015 / 0x753F | `serial` | Serial number | string:10 | 1 | — | static |
+| 30025 / 0x7549 | `part_number` | Part number (PN) | string:10 | 1 | — | static |
+| 30035 / 0x7553 | `firmware_version` | Firmware version | string:15 | 1 | — | static |
+| 30050 / 0x7562 | `software_version` | Software version | string:15 | 1 | — | static |
+| 30070 / 0x7576 | `model_id` | Model ID | uint16 | 1 | — | static |
+| 30071 / 0x7577 | `pv_string_count` | Number of PV strings | uint16 | 1 | — | static |
+| 30072 / 0x7578 | `mppt_modules` | Number of MPP trackers | uint16 | 1 | — | static |
+| 30073 / 0x7579 | `rated_power` | Rated power | uint32 | 1 | W | static |
+| 30075 / 0x757B | `max_active_power` | Maximum active power | uint32 | 1 | W | static |
+| 32000 / 0x7D00 | `state_1` | State 1 | uint16 | 1 | — | normal |
+| 32002 / 0x7D02 | `state_2` | State 2 | uint16 | 1 | — | normal |
+| 32003 / 0x7D03 | `state_3` | State 3 | uint32 | 1 | — | normal |
+| 32008 / 0x7D08 | `alarm_1` | Alarm 1 | uint16 | 1 | — | normal |
+| 32009 / 0x7D09 | `alarm_2` | Alarm 2 | uint16 | 1 | — | normal |
+| 32010 / 0x7D0A | `alarm_3` | Alarm 3 | uint16 | 1 | — | normal |
+| 32016 / 0x7D10 | `voltage_dc_mppt1` | PV1 voltage | int16 | 10 | V | fast |
+| 32017 / 0x7D11 | `current_dc_mppt1` | PV1 current | int16 | 100 | A | fast |
+| 32018 / 0x7D12 | `voltage_dc_mppt2` | PV2 voltage | int16 | 10 | V | fast |
+| 32019 / 0x7D13 | `current_dc_mppt2` | PV2 current | int16 | 100 | A | fast |
+| 32020 / 0x7D14 | `voltage_dc_mppt3` | PV3 voltage | int16 | 10 | V | fast |
+| 32021 / 0x7D15 | `current_dc_mppt3` | PV3 current | int16 | 100 | A | fast |
+| 32022 / 0x7D16 | `voltage_dc_mppt4` | PV4 voltage | int16 | 10 | V | fast |
+| 32023 / 0x7D17 | `current_dc_mppt4` | PV4 current | int16 | 100 | A | fast |
+| 32024 / 0x7D18 | `voltage_dc_mppt5` | PV5 voltage | int16 | 10 | V | pv_extra |
+| 32025 / 0x7D19 | `current_dc_mppt5` | PV5 current | int16 | 100 | A | pv_extra |
+| 32026 / 0x7D1A | `voltage_dc_mppt6` | PV6 voltage | int16 | 10 | V | pv_extra |
+| 32027 / 0x7D1B | `current_dc_mppt6` | PV6 current | int16 | 100 | A | pv_extra |
+| 32028 / 0x7D1C | `voltage_dc_mppt7` | PV7 voltage | int16 | 10 | V | pv_extra |
+| 32029 / 0x7D1D | `current_dc_mppt7` | PV7 current | int16 | 100 | A | pv_extra |
+| 32030 / 0x7D1E | `voltage_dc_mppt8` | PV8 voltage | int16 | 10 | V | pv_extra |
+| 32031 / 0x7D1F | `current_dc_mppt8` | PV8 current | int16 | 100 | A | pv_extra |
+| 32064 / 0x7D40 | `power_dc` | Input power | int32 | 1 | W | fast |
+| 32066 / 0x7D42 | `voltage_l1_l2` | Line voltage A-B | uint16 | 10 | V | fast |
+| 32067 / 0x7D43 | `voltage_l2_l3` | Line voltage B-C | uint16 | 10 | V | fast |
+| 32068 / 0x7D44 | `voltage_l3_l1` | Line voltage C-A | uint16 | 10 | V | fast |
+| 32069 / 0x7D45 | `voltage_l1_n` | Phase A voltage | uint16 | 10 | V | fast |
+| 32070 / 0x7D46 | `voltage_l2_n` | Phase B voltage | uint16 | 10 | V | fast |
+| 32071 / 0x7D47 | `voltage_l3_n` | Phase C voltage | uint16 | 10 | V | fast |
+| 32072 / 0x7D48 | `current_l1` | Phase A current | int32 | 1000 | A | fast |
+| 32074 / 0x7D4A | `current_l2` | Phase B current | int32 | 1000 | A | fast |
+| 32076 / 0x7D4C | `current_l3` | Phase C current | int32 | 1000 | A | fast |
+| 32078 / 0x7D4E | `power_active_peak_today` | Peak active power today | int32 | 1 | W | normal |
+| 32080 / 0x7D50 | `power_active_total` | Active power | int32 | 1 | W | fast |
+| 32082 / 0x7D52 | `power_reactive_total` | Reactive power | int32 | 1 | var | fast |
+| 32084 / 0x7D54 | `power_factor_total` | Power factor | int16 | 1000 | — | fast |
+| 32085 / 0x7D55 | `frequency` | Grid frequency | uint16 | 100 | Hz | fast |
+| 32086 / 0x7D56 | `efficiency` | Efficiency | uint16 | 100 | % | normal |
+| 32087 / 0x7D57 | `temperature_cabinet` | Internal temperature | int16 | 10 | °C | normal |
+| 32088 / 0x7D58 | `insulation_resistance` | Insulation resistance | uint16 | 1000 | MΩ | normal |
+| 32089 / 0x7D59 | `vendor_state` | Device status code | uint16 | 1 | — | normal |
+| 32090 / 0x7D5A | `fault_code` | Fault code | uint16 | 1 | — | normal |
+| 32091 / 0x7D5B | `startup_time` | Startup time | uint32 | 1 | — | normal |
+| 32093 / 0x7D5D | `shutdown_time` | Shutdown time | uint32 | 1 | — | normal |
+| 32106 / 0x7D6A | `energy_active_generated` | Total yield | uint32 | 0.1 | Wh | energy |
+| 32114 / 0x7D72 | `energy_today` | Daily yield | uint32 | 0.1 | Wh | energy |
+
+**Derived measurements** — computed from the registers above and seeded into every device made from this template, so each unit publishes them identically.
+
+| Name | MQTT topic | Formula | Decoded |
+|---|---|---|---|
+| `status_text` | `status/text` | `vendor_state` | 31 states |
+| `status_alarm` | `status/alarm` | `1 if (vendor_state == 768 or fault_code > 0) else 0` | — |
+| `status_active` | `status/active` | `1 if (vendor_state == 512 or vendor_state == 513 or vendor_state == 514 or vendor_state == 515) else 0` | — |
+
 ## Generic MQTT (JSON)
 
 **id** `mqtt_json_generic` · **vendor** Generic · **model** MQTT JSON source · **version** 1.0.0 · **registers** 3
@@ -593,6 +832,48 @@ The URL carries no ${unit_id}: an installation is one thing, so this group holds
 | 1 / 0x0001 | `power` | Power | float | 1 | W | normal |
 | 2 / 0x0002 | `voltage` | Voltage | float | 1 | V | normal |
 | 3 / 0x0003 | `current` | Current | float | 1 | A | normal |
+
+## Pylontech CAN (BMS → inverter link, listen-only)
+
+**id** `pylontech_can_inverter` · **vendor** Pylontech (protocol) · **model** Pylontech-compatible BMS CAN · **version** 0.1.0 · **registers** 30
+
+- **Transport:** CAN **listen-only** — signals by frame id and bits, DBC semantics · 500 kbit/s
+- **Source / provenance:** Pylontech 'PYLON CANBUS Protocol' V1.2 (2018-04-08); Seplos 'CANBUS Protocol V1.0' (2020, akkudoktor.net mirror); LuxPower 'Battery communication CAN Protocol' V04 (2024-03-13); cross-checked (no code taken) against esphome-yambms packages/yambms/yambms_canbus.yaml (Sleeper85, GPLv3); verified on a 2-minute candump of a Deye SG05LP1 ↔ Seplos V2 bank (tests/fixtures/can/deye_seplos_v2_20261026.candump, listen-only, 2026-10-26).
+
+> The BMS → inverter link most batteries speak (Pylontech, Seplos V2/V3, JK and Daly in Pylontech mode), read LISTEN-ONLY with protocol can: the gateway never transmits on it. Standard 11-bit frames, little endian, 500 kbit/s, one frame set per second; the inverter answers 0x305 every second. Core frames (0x351, 0x355, 0x356, 0x359, 0x35C, 0x35E) follow Pylontech's document; rows marked UNVERIFIED come from one vendor's extension (Seplos 0x370/0x371, LuxPower capacity and cycles) and were checked only on the bench capture of a Seplos V2 bank talking to a Deye. Cell voltages and per-pack data stay on the inter-pack maps (seplos_bms_v3_rtu_tap, seplos_bms_v2); field names match them.
+
+| CAN id | Bits (start+length, order) | Name | Description | Type | Scale | Unit |
+|---|---|---|---|---|---|---|
+| 0x305 | 0+64 little | `inverter_keepalive` | Inverter keepalive (0x305) | uint64 | 1 | — |
+| 0x351 | 0+16 little | `charge_voltage_limit` | Charge voltage limit (CVL) | uint16 | 10 | V |
+| 0x351 | 16+16 little | `charge_current_limit` | Charge current limit (CCL) | int16 | 10 | A |
+| 0x351 | 32+16 little | `discharge_current_limit` | Discharge current limit (DCL) | int16 | 10 | A |
+| 0x351 | 48+16 little | `discharge_voltage_limit` | Discharge voltage limit (DVL) | uint16 | 10 | V |
+| 0x355 | 0+16 little | `soc` | State of charge | uint16 | 1 | % |
+| 0x355 | 16+16 little | `soh` | State of health | uint16 | 1 | % |
+| 0x356 | 0+16 little | `pack_voltage` | Battery voltage | int16 | 100 | V |
+| 0x356 | 16+16 little | `battery_current` | Battery current (+ charging) | int16 | 10 | A |
+| 0x356 | 32+16 little | `battery_temperature` | Battery temperature | int16 | 10 | °C |
+| 0x359 | 0+16 little | `protection_flags` | Protection (0x359 bytes 0-1) | uint16 | 1 | — |
+| 0x359 | 16+16 little | `alarm_flags` | Warnings (0x359 bytes 2-3) | uint16 | 1 | — |
+| 0x359 | 32+8 little | `module_count` | Modules in parallel | uint16 | 1 | — |
+| 0x359 | 40+16 little | `total_capacity` | Battery capacity | uint16 | 1 | Ah |
+| 0x359 | 56+8 little | `online_packs` | Packs online (DIP addresses) | uint16 | 1 | — |
+| 0x35C | 3+1 little | `full_charge_request` | Full charge request | uint16 | 1 | — |
+| 0x35C | 4+1 little | `force_charge_2` | Force charge request II | uint16 | 1 | — |
+| 0x35C | 5+1 little | `force_charge_1` | Force charge request I | uint16 | 1 | — |
+| 0x35C | 6+1 little | `discharge_enable` | Discharge enable | uint16 | 1 | — |
+| 0x35C | 7+1 little | `charge_enable` | Charge enable | uint16 | 1 | — |
+| 0x35C | 16+16 little | `cycles` | Cycle count | uint16 | 1 | — |
+| 0x35E | 0+64 little | `manufacturer` | Manufacturer | string:4 | 1 | — |
+| 0x370 | 0+16 little | `max_cell_temp` | Highest cell temperature | int16 | 10 | °C |
+| 0x370 | 16+16 little | `min_cell_temp` | Lowest cell temperature | int16 | 10 | °C |
+| 0x370 | 32+16 little | `max_cell_voltage` | Highest cell voltage | uint16 | 1000 | V |
+| 0x370 | 48+16 little | `min_cell_voltage` | Lowest cell voltage | uint16 | 1000 | V |
+| 0x371 | 0+16 little | `max_cell_temp_id` | Highest-temperature cell (id) | int16 | 1 | — |
+| 0x371 | 16+16 little | `min_cell_temp_id` | Lowest-temperature cell (id) | int16 | 1 | — |
+| 0x371 | 32+16 little | `max_cell_voltage_id` | Highest-voltage cell (id) | int16 | 1 | — |
+| 0x371 | 48+16 little | `min_cell_voltage_id` | Lowest-voltage cell (id) | int16 | 1 | — |
 
 ## Samsung MIM-B19N Modbus interface (DVM / EHS)
 
@@ -723,9 +1004,9 @@ The URL carries no ${unit_id}: an installation is one thing, so this group holds
 | Address (dec / hex) | Name | Description | Type | Scale | Unit | Poll |
 |---|---|---|---|---|---|---|
 | 1 / 0x0001 | `average_soc` | State of charge (avg) | float | 1 | % | normal |
-| 2 / 0x0002 | `total_power` | Total power | float | 1 | W | normal |
+| 2 / 0x0002 | `total_power` | Total power (− charging) | float | 1 | W | normal |
 | 3 / 0x0003 | `total_voltage` | Bank voltage (avg) | float | 1 | V | normal |
-| 4 / 0x0004 | `total_current` | Total current | float | 1 | A | normal |
+| 4 / 0x0004 | `total_current` | Total current (+ charging) | float | 1 | A | normal |
 | 5 / 0x0005 | `status` | Status | uint16 | 1 | — | normal |
 | 6 / 0x0006 | `energy_remaining` | Energy remaining | float | 0.001 | Wh | normal |
 | 7 / 0x0007 | `energy_to_full` | Energy to full | float | 0.001 | Wh | normal |
@@ -791,7 +1072,7 @@ The URL carries no ${unit_id}: an installation is one thing, so this group holds
 | 28 / 0x001C | `cell_temp_2` | Cell Temp 2 | float | 1 | °C | normal |
 | 29 / 0x001D | `cell_temp_3` | Cell Temp 3 | float | 1 | °C | normal |
 | 30 / 0x001E | `cell_temp_4` | Cell Temp 4 | float | 1 | °C | normal |
-| 31 / 0x001F | `current` | Current | float | 1 | A | normal |
+| 31 / 0x001F | `current` | Current (+ charging) | float | 1 | A | normal |
 | 32 / 0x0020 | `cycles` | Cycles | float | 1 | cycles | normal |
 | 33 / 0x0021 | `failure_count` | Failure Count | float | 1 | — | normal |
 | 34 / 0x0022 | `max_cell_temp` | Max Cell Temp | float | 1 | °C | normal |
@@ -802,7 +1083,7 @@ The URL carries no ${unit_id}: an installation is one thing, so this group holds
 | 39 / 0x0027 | `min_cell_voltage` | Min Cell Voltage | float | 1 | V | normal |
 | 40 / 0x0028 | `mosfet_temp` | MOSFET Temp | float | 1 | °C | normal |
 | 41 / 0x0029 | `pack_voltage` | Pack Voltage | float | 1 | V | normal |
-| 42 / 0x002A | `power` | Power | float | 1 | W | normal |
+| 42 / 0x002A | `power` | Power (− charging) | float | 1 | W | normal |
 | 43 / 0x002B | `protection_count` | Protection Count | float | 1 | — | normal |
 | 44 / 0x002C | `remaining_capacity` | Remaining Capacity | float | 1 | Ah | normal |
 | 45 / 0x002D | `soc` | SOC | float | 1 | % | normal |
@@ -819,6 +1100,181 @@ The URL carries no ${unit_id}: an installation is one thing, so this group holds
 | 56 / 0x0038 | `state` | Collector availability | uint16 | 1 | — | normal |
 | 57 / 0x0039 | `balancing_cells` | Balancing cells | string:8 | 1 | — | normal |
 | 58 / 0x003A | `last_update` | Last BMS frame | string:8 | 1 | — | normal |
+
+## Seplos BMS V2 pack (ASCII protocol, read-only)
+
+**id** `seplos_bms_v2` · **vendor** Seplos · **model** BMS V2 · **version** 0.1.0 · **registers** 107
+
+- **Transport:** Seplos V2 ASCII protocol (read-only; poll or listen) — rows read the driver's fixed virtual input map · byte order **big-endian, high word first (ABCD)**
+
+> One Seplos V2 battery pack read over its RS485 ASCII protocol (CID1 0x46), protocol seplos_v2 (a serial port on this host) or seplos_v2-tcp (a serial bridge's raw TCP port). READ-ONLY: the driver only encodes the read commands 0x42 (telemetry), 0x44 (alarms) and 0x51 (identity); nothing on the pack can be changed. NOT YET VERIFIED ON HARDWARE — built from the published V2.0 protocol; the bench confirms or corrects it. Set unit_id to the pack address (ADR, the pack's DIP switch). connection.mode: poll (the gateway is the master and asks this pack) or listen (passive: it decodes a master pack's exchanges and never transmits). NEVER POLL A BUS WHERE A MASTER PACK ALREADY POLLS (the inter-pack bus of a multi-pack bank): listen there. Rows read the driver's fixed virtual map (docs/seplos-v2.md), so one template serves 15- and 16-cell packs; a value the pack does not report stays absent. Field names follow seplos_bms_v3_rtu_tap wherever the meaning is the same, so dashboards carry over.
+
+| Address (dec / hex) | Name | Description | Type | Scale | Unit | Poll |
+|---|---|---|---|---|---|---|
+| 0 / 0x0000 | `cell_1` | Cell 1 | uint16 | 1000 | V | realtime |
+| 1 / 0x0001 | `cell_2` | Cell 2 | uint16 | 1000 | V | realtime |
+| 2 / 0x0002 | `cell_3` | Cell 3 | uint16 | 1000 | V | realtime |
+| 3 / 0x0003 | `cell_4` | Cell 4 | uint16 | 1000 | V | realtime |
+| 4 / 0x0004 | `cell_5` | Cell 5 | uint16 | 1000 | V | realtime |
+| 5 / 0x0005 | `cell_6` | Cell 6 | uint16 | 1000 | V | realtime |
+| 6 / 0x0006 | `cell_7` | Cell 7 | uint16 | 1000 | V | realtime |
+| 7 / 0x0007 | `cell_8` | Cell 8 | uint16 | 1000 | V | realtime |
+| 8 / 0x0008 | `cell_9` | Cell 9 | uint16 | 1000 | V | realtime |
+| 9 / 0x0009 | `cell_10` | Cell 10 | uint16 | 1000 | V | realtime |
+| 10 / 0x000A | `cell_11` | Cell 11 | uint16 | 1000 | V | realtime |
+| 11 / 0x000B | `cell_12` | Cell 12 | uint16 | 1000 | V | realtime |
+| 12 / 0x000C | `cell_13` | Cell 13 | uint16 | 1000 | V | realtime |
+| 13 / 0x000D | `cell_14` | Cell 14 | uint16 | 1000 | V | realtime |
+| 14 / 0x000E | `cell_15` | Cell 15 | uint16 | 1000 | V | realtime |
+| 15 / 0x000F | `cell_16` | Cell 16 | uint16 | 1000 | V | realtime |
+| 32 / 0x0020 | `cell_count` | Cell Count | uint16 | 1 | — | realtime |
+| 33 / 0x0021 | `temp_sensor_count` | Temperature Sensor Count | uint16 | 1 | — | realtime |
+| 34 / 0x0022 | `cell_temp_1` | Cell Temp 1 | int16 | 10 | °C | realtime |
+| 35 / 0x0023 | `cell_temp_2` | Cell Temp 2 | int16 | 10 | °C | realtime |
+| 36 / 0x0024 | `cell_temp_3` | Cell Temp 3 | int16 | 10 | °C | realtime |
+| 37 / 0x0025 | `cell_temp_4` | Cell Temp 4 | int16 | 10 | °C | realtime |
+| 48 / 0x0030 | `current` | Current (+ charging) | int16 | 100 | A | realtime |
+| 49 / 0x0031 | `pack_voltage` | Pack Voltage | uint16 | 100 | V | realtime |
+| 50 / 0x0032 | `remaining_capacity` | Remaining Capacity | uint16 | 100 | Ah | realtime |
+| 51 / 0x0033 | `total_capacity` | Total Capacity | uint16 | 100 | Ah | realtime |
+| 52 / 0x0034 | `soc` | State of Charge | uint16 | 10 | % | realtime |
+| 53 / 0x0035 | `rated_capacity` | Rated Capacity | uint16 | 100 | Ah | realtime |
+| 54 / 0x0036 | `cycles` | Cycles | uint16 | 1 | cycles | realtime |
+| 55 / 0x0037 | `soh` | State of Health | uint16 | 10 | % | realtime |
+| 56 / 0x0038 | `port_voltage` | Port Voltage | uint16 | 100 | V | realtime |
+| 64 / 0x0040 | `max_cell_voltage` | Max Cell Voltage | uint16 | 1000 | V | realtime |
+| 65 / 0x0041 | `min_cell_voltage` | Min Cell Voltage | uint16 | 1000 | V | realtime |
+| 66 / 0x0042 | `average_cell_voltage` | Average Cell Voltage | uint16 | 1000 | V | realtime |
+| 68 / 0x0044 | `max_cell_temp` | Max Cell Temp | int16 | 10 | °C | realtime |
+| 69 / 0x0045 | `min_cell_temp` | Min Cell Temp | int16 | 10 | °C | realtime |
+| 70 / 0x0046 | `average_cell_temp` | Average Cell Temp | int16 | 10 | °C | realtime |
+| 71 / 0x0047 | `ambient_temp` | Ambient Temp | int16 | 10 | °C | realtime |
+| 72 / 0x0048 | `mosfet_temp` | MOSFET Temp | int16 | 10 | °C | realtime |
+| 73 / 0x0049 | `max_cell_number` | Cell with the Max Voltage | uint16 | 1 | — | realtime |
+| 74 / 0x004A | `min_cell_number` | Cell with the Min Voltage | uint16 | 1 | — | realtime |
+| 308 / 0x0134 | `alarm_event_1` | Alarm Event 1 | uint16 | 1 | — | normal |
+| 309 / 0x0135 | `alarm_event_2` | Alarm Event 2 | uint16 | 1 | — | normal |
+| 310 / 0x0136 | `alarm_event_3` | Alarm Event 3 | uint16 | 1 | — | normal |
+| 311 / 0x0137 | `alarm_event_4` | Alarm Event 4 | uint16 | 1 | — | normal |
+| 312 / 0x0138 | `alarm_event_5` | Alarm Event 5 | uint16 | 1 | — | normal |
+| 313 / 0x0139 | `alarm_event_6` | Alarm Event 6 | uint16 | 1 | — | normal |
+| 314 / 0x013A | `switch_state` | Switch State | uint16 | 1 | — | normal |
+| 317 / 0x013D | `status` | Status | uint16 | 1 | — | normal |
+| 320 / 0x0140 | `alarm_event_7` | Alarm Event 7 | uint16 | 1 | — | normal |
+| 321 / 0x0141 | `alarm_event_8` | Alarm Event 8 | uint16 | 1 | — | normal |
+| 352 / 0x0160 | `failure_voltage_sensor` | Failure Voltage Sensor | uint16 | 1 | — | normal |
+| 353 / 0x0161 | `failure_ntc` | Failure NTC | uint16 | 1 | — | normal |
+| 354 / 0x0162 | `failure_current_sensor` | Failure Current Sensor | uint16 | 1 | — | normal |
+| 355 / 0x0163 | `failure_key_switch` | Failure Key Switch | uint16 | 1 | — | normal |
+| 356 / 0x0164 | `failure_cell_diff` | Failure Cell Diff | uint16 | 1 | — | normal |
+| 357 / 0x0165 | `failure_charge_mosfet` | Failure Chg MOSFET | uint16 | 1 | — | normal |
+| 358 / 0x0166 | `failure_discharge_mosfet` | Failure Dis MOSFET | uint16 | 1 | — | normal |
+| 359 / 0x0167 | `failure_current_limit` | Failure Current Limit Switch | uint16 | 1 | — | normal |
+| 360 / 0x0168 | `alarm_cell_high_v` | Cell High V | uint16 | 1 | — | normal |
+| 361 / 0x0169 | `alarm_cell_overvolt_prot` | Cell Overvolt Prot | uint16 | 1 | — | normal |
+| 362 / 0x016A | `alarm_cell_low_v` | Cell Low V | uint16 | 1 | — | normal |
+| 363 / 0x016B | `alarm_cell_undervolt_prot` | Cell Undervolt Prot | uint16 | 1 | — | normal |
+| 364 / 0x016C | `alarm_pack_high_v` | Pack High V | uint16 | 1 | — | normal |
+| 365 / 0x016D | `alarm_pack_overvolt_prot` | Pack Overvolt Prot | uint16 | 1 | — | normal |
+| 366 / 0x016E | `alarm_pack_low_v` | Pack Low V | uint16 | 1 | — | normal |
+| 367 / 0x016F | `alarm_pack_undervolt_prot` | Pack Undervolt Prot | uint16 | 1 | — | normal |
+| 368 / 0x0170 | `alarm_charge_high_temp` | Charge High Temp | uint16 | 1 | — | normal |
+| 369 / 0x0171 | `alarm_charge_overtemp_prot` | Charge Overtemp Prot | uint16 | 1 | — | normal |
+| 370 / 0x0172 | `alarm_charge_low_temp` | Charge Low Temp | uint16 | 1 | — | normal |
+| 371 / 0x0173 | `alarm_charge_undertemp_prot` | Charge Undertemp Prot | uint16 | 1 | — | normal |
+| 372 / 0x0174 | `alarm_discharge_high_temp` | Discharge High Temp | uint16 | 1 | — | normal |
+| 373 / 0x0175 | `alarm_discharge_overtemp_prot` | Discharge Overtemp Prot | uint16 | 1 | — | normal |
+| 374 / 0x0176 | `alarm_discharge_low_temp` | Discharge Low Temp | uint16 | 1 | — | normal |
+| 375 / 0x0177 | `alarm_discharge_undertemp_prot` | Discharge Undertemp Prot | uint16 | 1 | — | normal |
+| 376 / 0x0178 | `alarm_ambient_high_temp` | Ambient High Temp | uint16 | 1 | — | normal |
+| 377 / 0x0179 | `alarm_ambient_overtemp_prot` | Ambient Overtemp Prot | uint16 | 1 | — | normal |
+| 378 / 0x017A | `alarm_ambient_low_temp` | Ambient Low Temp | uint16 | 1 | — | normal |
+| 379 / 0x017B | `alarm_ambient_undertemp_prot` | Ambient Undertemp Prot | uint16 | 1 | — | normal |
+| 380 / 0x017C | `alarm_mosfet_overtemp_prot` | MOSFET Overtemp Prot | uint16 | 1 | — | normal |
+| 381 / 0x017D | `alarm_mosfet_high_temp` | MOSFET High Temp | uint16 | 1 | — | normal |
+| 382 / 0x017E | `heating_active` | Low-temperature Heating | uint16 | 1 | — | normal |
+| 384 / 0x0180 | `alarm_charge_current` | Charge Overcurrent Alarm | uint16 | 1 | — | normal |
+| 385 / 0x0181 | `alarm_charge_overcurrent_prot` | Charge Overcurrent Prot | uint16 | 1 | — | normal |
+| 386 / 0x0182 | `alarm_discharge_current` | Discharge Overcurrent Alarm | uint16 | 1 | — | normal |
+| 387 / 0x0183 | `alarm_discharge_overcurrent_prot` | Discharge Overcurrent Prot | uint16 | 1 | — | normal |
+| 388 / 0x0184 | `alarm_transient_overcurrent_prot` | Transient Overcurrent Prot | uint16 | 1 | — | normal |
+| 389 / 0x0185 | `alarm_short_circuit_prot` | Short Circuit Prot | uint16 | 1 | — | normal |
+| 394 / 0x018A | `alarm_soc_low` | SOC Low | uint16 | 1 | — | normal |
+| 395 / 0x018B | `alarm_soc_prot` | SOC Prot | uint16 | 1 | — | normal |
+| 400 / 0x0190 | `fet_discharge` | FET Discharge | uint16 | 1 | — | normal |
+| 401 / 0x0191 | `fet_charge` | FET Charge | uint16 | 1 | — | normal |
+| 402 / 0x0192 | `fet_current_limit` | FET Current Limit | uint16 | 1 | — | normal |
+| 403 / 0x0193 | `fet_heater` | FET Heater | uint16 | 1 | — | normal |
+| 480 / 0x01E0 | `balancing_bits` | Balancing Mask | uint16 | 1 | — | normal |
+| 481 / 0x01E1 | `disconnection_bits` | Cell Disconnection Mask | uint16 | 1 | — | normal |
+| 482 / 0x01E2 | `alarm_cell_undervolt` | Cell Undervolt Mask | uint16 | 1 | — | normal |
+| 483 / 0x01E3 | `alarm_cell_overvolt` | Cell Overvolt Mask | uint16 | 1 | — | normal |
+| 484 / 0x01E4 | `alarm_cell_temp` | Temperature Alarm Mask | uint16 | 1 | — | normal |
+| 485 / 0x01E5 | `alarm_layout_uncertain` | Alarm Layout Uncertain | uint16 | 1 | — | normal |
+| 512 / 0x0200 | `device_name` | Device Name | string:5 | 1 | — | slow |
+| 517 / 0x0205 | `software_version` | Software Version | uint16 | 1 | — | slow |
+| 518 / 0x0206 | `manufacturer` | Manufacturer | string:10 | 1 | — | slow |
+| 3840 / 0x0F00 | `response_ms` | Response Time | uint16 | 1 | ms | realtime |
+| 3841 / 0x0F01 | `checksum_errors` | Checksum Errors | uint16 | 1 | — | realtime |
+| 3842 / 0x0F02 | `timeouts` | Timeouts | uint16 | 1 | — | realtime |
+| 3843 / 0x0F03 | `rtn_errors` | Error Answers (RTN) | uint16 | 1 | — | realtime |
+
+**Derived measurements** — computed from the registers above and seeded into every device made from this template, so each unit publishes them identically.
+
+| Name | MQTT topic | Formula | Decoded |
+|---|---|---|---|
+| `power` | `power` | `0 - current * pack_voltage` | — |
+| `cell_delta` | `cell_delta` | `(max_cell_voltage - min_cell_voltage) * 1000` | — |
+| `balancing_count` | `balancing_count` | `popcount(balancing_bits)` | — |
+| `alarm_count` | `alarm_count` | `alarm_cell_high_v + alarm_cell_overvolt_prot + alarm_cell_low_v + alarm_cell_undervolt_prot + alarm_pack_high_v + alarm_pack_overvolt_prot + alarm_pack_low_v + alarm_pack_undervolt_prot + alarm_charge_high_temp + alarm_charge_overtemp_prot + alarm_charge_low_temp + alarm_charge_undertemp_prot + alarm_discharge_high_temp + alarm_discharge_overtemp_prot + alarm_discharge_low_temp + alarm_discharge_undertemp_prot + alarm_ambient_high_temp + alarm_ambient_overtemp_prot + alarm_mosfet_high_temp + alarm_mosfet_overtemp_prot + alarm_charge_current + alarm_charge_overcurrent_prot + alarm_discharge_current + alarm_discharge_overcurrent_prot + alarm_short_circuit_prot + alarm_soc_low` | — |
+| `warning_count` | `warning_count` | `alarm_cell_high_v + alarm_cell_low_v + alarm_pack_high_v + alarm_pack_low_v + alarm_charge_high_temp + alarm_charge_low_temp + alarm_discharge_high_temp + alarm_discharge_low_temp + alarm_ambient_high_temp + alarm_mosfet_high_temp + alarm_charge_current + alarm_discharge_current + alarm_soc_low` | — |
+| `protection_count` | `protection_count` | `alarm_cell_overvolt_prot + alarm_cell_undervolt_prot + alarm_pack_overvolt_prot + alarm_pack_undervolt_prot + alarm_charge_overtemp_prot + alarm_charge_undertemp_prot + alarm_discharge_overtemp_prot + alarm_discharge_undertemp_prot + alarm_ambient_overtemp_prot + alarm_mosfet_overtemp_prot + alarm_charge_overcurrent_prot + alarm_discharge_overcurrent_prot + alarm_short_circuit_prot + alarm_soc_prot + alarm_transient_overcurrent_prot` | — |
+| `failure_count` | `failure_count` | `failure_voltage_sensor + failure_ntc + failure_current_sensor + failure_key_switch + failure_cell_diff + failure_charge_mosfet + failure_discharge_mosfet + failure_current_limit` | — |
+| `energy_remaining` | `energy_remaining` | `remaining_capacity * pack_voltage` | — |
+| `energy_to_full` | `energy_to_full` | `(total_capacity - remaining_capacity) * pack_voltage` | — |
+
+## Seplos BMS V2 pack (inter-pack tap, listen-only)
+
+**id** `seplos_bms_v2_tap` · **vendor** Seplos · **model** BMS V2 · **version** 0.1.0 · **registers** 22
+
+- **Transport:** Seplos V2 ASCII protocol (read-only; **listen only** (the inter-pack tap)) — rows read the driver's fixed virtual input map · byte order **big-endian, high word first (ABCD)**
+- **Source / provenance:** No published layout for CID2 0x5A: the Seplos 'BMS communication protocol V2.0' covers 0x42/0x44/0x47/0x51, and no community decoder handled 0x5A (searched 2026-10-26). Layout from the passive capture tests/fixtures/seplos_v2/ttySC0-interpack-20261026.capture (mbg-bench, listen-only), cross-checked with the CAN 0x355/0x356/0x370 frames of the same bank.
+
+> One Seplos V2 slave pack of a parallel bank, HEARD on the inter-pack RS485 bus, where the master pack asks each slave for a summary (CID2 0x5A) about once a second. protocol seplos_v2 (a serial port here) or seplos_v2-tcp (a bridge's raw TCP port) with connection.mode listen: the template refuses poll, and the gateway never transmits on that bus. Set unit_id to the pack's ADR (1, 2, ...). The master pack is not on this bus: read it from the CAN link with pylontech_can_inverter. The 0x5A layout is in no published document: it was read off a bench capture (3 x 280 Ah packs, 2026-10-26) and checked against the CAN link of the same bank; each row's description says verified or ASSUMED. The summary carries no per-cell voltages, no cycles and no alarms. Names are the canonical battery names (docs/canonical-fields.md).
+
+| Address (dec / hex) | Name | Description | Type | Scale | Unit | Poll |
+|---|---|---|---|---|---|---|
+| 1024 / 0x0400 | `summary_head` | Summary word 0 | uint16 | 1 | — | tap |
+| 1025 / 0x0401 | `max_cell_voltage` | Highest cell | uint16 | 1000 | V | tap |
+| 1026 / 0x0402 | `min_cell_voltage` | Lowest cell | uint16 | 1000 | V | tap |
+| 1028 / 0x0404 | `temp_max` | Highest temperature | int16 | 10 | °C | tap |
+| 1029 / 0x0405 | `temp_min` | Lowest temperature | int16 | 10 | °C | tap |
+| 1030 / 0x0406 | `battery_current` | Current (+ charging) | int16 | 100 | A | tap |
+| 1031 / 0x0407 | `pack_voltage` | Pack voltage | uint16 | 100 | V | tap |
+| 1032 / 0x0408 | `remaining_capacity` | Remaining capacity | uint16 | 100 | Ah | tap |
+| 1033 / 0x0409 | `total_capacity` | Full capacity | uint16 | 100 | Ah | tap |
+| 1034 / 0x040A | `soc` | State of charge | uint16 | 10 | % | tap |
+| 1035 / 0x040B | `port_voltage` | Port voltage | uint16 | 100 | V | tap |
+| 1051 / 0x041B | `summary_word_11` | Summary word 11 | uint16 | 1 | — | tap |
+| 1052 / 0x041C | `summary_word_12` | Summary word 12 | uint16 | 1 | — | tap |
+| 1053 / 0x041D | `summary_word_13` | Summary word 13 | uint16 | 1 | — | tap |
+| 1054 / 0x041E | `summary_word_14` | Summary word 14 | uint16 | 1 | — | tap |
+| 1055 / 0x041F | `summary_word_15` | Summary word 15 | uint16 | 1 | — | tap |
+| 1087 / 0x043F | `summary_length` | Summary length | uint16 | 1 | B | tap |
+| 3840 / 0x0F00 | `response_ms` | Response time | uint16 | 1 | ms | tap |
+| 3841 / 0x0F01 | `checksum_errors` | Checksum errors | uint16 | 1 | — | tap |
+| 3843 / 0x0F03 | `rtn_errors` | Error answers | uint16 | 1 | — | tap |
+| 3845 / 0x0F05 | `good_answers` | Good answers | uint16 | 1 | — | tap |
+| 3846 / 0x0F06 | `decode_errors` | Undecodable answers | uint16 | 1 | — | tap |
+
+**Derived measurements** — computed from the registers above and seeded into every device made from this template, so each unit publishes them identically.
+
+| Name | MQTT topic | Formula | Decoded |
+|---|---|---|---|
+| `battery_power` | `battery_power` | `battery_current * pack_voltage` | — |
+| `cell_delta` | `cell_delta` | `max(0, (max_cell_voltage - min_cell_voltage) * 1000)` | — |
+| `energy_remaining` | `energy_remaining` | `remaining_capacity * pack_voltage` | — |
+| `energy_to_full` | `energy_to_full` | `(total_capacity - remaining_capacity) * pack_voltage` | — |
 
 ## Seplos BMS V3 pack (RTU tap, listen-only)
 

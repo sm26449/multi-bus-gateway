@@ -1,5 +1,5 @@
 # Multi-Bus Gateway — multi-protocol Modbus/HTTP/MQTT acquisition gateway.
-# Copyright (C) 2024-2026 Stefan Maldaianu <sm26449@diysolar.ro>  — AGPL-3.0-or-later
+# Copyright (C) 2024-2026 Stefan Maldaianu <stefan@multibus.dev>  — AGPL-3.0-or-later
 """Asset attributes over the API (docs/attributes.md).
 
 Reading is open to every role; coordinates are coarse for anyone who may not
@@ -100,9 +100,20 @@ def build(ctx) -> APIRouter:
 
     @r.put("/api/attributes/settings")
     def attributes_settings(request: Request, payload: Dict[str, Any] = Body(...)):
+        """``{location_publish?, publish_serials?}`` — at least one."""
         _writable(request)
-        rev = _call(_svc().set_publish_mode, str(payload.get('location_publish', '')),
-                    who=_who(request), ip=_ip(request), expected_rev=_rev(request))
+        if not isinstance(payload, dict) or not ({'location_publish', 'publish_serials'} & set(payload)):
+            raise HTTPException(status_code=422, detail={"errors": [
+                "send location_publish (off, coarse, exact) and/or publish_serials (true, false)"]})
+        if 'publish_serials' in payload and not isinstance(payload['publish_serials'], bool):
+            raise HTTPException(status_code=422, detail={"errors": ["publish_serials: true or false"]})
+        rev = None
+        if 'location_publish' in payload:
+            rev = _call(_svc().set_publish_mode, str(payload.get('location_publish', '')),
+                        who=_who(request), ip=_ip(request), expected_rev=_rev(request))
+        if 'publish_serials' in payload:
+            rev = _call(_svc().set_publish_serials, payload['publish_serials'],
+                        who=_who(request), ip=_ip(request), expected_rev=None if rev else _rev(request))
         return {"status": "saved", "rev": rev}
 
     @r.put("/api/attributes/site/{category}")

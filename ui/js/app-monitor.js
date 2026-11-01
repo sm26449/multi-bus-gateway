@@ -1,5 +1,5 @@
 /* Multi-Bus Gateway — multi-protocol Modbus/HTTP/MQTT acquisition gateway.
- * Copyright (C) 2024-2026 Stefan Maldaianu <sm26449@diysolar.ro>
+ * Copyright (C) 2024-2026 Stefan Maldaianu <stefan@multibus.dev>
  * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 // monitor domain — augments JanitzaMonitor.prototype
@@ -101,36 +101,11 @@ Object.assign(JanitzaMonitor.prototype, {
 
         // Use only selected registers (the ones being polled by Modbus)
         // Group them by category — for the viewing device.
-        const categories = new Map();
-
-        this._monRegList().concat(this._monCalcRegs()).forEach(reg => {
-            // Derive category from influxdb_measurement or unit
-            let cat = (reg.influxdb_measurement || '').toLowerCase();
-            if (!cat) {
-                const unit = (reg.unit || '').toLowerCase();
-                if (unit === 'v') cat = 'voltage';
-                else if (unit === 'a') cat = 'current';
-                else if (unit === 'w' || unit === 'kw') cat = 'power';
-                else if (unit === 'wh' || unit === 'kwh') cat = 'energy';
-                else if (unit === 'hz') cat = 'frequency';
-                else if (unit === 'var' || unit === 'kvar') cat = 'reactive';
-                else if (unit === 'va' || unit === 'kva') cat = 'apparent';
-                else cat = 'other';
-            }
-
-            if (!categories.has(cat)) {
-                categories.set(cat, []);
-            }
-            categories.get(cat).push(reg);
-        });
+        const categories = this._monGroups(this._monRegList().concat(this._monCalcRegs()));
 
         let html = '';
 
-        // Sort categories alphabetically
-        const sortedCats = Array.from(categories.keys()).sort();
-
-        for (const catName of sortedCats) {
-            const items = categories.get(catName);
+        for (const { id: catName, name: displayName, regs: items } of categories) {
 
             // Filter by search
             const filteredItems = items.filter(item => {
@@ -141,10 +116,9 @@ Object.assign(JanitzaMonitor.prototype, {
 
             if (filteredItems.length === 0) continue;
 
-            const displayName = catName.charAt(0).toUpperCase() + catName.slice(1);
             html += `
                 <div class="monitor-category expanded" data-category="${this._esc(catName)}">
-                    <div class="monitor-category-header">
+                    <div class="monitor-category-header" role="button" tabindex="0" aria-expanded="true">
                         <span class="arrow">&#9654;</span>
                         <span>${this._esc(displayName)}</span>
                         <span style="margin-left: auto; color: var(--text-tertiary);">(${filteredItems.length})</span>
@@ -192,8 +166,13 @@ Object.assign(JanitzaMonitor.prototype, {
 
         // Setup category toggle
         container.querySelectorAll('.monitor-category-header').forEach(header => {
-            header.addEventListener('click', () => {
-                header.parentElement.classList.toggle('expanded');
+            const toggle = () => {
+                const open = header.parentElement.classList.toggle('expanded');
+                header.setAttribute('aria-expanded', String(open));
+            };
+            header.addEventListener('click', toggle);
+            header.addEventListener('keydown', e => {
+                if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle(); }
             });
         });
 
@@ -1037,6 +1016,27 @@ Object.assign(JanitzaMonitor.prototype, {
     // Monitor data source: the viewing device's registers + live values. For
     // the primary this is the WS-fed global cache (unchanged); for another
     // device it is a polled snapshot.
+    // the value list's groups: the category the server gives each value (its
+    // canonical name, else its template's filing — as the device page and
+    // the dashboard group them); what it leaves as "other" is grouped by its
+    // InfluxDB measurement (a meter's power factor, THD), else by its unit.
+    // Named the one way categories are named; A→Z by that name, "Other" last
+    _monGroups(regs) {
+        const byId = new Map();
+        regs.forEach(reg => {
+            const cat = String(reg.category || '').toLowerCase();
+            const id = (cat && cat !== 'other') ? cat
+                : String(reg.influxdb_measurement || '').toLowerCase() || cat || this._histCategory(reg);
+            if (!byId.has(id)) byId.set(id, { id, label: '', regs: [] });
+            const g = byId.get(id);
+            if (!g.label && reg.category_label && id === cat) g.label = reg.category_label;
+            g.regs.push(reg);
+        });
+        const loc = this._loc ? this._loc() : undefined;
+        return [...byId.values()]
+            .map(g => ({ id: g.id, name: this._catName(g.id, g.label), regs: g.regs }))
+            .sort((a, b) => (a.id === 'other') - (b.id === 'other') || a.name.localeCompare(b.name, loc));
+    },
     _monRegList() {
         return (this._viewDeviceId() === this._primaryDeviceId())
             ? (this.selectedRegisters || []) : (this._monRegs || []);

@@ -1,5 +1,5 @@
 # Multi-Bus Gateway — multi-protocol Modbus/HTTP/MQTT acquisition gateway.
-# Copyright (C) 2024-2026 Stefan Maldaianu <sm26449@diysolar.ro>  — AGPL-3.0-or-later
+# Copyright (C) 2024-2026 Stefan Maldaianu <stefan@multibus.dev>  — AGPL-3.0-or-later
 """The rules runtime — wires the pure engine (multibus/rules.py) to the live
 store, the commands, MQTT, the event log and the alerts.
 
@@ -14,6 +14,8 @@ survive a restart (clamps, overrides) in ``rules_state.json``.
 """
 from __future__ import annotations
 
+import contextlib
+import itertools
 import json
 import math
 import logging
@@ -32,7 +34,7 @@ from . import clock, expressions, input_check
 from . import role as gateway_role
 from .arbiter import COMBINE, Candidate, ChannelState, beats
 from .commands import assign_channels, normalize_params, turns_on
-from .rules import (LAYERS, MANUAL, MAX_FORCE_S, NORMAL, STALE, TUNING_RULE_KEYS, TUNING_TIMING_KEYS, Decision,
+from .rules import (LAYERS, MANUAL, MAX_FORCE_S, NORMAL, PACE_KEYS, STALE, TUNING_RULE_KEYS, TUNING_TIMING_KEYS, Decision,
                     RuleDef, RuleState, parse_rule_def, tuning_errors, tuning_of, validate_rule_def)
 
 logger = logging.getLogger(__name__)
@@ -178,6 +180,9 @@ class RuleStore:
         tmp.replace(self.path)
 
 
+_MISS = object()
+
+
 class RulesRuntime:
     # every live runtime, for test teardown: a leaked background thread from
     # one test used to sweep ITS units while a later test ran (the 9162777
@@ -218,6 +223,13 @@ class RulesRuntime:
         self.errors: Dict[str, str] = {}               # rule id -> why it cannot run (bad binding)
         self.tick_errors: Dict[str, str] = {}          # rule id -> why its last evaluation failed
         self._lock = threading.RLock()
+        # one write sequence for every channel of the runtime (D2)
+        self._write_seq = itertools.count(1)
+        # rules_state.json is written by one save at a time, never an older
+        # snapshot over a newer one (RL-LOAD-R7). Order: _lock → _save_lock.
+        self._save_lock = threading.Lock()
+        self._save_seq = itertools.count(1)
+        self._saved_gen = 0
         self._stop = threading.Event()
         self._thread: Optional[threading.Thread] = None
         self.last_tick: Optional[float] = None
@@ -281,6 +293,11 @@ class RulesRuntime:
                     self.raw[rid] = raw
                     self.rules[rid] = rule
                     bind_err = self._bind(rule) if not errs else None
+                    if not errs and not bind_err and rule.mode == 'armed' and rule.enabled:
+                        # what the API refuses (Q5) but a file holds: loaded as
+                        # it is — a protection is never disarmed at boot — and said
+                        for msg in self.pace_conflicts(rule):
+                            logger.warning("rule %s: %s — loaded as it is", rid, msg)
                     if errs or bind_err:
                         self.errors[rid] = '; '.join(errs) if errs else bind_err
                         if errs:
@@ -401,20 +418,42 @@ class RulesRuntime:
             return {}
 
     def _save_state(self) -> None:
-        data = {}
-        for (rid, dev), st in self.states.items():
-            rec = {}
-            if st.clamp or st.paused_until:
-                rec = {'clamp': st.clamp, 'paused_until': st.paused_until}
-            if st.forced:
-                rec['forced'] = dict(st.forced)
-            if st.saved_counters():
-                rec['counters'] = st.saved_counters()
-            if rec:
-                data[f"{rid}:{dev}"] = rec
-        errors = self.__dict__.get('errors') or {}
-        store = self.__dict__.get('store')
-        unreadable = bool(store is not None and (store.load_error or store.missing))
+        # the data from a snapshot taken under the rules lock (the tick saves
+        # without it, while a delete pops states), written under _save_lock:
+        # a save never iterates a dict another thread changes, two saves never
+        # share the .tmp at once, and an older snapshot never lands over a
+        # newer one (RL-LOAD-R7). Order: _lock → _save_lock, never the reverse.
+        with self.__dict__.get('_lock') or contextlib.nullcontext():
+            gen = next(self.__dict__.setdefault('_save_seq', itertools.count(1)))
+            data = {}
+            for (rid, dev), st in list(self.states.items()):
+                rec = {}
+                if st.clamp or st.paused_until:
+                    rec = {'clamp': dict(st.clamp) if st.clamp else st.clamp, 'paused_until': st.paused_until}
+                if st.forced:
+                    rec['forced'] = dict(st.forced)
+                if st.saved_counters():
+                    rec['counters'] = st.saved_counters()
+                if rec:
+                    data[f"{rid}:{dev}"] = rec
+            live = set(self.states)
+            errors = dict(self.__dict__.get('errors') or {})
+            store = self.__dict__.get('store')
+            unreadable = bool(store is not None and (store.load_error or store.missing))
+            # the channels' protection (a motor's last start, its starts of the
+            # hour) outlives a restart too: ages, plus when they were taken
+            chans = dict(self.__dict__.get('channels') or {})
+            if chans:
+                now = self._mono()
+                data['_channels'] = {'saved_at': time.time(),
+                                     'channels': {f"{d}\t{c}": st.export_mirror(now) for (d, c), st in chans.items()}}
+        with self.__dict__.setdefault('_save_lock', threading.Lock()):
+            if gen < self.__dict__.get('_saved_gen', 0):
+                return                                # a newer snapshot is on disk already
+            self._saved_gen = gen
+            self._write_state(data, live, errors, unreadable)
+
+    def _write_state(self, data: Dict, live: set, errors: Dict, unreadable: bool) -> None:
         if errors or unreadable:
             # a rule in error has no state here (it is not evaluated): what was
             # saved for it — an operator clamp, a pause, its counters — waits
@@ -426,16 +465,9 @@ class RulesRuntime:
             for k, v in old.items():
                 # only for a unit with no live state: one that has a state
                 # said what it holds now (a force ended, a clamp cleared)
-                if k != '_channels' and k not in data and tuple(k.split(':', 1)) not in self.states \
+                if k != '_channels' and k not in data and tuple(k.split(':', 1)) not in live \
                         and (unreadable or k.split(':', 1)[0] in errors):
                     data[k] = v
-        # the channels' protection (a motor's last start, its starts of the
-        # hour) outlives a restart too: ages, plus when they were taken
-        chans = self.__dict__.get('channels') or {}
-        if chans:
-            now = self._mono()
-            data['_channels'] = {'saved_at': time.time(),
-                                 'channels': {f"{d}\t{c}": st.export_mirror(now) for (d, c), st in chans.items()}}
         try:
             # temp + fsync + replace — a crash mid-write used to leave a torn
             # file whose next load silently dropped every clamp/override
@@ -581,19 +613,96 @@ class RulesRuntime:
         definition — an alias resolved) for a command of a device."""
         cache = self.__dict__.setdefault('_chan_cache', {})
         key = (cfg.id, command)
-        if key not in cache:
-            cmds = self._commands_for(cfg) or []
-            defs = {c['def'].name: c['def'] for c in cmds}
-            if command not in defs:
-                cache[key] = None
-            else:
-                cid = assign_channels(defs)[command]
-                ccfg = dict(((cmds[0].get('channels') or {}) if cmds else {}).get(cid) or {})
-                d = defs[command]
-                if d.alias and d.alias.get('command') in defs:
-                    d = defs[d.alias['command']]
-                cache[key] = (cid, ccfg, d)
-        return cache[key]
+        got = cache.get(key, _MISS)
+        if got is not _MISS:
+            return got
+        cmds = self._commands_for(cfg) or []
+        defs = {c['def'].name: c['def'] for c in cmds}
+        if command not in defs:
+            got = None
+        else:
+            cid = assign_channels(defs)[command]
+            ccfg = dict(((cmds[0].get('channels') or {}) if cmds else {}).get(cid) or {})
+            d = defs[command]
+            if d.alias and d.alias.get('command') in defs:
+                d = defs[d.alias['command']]
+            got = (cid, ccfg, d)
+        # the value computed here is returned, not re-read from the cache: the
+        # API clears it from other threads (a binding saved), which raised
+        # KeyError between the store and the read (CR2-9)
+        cache[key] = got
+        return got
+
+    def _pace_of(self, cfg, command: str) -> Dict[str, float]:
+        """The channel's pace keys that are set (non-zero), from its
+        effective settings (the template's, a device's override)."""
+        ch = self._chan(cfg, command) if command else None
+        if ch is None:
+            return {}
+        out = {}
+        for k in PACE_KEYS:
+            try:
+                v = float(ch[1].get(k) or 0)
+            except (TypeError, ValueError):
+                v = 0.0
+            if v:
+                out[k] = v
+        return out
+
+    @staticmethod
+    def _fast_steps(rule: RuleDef) -> bool:
+        return rule.kind == 'steps' and any(s.fast for s in rule.steps)
+
+    def pace_conflicts(self, rule: RuleDef) -> List[str]:
+        """A `steps` rule with a `fast` step on a channel with a pace — what
+        the API refuses (ADR-0022, operator Q5): its emergency step passes the
+        pace, its other reasserts wait on it."""
+        if not self._fast_steps(rule):
+            return []
+        out = []
+        for c, _ in self._targets(rule):
+            ch = self._chan(c, rule.target.get('command'))
+            pace = self._pace_of(c, rule.target.get('command'))
+            if ch is not None and pace:
+                said = ', '.join(f"{k} {v:g}" for k, v in pace.items())
+                out.append(f"target: channel {ch[0]} of {c.id} has a pace ({said}) — a steps rule with a fast "
+                           f"step may not drive a paced channel (its emergency step would pass the pace, its "
+                           f"other reasserts wait on it): remove the pace from the device's channel, or `fast` "
+                           f"from the step")
+        return out
+
+    def armed_devices(self) -> Dict[str, set]:
+        """{rule id: the device ids it reads or writes} of every armed,
+        enabled rule that can run — what a bus scan must not slow down
+        unasked (L3.7). Reads are the `device.field` references of its
+        formulas; writes, its target's units."""
+        with self._lock:
+            live = [(rid, r, dict(self.raw.get(rid) or {})) for rid, r in self.rules.items()
+                    if r.mode == 'armed' and r.enabled and rid not in self.errors]
+            targets = {rid: {getattr(cfg, 'id', '') for cfg, _c in self._targets(r)} for rid, r, _raw in live}
+        out: Dict[str, set] = {}
+        for rid, r, raw in live:
+            devs = set(targets.get(rid) or ())
+            if (r.target or {}).get('device'):
+                devs.add(str(r.target['device']))
+            for key in _INPUT_KEYS:
+                expr = str(raw.get(key) or getattr(r, key, '') or '').strip()
+                if expr:
+                    devs |= {ref.split('.', 1)[0] for ref in input_check.refs_of(expr)}
+            out[rid] = {d for d in devs if d}
+        return out
+
+    def fast_rule_on(self, device_id: str, cid: str) -> Optional[str]:
+        """An armed, enabled `steps` rule with a `fast` step that drives
+        channel ``cid`` of the device — a pace may not be given to it (Q5)."""
+        for rid, rule in list(self.rules.items()):
+            if rule.mode != 'armed' or not rule.enabled or rid in self.errors or not self._fast_steps(rule):
+                continue
+            for c, _ in self._targets(rule):
+                ch = self._chan(c, rule.target.get('command')) if c.id == device_id else None
+                if ch is not None and ch[0] == cid:
+                    return rid
+        return None
 
     # ── to a partner gateway (high availability) ──
     def export_mirror(self) -> Dict[str, Any]:
@@ -693,11 +802,93 @@ class RulesRuntime:
         why = self._chan_state(cfg.id, cid).hold(ccfg, turns_on(cdef, dict(params or {})), self._mono())
         return f'{cid}: {why}' if why else None
 
-    def channel_note(self, cfg, command: str, params: Dict) -> None:
-        """A write went out on the channel — whoever sent it."""
+    def channel_hold_s(self, cfg, command: str, params: Dict) -> Optional[Tuple[str, float]]:
+        """channel_hold with the seconds until the channel opens (the
+        `retry_after_s` a controller is told, ADR-0018)."""
+        ch = self._chan(cfg, command)
+        if ch is None:
+            return None
+        cid, ccfg, cdef = ch
+        got = self._chan_state(cfg.id, cid).hold_s(ccfg, turns_on(cdef, dict(params or {})), self._mono())
+        return (f'{cid}: {got[0]}', got[1]) if got else None
+
+    def channel_reconcile(self, cfg, command: str, params: Dict) -> None:
+        """Nothing was written, the device already held it: an unknown
+        on/off is learnt, no start counted, no write stamped (CMD-Q-5)."""
         ch = self._chan(cfg, command)
         if ch is not None:
-            self._chan_state(cfg.id, ch[0]).note(turns_on(ch[2], dict(params or {})), self._mono())
+            c = self._chan_state(cfg.id, ch[0])
+            # the sequence moves only when the channel's state did (an on/off
+            # learnt): a no-op refresh must not make a rule's next reassert
+            # ask the hold, judged on its own earlier write (RC-4)
+            if c.reconcile(turns_on(ch[2], dict(params or {})), self._mono()):
+                c.seq = self._next_seq()
+
+    def channel_note(self, cfg, command: str, params: Dict, pace_only: bool = False) -> None:
+        """A write went out on the channel — whoever sent it. ``pace_only``:
+        a write that says nothing about on/off (a legacy raw lease revert on a
+        command's register, ADR-0022 D8) stamps the pace only."""
+        ch = self._chan(cfg, command)
+        if ch is not None:
+            c = self._chan_state(cfg.id, ch[0])
+            c.note(None if pace_only else turns_on(ch[2], dict(params or {})), self._mono())
+            c.seq = self._next_seq()
+
+    def _next_seq(self) -> int:
+        # runtime-wide (ADR-0021 D2): a channel replaced at load or by an HA
+        # import starts again at None, never at a number a job captured
+        return next(self.__dict__.setdefault('_write_seq', itertools.count(1)))
+
+    def _seq_of(self, cfg, command: str) -> Optional[int]:
+        """The channel's write sequence number now, or None (never stamped,
+        or no channel). Read without creating the channel's state."""
+        ch = self._chan(cfg, command)
+        c = (self.__dict__.get('channels') or {}).get((cfg.id, ch[0])) if ch is not None else None
+        return c.seq if c is not None else None
+
+    def _recheck_for(self, rule: RuleDef, cfg, want: Optional[Dict], urgent: bool,
+                     seq: Optional[int]) -> Callable[[], Optional[Tuple[str, str]]]:
+        """What the head of the bus asks for a rule's job (ADR-0021 D3), on
+        what the rules thread captured when it decided (D1) — never on the
+        live RuleState, which the next tick may already have changed."""
+        want = dict(want or {})
+        return lambda: self._recheck(rule, cfg, want, bool(urgent), seq)
+
+    def _recheck(self, rule: RuleDef, cfg, want: Dict, urgent: bool,
+                 seq: Optional[int]) -> Optional[Tuple[str, str]]:
+        """Under the bus lock, just before a rule's write: (dropped, why) or
+        None. Paused since the decision (any rule under safety, urgent
+        included: someone took the channel to set it — decided 2026-10-25);
+        the referee gave the channel to another rule; the channel was written
+        since the decision and holds. Reads rules / states / channels without
+        rt._lock (as _candidates and safety_holder do) and never calls
+        owner_of: nothing holding rt._lock waits for a bus (lock order bus →
+        rt._lock).
+
+        The rule as it is now (a reload may have changed its priority since
+        the decision — RC-6); one deleted meanwhile is judged as it was
+        decided (its delete released the channel; nothing newer to ask)."""
+        rule = self.rules.get(rule.id) or rule
+        st = self.states.get((rule.id, cfg.id))
+        if rule.prio() < LAYERS['safety'] and st is not None and st.paused_until is not None:
+            left = st.paused_until - self._clock()
+            if left > 0:
+                return 'paused', f'paused by an override for {int(left)} s'
+        # the yield is asked always, an urgent want's too: an emergency write
+        # must not overwrite a stricter want of a rule that won the channel
+        # since (ADR-0022, review MED 2); urgency exempts from the hold only
+        gate = self._gate(rule, cfg)
+        g = gate(want, bool(urgent)) if gate is not None else None
+        if g is None:
+            return None
+        if g[0] == 'yield':
+            return 'yielded', g[1]
+        # the hold only when the channel moved since the decision: what the
+        # tick saw it already judged (a reassert is not held there)
+        cur = self._seq_of(cfg, rule.target.get('command'))
+        if cur is None or cur != seq:
+            return 'held', g[1]
+        return None
 
     def safety_holder(self, device_id: str, command: str) -> Optional[str]:
         """An armed safety rule (priority ≥ 90) with an opinion on this
@@ -904,14 +1095,21 @@ class RulesRuntime:
                 lead = st
             actual, a_age, a_stale = self._actual(rule, cfg)
             st.gate = self._gate(rule, cfg)
+            # the reassert meets the channel's pace (ADR-0022 D1) — asked only
+            # when the channel has one: no gate call, no channel state otherwise
+            st.pace_reassert = bool(self._pace_of(cfg, rule.target.get('command')))
+            # read BEFORE the evaluation: any write landing after the referee
+            # looked counts as foreign (ADR-0021 D1)
+            seq = self._seq_of(cfg, rule.target.get('command'))
             d = st.evaluate(mono_now, signal, age, actual=actual, actual_age_s=a_age, actual_stale_s=a_stale,
                             sample_ts=s_mono, wall=now)
-            self._act(rule, cfg, client, st, d, now)
+            self._act(rule, cfg, client, st, d, now, seq=seq)
             out.append({'rule': rule.id, 'device': cfg.id, **d.to_dict()})
         self._publish_state(rule)
         return out
 
-    def _act(self, rule: RuleDef, cfg, client, st: RuleState, d: Decision, now: float) -> None:
+    def _act(self, rule: RuleDef, cfg, client, st: RuleState, d: Decision, now: float,
+             seq: Optional[int] = None) -> None:
         key = (rule.id, cfg.id)
         notable = d.changed or d.action in ('run', 'reassert', 'shadow') \
             or d.action != self._last_action.get(key)
@@ -933,11 +1131,18 @@ class RulesRuntime:
             else:
                 self.__dict__.setdefault('_gen', {})
                 gen = (self.__dict__.get('_tick_gens') or {}).get(rule.id, 0)
+                # what the head of the bus asks again (ADR-0021 D1/D3), and the
+                # send it would take back (D4). A reassert of an emergency want
+                # is urgent at the head too (ADR-0022 D3): never held there —
+                # `_sent_urgent` itself is left alone (it drives urgent_retries)
+                urgent = st._sent_urgent or (d.action == 'reassert' and st.emergency_want())
                 fut = self._writer(cfg.id).submit(self._run_command, cfg, client, rule.target['command'],
                                                   dict(d.want or {}), who=f"rule {rule.id}", ip='-', via=f"rule:{rule.id}",
-                                                  still_wanted=lambda r=rule.id, g=gen: self._gen.get(r, 0) == g)
+                                                  still_wanted=lambda r=rule.id, g=gen: self._gen.get(r, 0) == g,
+                                                  recheck=self._recheck_for(rule, cfg, d.want, urgent, seq))
                 rec['result'] = 'sent'
-                self.__dict__.setdefault('_inflight', {})[key] = (fut, rule, cfg, st, d, rec)
+                self.__dict__.setdefault('_inflight', {})[key] = (fut, rule, cfg, st, d, rec,
+                                                                   st.send_no, st._last_undo)
                 if st.failures == 0:
                     self.__dict__.setdefault('_sent_now', []).append(fut)
             if rec.get('result') == 'rejected':
@@ -988,7 +1193,9 @@ class RulesRuntime:
         three), a failed want sent again at the rate limit."""
         inflight = self.__dict__.get('_inflight', {})
         for key in [k for k, v in inflight.items() if v[0].done()]:
-            fut, rule, cfg, st, d, rec = inflight.pop(key)
+            item = inflight.pop(key)
+            fut, rule, cfg, st, d, rec = item[:6]
+            bound = item[6:]                      # (send_no, undo) of that send (ADR-0021 D4)
             if fut.cancelled():
                 res = {'status': 'cancelled', 'reason': 'its rule left armed before it was sent — nothing written'}
             else:
@@ -999,13 +1206,26 @@ class RulesRuntime:
             if res.get('status') == 'cancelled':
                 # neither a success nor a failure: the rule stopped driving
                 # this target (§7); what it last "commanded" never landed
-                rec['result'], rec['result_reason'] = 'cancelled', res.get('reason', '')
+                dropped = res.get('dropped')
+                rec['result'] = 'cancelled'
+                rec['result_reason'] = f"{dropped}: {res.get('reason', '')}" if dropped else res.get('reason', '')
+                if dropped:
+                    rec['dropped'] = dropped
                 # it never landed: if the rule drives again (re-armed within the
                 # same tick, a reload that bound it back) its want is still to
                 # send — never left to the reassert window. A rule that no
                 # longer drives ignores both.
-                st.confirmed, st.commanded = False, None
-                st.pending = st.want is not None
+                send_no, undo = bound if (dropped and bound) else (None, None)
+                if undo is not None and st.send_no == send_no:
+                    # dropped at the head (ADR-0021 D4): that send is taken
+                    # back by delta, while it is still the last one — what a
+                    # later tick set since (an urgent want, a read-back that
+                    # matched) stays (RC-3)
+                    st.unsend(undo)
+                else:
+                    st.confirmed, st.commanded = False, None
+                    # a newer send owns the state, which only needs sending again
+                    st.pending = st.want is not None or bool(dropped and bound)
                 self._influx_event(rule, cfg, d, rec)
                 continue
             ok = res.get('status') == 'success'
@@ -1348,6 +1568,13 @@ class RulesRuntime:
             # the SAME priority on a priority channel could only fight
             if rule.mode != 'armed' or not rule.enabled:
                 return []
+            # a fast step on a paced channel is refused (ADR-0022, Q5) — on what
+            # changes or arms (ADR-0006): a pace a template gains later is said
+            # at load, never a reason to refuse a rule's unrelated edit
+            if changed or becoming_armed:
+                pc = self.pace_conflicts(rule)
+                if pc:
+                    return pc
             for c, _ in self._targets(rule):
                 ch = self._chan(c, rule.target['command'])
                 if ch is None:
@@ -1495,6 +1722,9 @@ class RulesRuntime:
             self.decisions.pop(rid, None)
             self.rules.pop(rid, None)           # released above: the reload must not take it as vanished
             self.load()
+            # what was saved for it (an operator clamp, a pause) goes now: a
+            # rule recreated with the same id must not get it back (RL-LOAD-R7)
+            self._save_state()
             self._mqtt_pub(f"{MQTT_ROOT}/{rid}/state", {}, retain=True)
         self._audit(who, via, 'rule deleted', rid, {})
         return True

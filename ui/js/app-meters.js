@@ -1,5 +1,5 @@
 /* Multi-Bus Gateway — multi-protocol Modbus/HTTP/MQTT acquisition gateway.
- * Copyright (C) 2024-2026 Stefan Maldaianu <sm26449@diysolar.ro>
+ * Copyright (C) 2024-2026 Stefan Maldaianu <stefan@multibus.dev>
  * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 // meters — augments JanitzaMonitor.prototype
@@ -301,10 +301,12 @@ Object.assign(JanitzaMonitor.prototype, {
             <div class="settings-card-body">
                 ${measures.length ? `<p class="field-hint" style="margin:0 0 8px;">${this._esc(this.tn('meters.measuresLead', measures.length, 'This meter measures {n} device(s).'))}</p>
                 <ul class="mtr-measures">${measures.map(({ dev, links: ls }) => `<li>
-                    <a href="#/devices/${encodeURIComponent(dev.id)}/meters" ${this._act('usedByOpen', ['device', dev.id, 'meters'])}>${this._kindIconHtml ? this._kindIconHtml(dev.kind) : ''}${this._esc(dev.name || dev.id)}</a>
+                    <a href="#/devices/${encodeURIComponent(dev.id)}/meters" ${this._act('usedByOpen', ['device', dev.id, 'meters'])}>${this._kindIconHtml ? this._kindIconHtml(dev.type || dev.kind) : ''}${this._esc(dev.name || dev.id)}</a>
                     <span class="dev-chip">${this._esc(dev.id)}</span>
                     ${ls.map(l => `<span class="mtr-role-pill">${this._esc(this._meterRoleLabel({ id: l.role }))}</span> <span title="${this._esc(l.power || l.energy || '')}">${this._esc(fieldLabel(l.power || l.energy || ''))}</span>`).join(' ')}
                 </li>`).join('')}</ul>` : `<p class="field-hint" style="margin:0;">${t('meters.measuresNone', 'This meter measures no other device.')}</p>`}
+                <button type="button" class="btn btn-ghost btn-sm" data-admin id="mtrAddMeasured" ${this._act('addMeasuredBy', [id])}>
+                    <i aria-hidden="true" class="bi bi-plus-lg"></i> ${t('meters.addMeasured', 'Add equipment this meter measures…')}</button>
             </div>
         </div>`;
         if (s.primary) {
@@ -355,10 +357,28 @@ Object.assign(JanitzaMonitor.prototype, {
         this._metersGivesLive(me);
     },
 
+    // the word for a value a device's meters give it — one vocabulary for
+    // its page (the pair line, What it gives) and its fleet row; '' for a
+    // name the meters do not give
+    _meterValueWord(name) {
+        const t = (k, d) => this.t(k, d);
+        switch (name) {
+            case 'power_in': return t('meters.in', 'In');
+            case 'power_out': return t('meters.out', 'Out');
+            case 'power_loss': return t('meters.loss', 'Loss');
+            case 'efficiency_pct': return t('meters.eff', 'Efficiency');
+            case 'load_pct': return t('meters.load', 'Load');
+            case 'power_electric': return t('meters.powerElectric', 'Electric power');
+            case 'energy_electric': return t('meters.energyElectric', 'Electric energy');
+            default: return '';
+        }
+    },
+
     // what an input / output pair gives — the verdict of its last evaluation
     // (meters_status), the two powers from the device's live values
     _metersGivesHtml(me, live) {
         const t = (k, d, p) => this.t(k, d, p);
+        const word = n => this._meterValueWord(n);
         const st = me.meters_status || {};
         const roles = (me.meters || []).map(l => l.role);
         const head = `<div class="settings-card-header"><h3><i aria-hidden="true" class="bi bi-activity"></i> ${t('meters.gives', 'What it gives')}</h3>
@@ -387,16 +407,16 @@ Object.assign(JanitzaMonitor.prototype, {
                 <td class="mtr-v">${ok ? fmt(v.value ?? live[name], unit) : '—'}</td>
                 <td class="mtr-why">${word ? this._esc(word) : `<span class="sr-only">${t('meters.published', 'published')}</span>`}
                 ${!ok && v.reason === 'no_rating' ? (['inverter', 'ups', 'charger'].includes(me.kind)
-                    ? ` <a href="#/devices/${encodeURIComponent(me.id)}/attributes" ${this._act('_switchDeviceTab', ['attributes'])}>${t('meters.setRating', 'Set rated_ac_kw in Attributes')}</a>`
+                    ? ` <a href="#/devices/${encodeURIComponent(me.id)}/attributes" ${this._act('ddvGoEdit', ['about', 'identity'])}>${t('meters.setRating', 'Set rated_ac_kw in Attributes')}</a>`
                     : ` ${this._esc(t('meters.noRatingKind', '(this kind of device has no rating)'))}`) : ''}</td></tr>`;
         };
         return `${head}<div class="settings-card-body">
-            <p class="mtr-flow" id="mtrFlow">${this._esc(t('meters.in', 'In'))} <b data-live="power_in">${fmt(live.power_in, 'W')}</b>
-                → ${this._esc(t('meters.out', 'Out'))} <b data-live="power_out">${fmt(live.power_out, 'W')}</b></p>
+            <p class="mtr-flow" id="mtrFlow">${this._esc(word('power_in'))} <b data-live="power_in">${fmt(live.power_in, 'W')}</b>
+                → ${this._esc(word('power_out'))} <b data-live="power_out">${fmt(live.power_out, 'W')}</b></p>
             <table class="mtr-gives"><tbody>
-                ${row('power_loss', t('meters.loss', 'Loss'), 'W')}
-                ${row('efficiency_pct', t('meters.eff', 'Efficiency'), '%')}
-                ${row('load_pct', t('meters.load', 'Load'), '%')}
+                ${row('power_loss', this._esc(word('power_loss')), 'W')}
+                ${row('efficiency_pct', this._esc(word('efficiency_pct')), '%')}
+                ${row('load_pct', this._esc(word('load_pct')), '%')}
             </tbody></table></div>`;
     },
 
@@ -475,8 +495,7 @@ Object.assign(JanitzaMonitor.prototype, {
         const orig = btn ? btn.innerHTML : '';
         if (btn) { btn.disabled = true; btn.innerHTML = '<i aria-hidden="true" class="bi bi-arrow-repeat spin"></i>'; }
         try {
-            const r = await fetch(`/api/devices/${encodeURIComponent(s.id)}/meters`, {
-                method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+            const r = await window.DeviceStore.devWrite(s.id, 'PUT', `/api/devices/${encodeURIComponent(s.id)}/meters`, body);
             const res = await r.json().catch(() => ({}));
             if (!r.ok) {
                 const det = res.detail || {};
@@ -510,6 +529,7 @@ Object.assign(JanitzaMonitor.prototype, {
         const roles = (e.meters || []).map(l => l.role);
         if (!(roles.includes('input') && roles.includes('output')) || e.enabled === false) { box.innerHTML = ''; return; }
         const t = (k, d, p) => this.t(k, d, p);
+        const word = n => this._meterValueWord(n);
         const st = e.meters_status || {};
         const live = this._pairLive?.id === s.id ? this._pairLive.live : {};
         const fmt = (v, u) => v == null ? '—' : `${Number(v).toLocaleString(this._loc(), { maximumFractionDigits: u === '%' ? 1 : 0 })} ${u}`;
@@ -519,143 +539,9 @@ Object.assign(JanitzaMonitor.prototype, {
                 : `— <span class="field-hint">(${this._esc(this._meterReasonWords(v.state === 'waiting' ? 'not_evaluated' : v.reason, e.meter_options || {}))})</span>`;
         };
         box.innerHTML = `<p class="ddv-pair" id="ddvPair"><i aria-hidden="true" class="bi bi-lightning"></i>
-            ${this._esc(t('meters.in', 'In'))} ${fmt(live.power_in, 'W')} → ${this._esc(t('meters.out', 'Out'))} ${fmt(live.power_out, 'W')}
-            · ${this._esc(t('meters.loss', 'Loss'))} ${val('power_loss', 'W')} · ${this._esc(t('meters.eff', 'Efficiency'))} ${val('efficiency_pct', '%')}
-            <a href="#/devices/${encodeURIComponent(s.id)}/meters" ${this._act('_switchDeviceTab', ['meters'])}>${t('meters.tab', 'Meters')}</a></p>`;
+            ${this._esc(word('power_in'))} ${fmt(live.power_in, 'W')} → ${this._esc(word('power_out'))} ${fmt(live.power_out, 'W')}
+            · ${this._esc(word('power_loss'))} ${val('power_loss', 'W')} · ${this._esc(word('efficiency_pct'))} ${val('efficiency_pct', '%')}
+            <a href="#/devices/${encodeURIComponent(s.id)}/meters" ${this._act('ddvGoEdit', ['meters', 'meters'])}>${t('meters.tab', 'Meters')}</a></p>`;
         if (!this._pairLive || this._pairLive.id !== s.id) this._metersGivesLive(e);
-    },
-
-    // ── Add Device: a device that IS its meters ────────────────────────────
-    // Step 2 asks what it is (the kinds the gateway allows for it) and which
-    // meters measure it — the same rows as the Meters tab.
-    _devWizMetersStepHtml() {
-        const w = this._devWiz, d = w.data;
-        const t = (k, def, p) => this.t(k, def, p);
-        const k = this._meterRolesData?.meter_only_kinds || { first: ['ups', 'charger', 'heat_pump', 'drive'], more: [] };
-        const chip = kind => `<label class="seg-btn ${d.kind === kind ? 'on' : ''}"><input type="radio" name="wizMtrKind" value="${this._esc(kind)}" ${d.kind === kind ? 'checked' : ''}>
-            <span class="s"></span> <i aria-hidden="true" class="bi ${this._KIND_ICON[kind] || this._KIND_ICON.other}"></i> ${this._esc(this._kindLabel(kind))}</label>`;
-        const moreOpen = (k.more || []).includes(d.kind);
-        return `
-        <div class="wiz-eyebrow" id="wizMtrKindQ">${t('wizMtr.kindQ', 'What is it?')}</div>
-        <div class="form-group" id="wizMtrKindGroup">
-            <div class="seg wizmtr-kinds" role="radiogroup" aria-labelledby="wizMtrKindQ" id="wizMtrKinds" tabindex="-1">
-                ${(k.first || []).map(chip).join('')}
-            </div>
-            ${(k.more || []).length ? `<details class="wizmtr-more" ${moreOpen ? 'open' : ''}><summary>${t('wizMtr.more', 'More kinds…')}</summary>
-                <div class="seg wizmtr-kinds" role="radiogroup" aria-labelledby="wizMtrKindQ">${k.more.map(chip).join('')}</div></details>` : ''}
-        </div>
-        <div class="wiz-eyebrow">${t('wizMtr.metersQ', 'Which meters measure it?')}</div>
-        <p class="field-hint" style="margin:0 0 8px;">${t('wizMtr.metersHint', 'One meter on its supply (consumption), or one on what goes in and one on what comes out (input and output: its loss and efficiency follow).')}</p>
-        <div data-mtr-wrap="wizMtr">${this._metersRowsHtml('wizMtr', d.meters || [], {})}</div>`;
-    },
-
-    // a server path → the input on the wizard's meters step
-    _wizMtrFieldId(p) {
-        if (p === 'kind') return 'wizMtrKinds';
-        const mid = this._mtrFieldId('wizMtr', p);
-        if (mid) return mid;
-        if (p === 'meters') return 'wizMtrDev-0';
-        if (p === 'id') return 'devWizId';
-        if (p === 'name') return 'devWizName';
-        return null;
-    },
-
-    // the gateway asked before step 3: the kind and the meters it would
-    // refuse are said here, at their fields
-    async _devWizCheckMeters() {
-        const d = this._devWiz.data;
-        let r, res;
-        try {
-            r = await fetch('/api/devices?dry_run=true', {
-                method: 'POST', headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ id: 'x-dry-run', name: 'x', kind: d.kind, enabled: false,
-                                       connection: { protocol: 'none' }, meters: d.meters || [] }) });
-            res = await r.json().catch(() => ({}));
-        } catch (e) { return true; }
-        if (r.ok) {
-            if (res.status === 'valid' && res.would) return true;
-            if (res.status === 'created' || res.device) {
-                await fetch('/api/devices/x-dry-run', { method: 'DELETE' }).catch(() => {});
-            }
-            return true;
-        }
-        if (r.status !== 422) return true;
-        const det = res.detail || {};
-        const fields = Object.fromEntries(Object.entries(det.fields || {}).filter(([k]) => k === 'kind' || k.startsWith('meters')));
-        const keys = Object.keys(fields);
-        const other = (det.errors || []).filter(e => !keys.some(k => String(e).startsWith(k + ': '))
-            && !/^device 'x-dry-run'/.test(String(e)) && !/^id\b/.test(String(e)));
-        if (!keys.length && !other.length) return true;
-        const left = this._placeFieldErrors(document.getElementById('devWizBody'), fields, p => this._wizMtrFieldId(p));
-        this._wizSay([...left, ...other].join(' · '));
-        return false;
-    },
-
-    async _devWizCreateMeterOnly() {
-        const w = this._devWiz, d = w.data;
-        const payload = {
-            id: d.id, name: d.name || d.id, kind: d.kind, enabled: d.enabled,
-            connection: { protocol: 'none' }, meters: d.meters || [],
-            mqtt: d.topic_prefix ? { topic_prefix: d.topic_prefix } : {},
-            influxdb: { bucket: d.bucket || undefined, device_tag: d.device_tag || undefined },
-            ha_discovery_enabled: d.ha_discovery_enabled,
-        };
-        let r, res;
-        try {
-            r = await fetch('/api/devices', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
-            res = await r.json().catch(() => ({}));
-        } catch (e) { this._wizSay(e.message || String(e)); return; }
-        if (!r.ok) {
-            const det = res.detail || {};
-            const fields = det.fields || {};
-            const errs = det.errors || [typeof det === 'string' ? det : this.t('toast.saveFailed', 'Save Failed')];
-            // a refusal goes back to the step that owns its field
-            const step = Object.keys(fields).some(k => k === 'kind' || k.startsWith('meters')) ? 2 : 3;
-            if (step !== w.step) { w.step = step; this._devWizRender(); await new Promise(res2 => setTimeout(res2, 50)); }
-            const keys = Object.keys(fields);
-            const left = this._placeFieldErrors(document.getElementById('devWizBody'), fields, p => this._wizMtrFieldId(p));
-            this._wizSay([...left, ...errs.filter(e => !keys.some(k => String(e).startsWith(k + ': ')))].join(' · '));
-            return;
-        }
-        this.closeModal('deviceWizardModal');
-        this.showToast('success', this.t('devices.created', 'Device created'),
-            this.t('wizMtr.created', '{name}: measured by {list}', { name: d.name || d.id,
-                list: (d.meters || []).map(l => ((this._devices || []).find(x => x.id === l.device) || {}).name || l.device).join(', ') }));
-        // a device that reads nothing has no measurements to pick: its Meters
-        await this.openDeviceDetail(d.id);
-        this._switchDeviceTab('meters');
-    },
-
-    // ── a meter-only device's Connection tab: its identity, no address ───
-    _meterOnlyIdentityHtml(s, d) {
-        const t = (k, def, p) => this.t(k, def, p);
-        const e = s.entry || {};
-        return `
-        <div class="settings-card">
-            <div class="settings-card-header"><h3><i aria-hidden="true" class="bi bi-person-vcard"></i> ${t('ddv.identity', 'Identity')}</h3></div>
-            <div class="settings-card-body">
-                <div class="form-group" style="margin-bottom:10px;">
-                    <span class="form-label">${t('devices.wizard.protocol', 'Protocol')}</span>
-                    <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
-                        <span class="dev-chip" id="ddvProtoShown" data-proto="none"><i aria-hidden="true" class="bi bi-lock"></i> ${t('ddv.meterOnlyProto', 'Measured by its meters')}</span>
-                        <span class="field-hint">${this._esc(t('ddv.measuredByList', 'Measured by {list} — change them on the Meters tab.', { list: (e.measured_by || []).join(', ') || '—' }))}
-                            <a href="#/devices/${encodeURIComponent(s.id)}/meters" ${this._act('_switchDeviceTab', ['meters'])}>${t('meters.tab', 'Meters')}</a></span>
-                    </div>
-                </div>
-                <div class="form-row">
-                    <div class="form-group flex-2"><label class="form-label" for="ddvName">${t('devices.wizard.name', 'Device name')}</label>
-                        <input type="text" id="ddvName" class="input" value="${this._esc(d.name)}"></div>
-                    <div class="form-group"><span class="form-label">${t('find.facet.kind', 'Kind')}</span>
-                        <div class="ddv-kind">${this._kindCellHtml ? this._kindCellHtml(e.kind) : this._esc(e.kind || '')}
-                            <button type="button" class="btn btn-ghost btn-sm" data-admin ${this._act('setDeviceKind', [s.id])}>${t('ddv.change', 'Change')}</button></div></div>
-                </div>
-                <label style="display:flex;align-items:center;gap:8px;">
-                    <input type="checkbox" id="ddvEnabled" ${d.enabled ? 'checked' : ''}> ${t('ddv.meterOnlyEnabled', 'Enabled — computed from its meters')}</label>
-            </div>
-            <div class="settings-card-footer">
-                <span class="save-feedback" id="ddvFeedback"></span>
-                <button data-admin class="btn btn-primary btn-sm" data-action="saveDeviceDetail" data-with-el><i aria-hidden="true" class="bi bi-check-lg"></i> ${t('common.save', 'Save')}</button>
-            </div>
-        </div>`;
     },
 });

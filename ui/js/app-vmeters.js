@@ -1,5 +1,5 @@
 /* Multi-Bus Gateway — multi-protocol Modbus/HTTP/MQTT acquisition gateway.
- * Copyright (C) 2024-2026 Stefan Maldaianu <sm26449@diysolar.ro>
+ * Copyright (C) 2024-2026 Stefan Maldaianu <stefan@multibus.dev>
  * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 // vmeters domain — augments JanitzaMonitor.prototype
@@ -78,7 +78,11 @@ Object.assign(JanitzaMonitor.prototype, {
                     body: this.t('vmeter.needTemplateBody', 'A virtual meter serves a register map you define. First make one on the Templates tab — which registers, from which device values — then add an instance here.'),
                     actionHtml: `<button type="button" class="btn btn-secondary btn-sm" data-admin ${this._act('vmShowTab', ['templates'])}><i aria-hidden="true" class="bi bi-arrow-right"></i> ${this.t('vmeter.goTemplates', 'Open Templates')}</button>` })
                 : this._emptyState({ icon: 'bi-broadcast', title: this.t('vmeter.noneTitle', 'No virtual meters yet'),
-                    body: this.t('vmeter.noneConfigured', 'No virtual meters configured. Use “Add instance”.') }))
+                    // never "use Add instance" while that button is disabled:
+                    // a template is there, so what blocks it is the port range
+                    body: canAdd
+                        ? this.t('vmeter.noneConfigured', 'No virtual meters configured. Use “Add instance”.')
+                        : this.t('vmeter.noneNoPort', '“Add instance” is unavailable: every port of the published range is in use. Widen VMETER_PORT_END (and publish the new ports), then add an instance here.') }))
             : insts.map(m => {
             const mid = this._esc(m.template);
             // One status component app-wide (same pill as the Outputs sinks) —
@@ -608,7 +612,7 @@ Object.assign(JanitzaMonitor.prototype, {
         });
         try {
             let r = await post(false);
-            if (r.status === 409) {
+            if (r.status === 409 && !(await r.clone().json().catch(() => ({}))).detail?.config_blocked) {
                 if (!await this.confirmAction({
                     title: this.t('vmeter.overwriteTitle', 'Overwrite template?'),
                     message: this.t('vmeter.overwriteConfirm', 'A template with this id already exists. Importing replaces it.'),
@@ -618,7 +622,7 @@ Object.assign(JanitzaMonitor.prototype, {
             }
             const d = await r.json().catch(() => ({}));
             if (r.ok) { this.showToast('success', this.t('toast.imported', 'Imported'), `${d.id} · ${d.registers} ${this.t('templates.measurements', 'measurements')}`); this._afterVmTemplateChange(); }
-            else this.showToast('error', this.t('toast.importFailed', 'Import failed'), d.detail || `HTTP ${r.status}`);
+            else this.showToast('error', this.t('toast.importFailed', 'Import failed'), this._respError(r, d));
         } catch (e) { this.showToast('error', this.t('toast.importFailed', 'Import failed'), f.name); }
     },
 
@@ -866,7 +870,8 @@ Object.assign(JanitzaMonitor.prototype, {
                 if (tpl.error) { this.showToast('error', this.t('toast.loadFailed', 'Load failed'), tpl.error); return; }
             } catch (e) { this.showToast('error', this.t('toast.loadFailed', 'Load failed'), templateId); return; }
         }
-        document.getElementById('vmTplTitle').textContent = isNew ? 'New template' : `Edit: ${tpl.name}`;
+        document.getElementById('vmTplTitle').textContent = isNew ? this.t('vmeter.newTplBtn', 'New template')
+            : this.t('vmeter.editTplTitle', 'Edit: {name}', { name: tpl.name });
         this._renderTemplateForm(tpl, isNew);
         this.openModal('vmTemplateModal');
     },
@@ -876,28 +881,28 @@ Object.assign(JanitzaMonitor.prototype, {
         const t = tpl.transport || {};
         const pr = this._vmPortRange || {};
         const defPort = isNew ? (pr.next_free ?? t.port ?? 1502) : (t.port ?? 1502);
-        const portHint = (pr.start != null) ? `published range ${pr.start}–${pr.end}` : '';
+        const portHint = (pr.start != null) ? this.t('vmeter.portRange', 'published range {start}–{end}', { start: pr.start, end: pr.end }) : '';
         body.innerHTML = `
           <div class="form-row">
-            <div class="form-group"><label class="form-label">${this.t('lbl.templateId', "Template id")}</label>
+            <div class="form-group"><label class="form-label" for="vmfId">${this.t('lbl.templateId', "Template id")}</label>
               <input id="vmfId" class="input" value="${this._esc(tpl.id || '')}" ${isNew ? '' : 'readonly'} placeholder="my_meter (a-z 0-9 _)"></div>
-            <div class="form-group"><label class="form-label">${this.t('lbl.name', "Name")}</label>
+            <div class="form-group"><label class="form-label" for="vmfName">${this.t('lbl.name', "Name")}</label>
               <input id="vmfName" class="input" value="${this._esc(tpl.name || '')}" placeholder="My Custom Meter"></div>
           </div>
           <div class="form-row">
-            <div class="form-group"><label class="form-label">${this.t('lbl.byteOrder', "Byte order")}</label>
+            <div class="form-group"><label class="form-label" for="vmfByteOrder">${this.t('lbl.byteOrder', "Byte order")}</label>
               <select id="vmfByteOrder" class="input">
                 <option value="big" ${tpl.byte_order === 'big' ? 'selected' : ''}>${this.t('vmeter.bo.big', 'ABCD · big (high word first)')}</option>
                 <option value="little" ${tpl.byte_order === 'little' ? 'selected' : ''}>${this.t('vmeter.bo.little', 'CDAB · little (word swap)')}</option>
                 <option value="badc" ${tpl.byte_order === 'badc' ? 'selected' : ''}>${this.t('vmeter.bo.badc', 'BADC · byte swap')}</option>
                 <option value="dcba" ${tpl.byte_order === 'dcba' ? 'selected' : ''}>${this.t('vmeter.bo.dcba', 'DCBA · full little-endian')}</option>
               </select></div>
-            <div class="form-group"><label class="form-label">${this.t('lbl.port', "Port")}</label>
+            <div class="form-group"><label class="form-label" for="vmfPort">${this.t('lbl.port', "Port")}</label>
               <input id="vmfPort" class="input" type="number" value="${defPort}" min="${pr.start ?? ''}" max="${pr.end ?? ''}">
               ${portHint ? `<span class="hint-text" style="font-size:11px;">${portHint}</span>` : ''}</div>
-            <div class="form-group"><label class="form-label">${this.t('lbl.unitIdLc', "Unit id")}</label>
+            <div class="form-group"><label class="form-label" for="vmfUnit">${this.t('lbl.unitIdLc', "Unit id")}</label>
               <input id="vmfUnit" class="input" type="number" value="${t.unit_id ?? 1}"></div>
-            <div class="form-group"><label class="form-label">${this.t('vmeter.bind', 'Bind')}</label>
+            <div class="form-group"><label class="form-label" for="vmfBind">${this.t('vmeter.bind', 'Bind')}</label>
               <input id="vmfBind" class="input" value="${this._esc(t.bind || '0.0.0.0')}"></div>
           </div>
           ${tpl.in_use ? `<p class="hint-text" style="color:#e08e0b;"><i aria-hidden="true" class="bi bi-exclamation-triangle"></i> ${this.t('vmeter.inUseNote', 'Used by an instance — saving reloads it live.')}</p>` : ''}
@@ -969,9 +974,9 @@ Object.assign(JanitzaMonitor.prototype, {
         // (sum = unordered addends, failover = priority order primary→fallback)
         const listPh = k => k === 'sum' ? 'name1, name2, …' : k === 'failover' ? 'primary, fallback, …' : '';
         tr.innerHTML = `
-          <td style="padding:3px 6px;"><input class="input input-sm vm-addr" style="width:82px;" value="${addrHex}"></td>
-          <td><select class="input input-sm vm-type" style="width:92px;">${typeOpts}</select></td>
-          <td><select class="input input-sm vm-kind" style="width:110px;">
+          <td style="padding:3px 6px;"><input class="input input-sm vm-addr" aria-label="${this._esc(`${this.t('lbl.address', 'Address')} · ${addrHex}`)}" style="width:82px;" value="${addrHex}"></td>
+          <td><select class="input input-sm vm-type" aria-label="${this._esc(`${this.t('lbl.type', 'Type')} · ${addrHex}`)}" style="width:92px;">${typeOpts}</select></td>
+          <td><select class="input input-sm vm-kind" aria-label="${this._esc(`${this.t('lbl.source', 'Source')} · ${addrHex}`)}" style="width:110px;">
             <option value="const" ${reg.source_kind === 'const' ? 'selected' : ''}>${this.t('lbl.constNum', "Const num")}</option>
             <option value="const_str" ${reg.source_kind === 'const_str' ? 'selected' : ''}>${this.t('lbl.constText', "Const text")}</option>
             <option value="live" ${isLive ? 'selected' : ''}>${this.t('lbl.liveValue', "Live value")}</option>
@@ -979,13 +984,13 @@ Object.assign(JanitzaMonitor.prototype, {
             <option value="failover" ${reg.source_kind === 'failover' ? 'selected' : ''}>${this.t('lbl.failoverLive', "Failover (live…)")}</option>
           </select></td>
           <td>
-            <select class="input input-sm vm-src-live" style="min-width:240px;${isLive ? '' : 'display:none;'}">${srcOpts || '<option value="">(no live values)</option>'}</select>
-            <input class="input input-sm vm-src-val" style="width:200px;${isLive ? 'display:none;' : ''}" placeholder="${listPh(reg.source_kind)}" value="${this._esc(srcVal)}">
+            <select class="input input-sm vm-src-live" aria-label="${this._esc(`${this.t('lbl.valueSource', 'Value / Source')} · ${addrHex}`)}" style="min-width:240px;${isLive ? '' : 'display:none;'}">${srcOpts || '<option value="">(no live values)</option>'}</select>
+            <input class="input input-sm vm-src-val" aria-label="${this._esc(`${this.t('lbl.valueSource', 'Value / Source')} · ${addrHex}`)}" style="width:200px;${isLive ? 'display:none;' : ''}" placeholder="${listPh(reg.source_kind)}" value="${this._esc(srcVal)}">
           </td>
-          <td><input class="input input-sm vm-scale" style="width:64px;" value="${reg.scale ?? 1}"></td>
-          <td><input class="input input-sm vm-len" type="number" style="width:52px;" value="${reg.length ?? 1}"></td>
-          <td><input class="input input-sm vm-stale" type="number" style="width:64px;" min="1" placeholder="auto" value="${reg.stale_after_s ?? ''}"></td>
-          <td><input class="input input-sm vm-note" style="width:130px;" value="${this._esc(reg.note || '')}"></td>
+          <td><input class="input input-sm vm-scale" aria-label="${this._esc(`${this.t('lbl.scale', 'Scale')} · ${addrHex}`)}" style="width:64px;" value="${reg.scale ?? 1}"></td>
+          <td><input class="input input-sm vm-len" aria-label="${this._esc(`${this.t('vmeter.colLen', 'Len')} · ${addrHex}`)}" type="number" style="width:52px;" value="${reg.length ?? 1}"></td>
+          <td><input class="input input-sm vm-stale" aria-label="${this._esc(`${this.t('vmeter.rowStale', 'Stale s')} · ${addrHex}`)}" type="number" style="width:64px;" min="1" placeholder="auto" value="${reg.stale_after_s ?? ''}"></td>
+          <td><input class="input input-sm vm-note" aria-label="${this._esc(`${this.t('lbl.note', 'Note')} · ${addrHex}`)}" style="width:130px;" value="${this._esc(reg.note || '')}"></td>
           <td style="white-space:nowrap;"><button class="btn btn-ghost btn-sm vm-row-dup" ${this._ib(this.t('vmeter.dupRow', 'Duplicate row'), reg.name || addrHex)}><i aria-hidden="true" class="bi bi-copy"></i></button><button class="btn btn-ghost btn-sm vm-row-del" ${this._ib(this.t('common.remove', 'Remove'), reg.name || addrHex)}><i aria-hidden="true" class="bi bi-x-lg"></i></button></td>`;
         tbody.appendChild(tr);
         const kindSel = tr.querySelector('.vm-kind');

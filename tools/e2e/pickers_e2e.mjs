@@ -1,5 +1,5 @@
 // Multi-Bus Gateway — multi-protocol Modbus/HTTP/MQTT acquisition gateway.
-// Copyright (C) 2024-2026 Stefan Maldaianu <sm26449@diysolar.ro>  — AGPL-3.0-or-later
+// Copyright (C) 2024-2026 Stefan Maldaianu <stefan@multibus.dev>  — AGPL-3.0-or-later
 //
 // The shared pickers (ui/js/app-pickers.js) as a user meets them: a rule made
 // with the keyboard alone — its target found by typing, its signal completed
@@ -224,7 +224,7 @@ try {
   // ── a calculated formula: this device's own names, at the caret ──
   await page.evaluate(() => window.app.openDeviceDetail('sunfield-meter-240'));
   await page.waitForTimeout(700);
-  await page.evaluate(() => window.app._switchDeviceTab('calculated'));
+  await page.evaluate(() => window.app.ddvEdit('calculated'));     // ⋯ → Calculated… (L3.3)
   await page.waitForSelector('[data-action="calcAdd"]');
   await page.evaluate(() => window.app.calcAdd());
   await page.waitForSelector('#calcExpr');
@@ -289,33 +289,33 @@ try {
   await page.unroute('**/api/endpoints/sunfield');
   await page.evaluate(() => window.app.closeModal('endpointModal'));
 
-  // ── the device wizard's template panel ──
+  // ── Add Device's "What is it?": the model list (L3.9; was the wizard's template panel) ──
   await page.evaluate(() => window.app.openDeviceWizard());
-  await page.waitForTimeout(500);
-  await page.evaluate(() => { window.app._devWiz.data.protocol = 'tcp'; window.app._devWiz.step = 2; window.app._devWizRender(); });
-  await page.waitForSelector('#devWizTplList .tpl-pick');
-  check('wizard: the template list is a listbox driven from the search box',
-        (await page.getAttribute('#devWizTplSearch', 'role')) === 'combobox'
-        && await page.locator('#devWizTplList [role="listbox"] .tpl-pick[role="option"]').count() > 3);
-  await page.locator('[data-tplp-kind="inverter"]').click();
+  await page.waitForSelector('#addDeviceModal.active');
+  await page.waitForFunction(() => !document.querySelector('#addDevMain[aria-busy="true"]'));
+  check('Add: the model list is a listbox the search box controls',
+        (await page.getAttribute('#adQ', 'aria-controls')) === 'adResults'
+        && (await page.getAttribute('#adResults', 'role')) === 'listbox'
+        && await page.locator('#adResults [role="option"]').count() > 3);
+  await page.locator('#adChips [data-ad-type="inverter"]').click();
   await page.waitForTimeout(200);
-  const wg = (await page.locator('#devWizTplList .cbx-grp-label').allInnerTexts()).filter(Boolean);
-  check('wizard: a kind chip puts its templates first, the rest folded', /inverter/i.test(wg[0] || '')
-        && (await optionTexts(page, '#devWizTplList')).some(x => /other kinds/i.test(x)), wg.join(' | '));
-  await page.focus('#devWizTplSearch');
+  const kindsShown = await page.$$eval('#adResults .ad-card-sub', els => els.map(e => e.textContent));
+  check('Add: a type chip (a radiogroup) narrows to its models', (await page.getAttribute('#adChips', 'role')) === 'radiogroup'
+        && kindsShown.length > 0 && kindsShown.every(x => /inverter/i.test(x)), kindsShown.join(' | '));
+  await page.focus('#adQ');
   await page.keyboard.press('ArrowDown');
   await page.keyboard.press('Home');
-  await page.keyboard.press('Enter');
+  await page.keyboard.press(' ');
   await page.waitForTimeout(200);
-  const chosen = await page.evaluate(() => window.app._devWiz.data.template);
-  check('wizard: Enter picks the active template, said in place', !!chosen
-        && (await page.getAttribute(`#devWizTplList .tpl-pick[data-tpl="${chosen}"]`, 'aria-selected')) === 'true'
-        && await page.locator('#devWizTplActions button').count() > 0, chosen);
-  await page.locator('[data-tplp-kind="inverter"]').click();          // the chip off again: every kind
-  await page.locator('.tpl-pick[data-tpl="eastron_sdm630"]').click().catch(() => {});
-  check('wizard: a click on a template picks it (the old path)', (await page.evaluate(() => window.app._devWiz.data.template)) === 'eastron_sdm630');
-  if (OUT) await page.screenshot({ path: `${OUT}/pickers-wizard-desktop-light.png` });
-  await page.evaluate(() => window.app.closeModal('deviceWizardModal'));
+  const chosen = await page.evaluate(() => window.app._ad.s.template);
+  check('Add: Space picks the active model, said in place, its actions shown', !!chosen
+        && (await page.getAttribute(`#adResults [data-ad-tpl="${chosen}"]`, 'aria-selected')) === 'true'
+        && await page.locator('#adTplActs button').count() > 2, chosen);
+  await page.locator('#adChips [data-ad-type=""]').click();          // Any type again: every model
+  await page.locator('#adResults [data-ad-tpl="eastron_sdm630"]').click().catch(() => {});
+  check('Add: a click on a model picks it', (await page.evaluate(() => window.app._ad.s.template)) === 'eastron_sdm630');
+  if (OUT) await page.screenshot({ path: `${OUT}/pickers-add-desktop-light.png` });
+  await page.evaluate(() => { window.app._ad.done = true; window.app.closeModal('addDeviceModal'); });
   check('no native dialog', page.dlg.native === 0, String(page.dlg.native));
   check('no page errors', page.errs.length === 0, page.errs.join(' | '));
   await page.close();

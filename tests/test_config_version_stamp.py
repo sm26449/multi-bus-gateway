@@ -1,5 +1,5 @@
 # Multi-Bus Gateway — multi-protocol Modbus/HTTP/MQTT acquisition gateway.
-# Copyright (C) 2024-2026 Stefan Maldaianu <sm26449@diysolar.ro>  — AGPL-3.0-or-later
+# Copyright (C) 2024-2026 Stefan Maldaianu <stefan@multibus.dev>  — AGPL-3.0-or-later
 """Config version stamp (audit MEDIUM-2): every save records which gateway
 wrote the file; loading a file stamped by a NEWER gateway (a downgrade) warns
 loudly and surfaces in config_status() — a save from the older version would

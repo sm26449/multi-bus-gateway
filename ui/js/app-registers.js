@@ -1,5 +1,5 @@
 /* Multi-Bus Gateway — multi-protocol Modbus/HTTP/MQTT acquisition gateway.
- * Copyright (C) 2024-2026 Stefan Maldaianu <sm26449@diysolar.ro>
+ * Copyright (C) 2024-2026 Stefan Maldaianu <stefan@multibus.dev>
  * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 // registers domain — augments JanitzaMonitor.prototype
@@ -27,11 +27,39 @@ Object.assign(JanitzaMonitor.prototype, {
         }
     },
 
+    // ── the selection's own revision (ADR-0030) ─────────────────────────
+    // A device's measurement selection lives in its own file, with its own
+    // ETag. Each view keeps the tag of the rows IT holds, next to them
+    // ({qs, tag}: the register editor's _regSel, the dashboard's _dashSel,
+    // the raw editor's _rawSel) and sends it back on its save, so a change
+    // made elsewhere meanwhile is refused (412) instead of overwritten.
+    _selRev(qs, r) {
+        return { qs, tag: (r && r.headers && r.headers.get('ETag')) || null };
+    },
+
+    // opts.staged: the full editor says a 412 itself (its edits re-applied)
+    async _selSave(rev, qs, rows, opts = {}) {
+        const headers = { 'Content-Type': 'application/json' };
+        if (rev && rev.qs === qs && rev.tag) headers['If-Match'] = rev.tag;
+        const r = await fetch('/api/registers/selected' + qs, { method: 'POST', headers, body: JSON.stringify(rows) });
+        if (r.ok && rev) Object.assign(rev, this._selRev(qs, r));
+        else if (r.status === 412 && !opts.staged) {
+            this.showToast('error', this.t('registers.selChangedTitle', 'Changed elsewhere'),
+                this.t('registers.selChanged', 'The measurement selection was changed elsewhere since this page read it. Nothing was saved: reload it and apply your change again.'));
+        }
+        return r;
+    },
+
     async loadSelectedRegisters() {
         try {
             const response = await fetch('/api/registers/selected' + this._regDeviceQS());
+            const rev = this._selRev(this._regDeviceQS(), response);
             const data = await response.json();
             this.selectedRegisters = data.registers || [];
+            this._regSel = rev;                    // the tag of these rows
+            // what was read, as read: a full editor's staged edits are its
+            // difference from these rows (re-applied after a 412, M2)
+            this._regSelBase = JSON.parse(JSON.stringify(this.selectedRegisters));
             this.pollGroups = data.poll_groups || {};
             this._renderRegSourceSelector(data);
             // The first answer for a unit read several ways is the DEVICE-level
@@ -47,9 +75,11 @@ Object.assign(JanitzaMonitor.prototype, {
             // Keep the dashboard's OWN list in sync when both contexts look at
             // the same device (an edit in Measurements shows up on the widgets);
             // otherwise the dashboard keeps its device's list untouched.
-            const regDev = this._regDevice === undefined ? this._primaryDeviceId() : this._regDevice;
+            const regDev = this._regDevice === undefined ? this._defaultDeviceId() : this._regDevice;
             if (regDev === this._dashDeviceId()) {
                 this.dashRegisters = this.selectedRegisters;
+                // the same rows: the same tag when read the same way
+                this._dashSel = rev.qs === this._dashQS() ? { ...rev } : null;
                 this.updateDashboard();
             }
 
@@ -63,7 +93,7 @@ Object.assign(JanitzaMonitor.prototype, {
     _regCatLabel(cat) {
         const c = String(cat || 'other');
         const fromCatalog = ((this.allRegisters || {}).measurements || {})[c]?.name;
-        return this.t(`cat.${c}`, fromCatalog || (c.charAt(0).toUpperCase() + c.slice(1).replace(/_/g, ' ')));
+        return this.t(`cat.${c}`, this._catName(c, fromCatalog));
     },
 
     // Where a value is read from, as an operator reads it: a JSON path, a topic,
@@ -117,7 +147,6 @@ Object.assign(JanitzaMonitor.prototype, {
         if (keyHead) keyHead.textContent = this.t('registers.where', 'Where');
         const queryBtn = document.getElementById('queryRegisterBtn');
         if (queryBtn) queryBtn.style.display = (http || mqttIn) ? 'none' : '';
-        this._syncWriteMenuItem();
 
         const filtered = allRegs.filter(reg => {
             const matchesSearch = !searchQuery ||
@@ -188,53 +217,6 @@ Object.assign(JanitzaMonitor.prototype, {
         const all = document.getElementById('regTabAllCount');
         if (sel) sel.textContent = `(${(this.selectedRegisters || []).length})`;
         if (all) all.textContent = `(${this.flattenRegisters().length})`;
-    },
-
-    // Write is a Modbus thing, and only where the map declares something
-    // writable and the device is not locked — a menu item that opens a form
-    // for a device that can never take a write is a trap.
-    _regCanWrite() {
-        if (this._regDeviceIsHttp() || this._regDeviceIsMqtt()) return false;
-        const id = this._regDevice || this._primaryDeviceId();
-        const dev = (this._devices || []).find(d => d.id === id);
-        if (dev?.write_locked) return false;
-        return this.flattenRegisters().some(r => /W/i.test(String(r.access || '')));
-    },
-
-    _syncWriteMenuItem() {
-        const w = document.getElementById('writeRegBtn');
-        if (w) w.hidden = !this._regCanWrite();
-    },
-
-    // menu item: close the register menu, then run the named action
-    _regMenuPick(method) {
-        this.toggleRegMenu(false);
-        if (typeof this[method] === 'function') this[method]();
-    },
-
-    toggleRegMenu(open) {
-        const btn = document.getElementById('regMenuBtn'), menu = document.getElementById('regMenu');
-        if (!btn || !menu) return;
-        const willOpen = open === undefined ? menu.hidden : !!open;
-        menu.hidden = !willOpen;
-        btn.setAttribute('aria-expanded', willOpen ? 'true' : 'false');
-        if (willOpen) {
-            const items = [...menu.querySelectorAll('[role=menuitem]:not([hidden])')];
-            items[0]?.focus();
-            if (!menu._keys) {
-                menu._keys = true;
-                menu.addEventListener('keydown', (e) => {
-                    const its = [...menu.querySelectorAll('[role=menuitem]:not([hidden])')];
-                    const i = its.indexOf(document.activeElement);
-                    if (e.key === 'Escape') { this.toggleRegMenu(false); btn.focus(); }
-                    else if (e.key === 'ArrowDown') { e.preventDefault(); its[(i + 1) % its.length]?.focus(); }
-                    else if (e.key === 'ArrowUp') { e.preventDefault(); its[(i - 1 + its.length) % its.length]?.focus(); }
-                });
-                document.addEventListener('click', (e) => {
-                    if (!menu.hidden && !menu.contains(e.target) && e.target !== btn && !btn.contains(e.target)) this.toggleRegMenu(false);
-                });
-            }
-        }
     },
 
     // ── live values for the open map, by NAME: a JSON path has no address ──
@@ -508,7 +490,8 @@ Object.assign(JanitzaMonitor.prototype, {
             ui_widget: 'value',
             // quick-add inherits the convention default (phase/category) so a
             // one-click widget lands with the right identity color
-            ui_config: { color: this._defaultColorFor(reg) }
+            ui_config: { color: this._defaultColorFor(reg) },
+            ...this._canFieldsOf(reg)
         };
 
         this.selectedRegisters.push(newReg);
@@ -534,13 +517,100 @@ Object.assign(JanitzaMonitor.prototype, {
         }
     },
 
-    async saveSelectedRegistersQuiet() {
+    // the device page's full-screen Measurements editor stages the selection:
+    // nothing is written until its one Save (ADR-0032 §6, L3.11b)
+    _regStagedNow() {
+        const s = this._devDetail;
+        return !!(s && this._ddvEditing && this._ddvFullEditor === 'measurements' && this._view?.type === 'device'
+                  && String(this._regDevice || this._defaultDeviceId()) === String(s.id));
+    },
+
+    // a staged change: kept, said on the edit bar
+    _regStage() {
+        this._regDirty = true;
+        const fb = document.getElementById('ddvEditFeedback');
+        if (fb) { fb.textContent = this.t('ddv.full.staged', 'Not saved yet — Save writes it.'); fb.className = 'save-feedback'; }
+    },
+
+    // the full editor's Save: the selection (its own revision), then the
+    // calculated values (the device's tag) — {saved, failed, skipped}
+    async _regSaveStaged() {
+        const t = (k, d) => this.t(k, d);
+        const steps = [];
+        if (this._regDirty) steps.push(['selection', t('ddv.full.selection', 'the selection')]);
+        if (this._calc && this._calc.dirty) steps.push(['calculated', t('ddv.full.calculated', 'the calculated values')]);
+        const rep = { saved: [], failed: null, skipped: [] };
+        for (const [id, label] of steps) {
+            if (rep.failed) { rep.skipped.push(label); continue; }
+            let err = '';
+            try {
+                if (id === 'selection') {
+                    const r = await this._selSave(this._regSel, this._regDeviceQS(), this.selectedRegisters, { staged: true });
+                    if (r.status === 412) err = await this._regRebaseStaged();
+                    else if (!r.ok) err = this._respError(r, await r.json().catch(() => ({})));
+                    else {
+                        this._regDirty = false;
+                        // the primary's map reloads by the gateway's own call (a device's save reloads it)
+                        if (!this._regDeviceQS()) await fetch('/api/config/reload-registers', { method: 'POST' }).catch(() => null);
+                        await this.loadSelectedRegisters?.();
+                        this._afterSelectionChange();
+                    }
+                } else {
+                    err = await this._calcSaveStaged();
+                }
+            } catch (e) { err = String(e.message || e); }
+            if (err) rep.failed = { id: label, error: err };
+            else rep.saved.push(label);
+        }
+        return rep;
+    },
+
+    // a 412 of the staged selection (changed elsewhere since it was read):
+    // the selection stored now is read with its tag, the staged changes
+    // re-applied over it, the rows both changed said (ADR-0030, as the Edit
+    // modal does; review of L3.11b M2). Nothing is saved: the words for the
+    // edit bar (Save again goes through)
+    async _regRebaseStaged() {
+        const t = (k, d, p) => this.t(k, d, p);
+        const qs = this._regDeviceQS();
+        let r, data;
         try {
-            const response = await fetch('/api/registers/selected' + this._regDeviceQS(), {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(this.selectedRegisters)
-            });
+            r = await fetch('/api/registers/selected' + qs);
+            data = await r.json();
+        } catch (e) { r = null; }
+        if (!r || !r.ok) return t('ddv.full.selUnread', 'Changed elsewhere, and it could not be read again: nothing was saved; your changes are still here.');
+        const stored = data.registers || [];
+        const rb = window.DeviceShell.rebaseRows(this._regSelBase || [], this.selectedRegisters, stored, x => this._rk(x));
+        this.selectedRegisters = rb.rows;
+        this._regSel = this._selRev(qs, r);
+        this._regSelBase = JSON.parse(JSON.stringify(stored));
+        this._regDirty = true;
+        this._afterSelectionChange();
+        const names = rb.conflicts.map(c => (c.mine || c.stored || c.was || {}).name || c.key);
+        return names.length
+            ? t('ddv.full.selRebasedConf', 'Changed elsewhere since it was read: your changes were re-applied over the selection stored now; {n} of them were changed there too ({names}) — yours are kept. Nothing was saved: review, then Save again.',
+                { n: names.length, names: names.join(', ') })
+            : t('ddv.full.selRebased', 'Changed elsewhere since it was read: your changes were re-applied over the selection stored now. Nothing was saved: review, then Save again.');
+    },
+
+    // a map tool (Import CSV, Upload map, Raw JSON) works on what is stored:
+    // the editor's staged edits are asked about first (Discard reads the
+    // stored selection again); true when it may go on
+    async _regToolsLeave() {
+        if (!this._regStagedNow() || !this._ddvFullDirty()) return true;
+        if (!await this._confirmDiscard()) return false;
+        this._regDirty = false;
+        if (this._calc) { this._calc.dirty = false; this._calc.editing = null; }
+        await this.loadSelectedRegisters?.();
+        this._afterSelectionChange();
+        if (this._calc) await this._initCalculated(this._calc.deviceId);
+        return true;
+    },
+
+    async saveSelectedRegistersQuiet() {
+        if (this._regStagedNow()) { this._regStage(); return; }
+        try {
+            const response = await this._selSave(this._regSel, this._regDeviceQS(), this.selectedRegisters);
 
             if (!response.ok) {
                 throw new Error('Save failed');
@@ -567,7 +637,7 @@ Object.assign(JanitzaMonitor.prototype, {
     _regDeviceIsHttp() {
         const sp = this._regSourceProto();
         if (sp) return sp === 'http';
-        const id = this._regDevice || this._primaryDeviceId();
+        const id = this._regDevice || this._defaultDeviceId();
         const dev = (this._devices || []).find(d => d.id === id);
         return dev?.protocol === 'http';
     },
@@ -576,7 +646,7 @@ Object.assign(JanitzaMonitor.prototype, {
     _regDeviceIsMqtt() {
         const sp = this._regSourceProto();
         if (sp) return sp === 'mqtt';
-        const id = this._regDevice || this._primaryDeviceId();
+        const id = this._regDevice || this._defaultDeviceId();
         const dev = (this._devices || []).find(d => d.id === id);
         return dev?.protocol === 'mqtt';
     },
@@ -706,11 +776,21 @@ Object.assign(JanitzaMonitor.prototype, {
         if (nameEl) { nameEl.value = name; this._checkCanonicalName(); nameEl.focus(); }
     },
 
+    // a CAN row's frame and bits travel with it, or the CAN driver never reads it
+    _canFieldsOf(reg) {
+        const out = {};
+        for (const k of ['can_id', 'can_id_extended', 'start_bit', 'bit_length', 'byte_order']) {
+            if (reg && reg[k] !== undefined && reg[k] !== null && reg[k] !== '') out[k] = reg[k];
+        }
+        return out.can_id !== undefined ? out : {};
+    },
+
     openCustomRegisterModal() {
         this._loadCanonicalFields();
         const modal = document.getElementById('addRegisterModal');
         modal.dataset.mode = 'custom';
         modal.dataset.description = '';
+        modal.dataset.can = '';
         const http = this._regDeviceIsHttp();
         const mqtt = this._regDeviceIsMqtt();
         modal.dataset.http = http ? '1' : '';
@@ -798,6 +878,7 @@ Object.assign(JanitzaMonitor.prototype, {
         modal.dataset.jsonPath = reg.json_path || '';
         modal.dataset.scale = reg.scale != null ? String(reg.scale) : '1';
         modal.dataset.regType = reg.register_type || 'holding';
+        modal.dataset.can = JSON.stringify(this._canFieldsOf(reg));
 
         // Display info - show description prominently. For HTTP sources the numeric
         // address is just an internal key, so show the json_path instead.
@@ -949,7 +1030,8 @@ Object.assign(JanitzaMonitor.prototype, {
                 cfg.color = document.getElementById('addGaugeColor').value;
                 return cfg;
             })(),
-            thresholds: this.readThresholdsFromForm('add')
+            thresholds: this.readThresholdsFromForm('add'),
+            ...this._canFieldsOf(modal.dataset.mode === 'custom' ? {} : JSON.parse(modal.dataset.can || '{}'))
         };
 
         // Parse InfluxDB tags
@@ -1155,10 +1237,11 @@ Object.assign(JanitzaMonitor.prototype, {
             }
             const tr = document.createElement('tr');
             tr.dataset.address = this._rk(reg);
-            const mqttTooltip = reg.mqtt_enabled && reg.mqtt_topic ? `Topic: ${reg.mqtt_topic}` : (reg.mqtt_enabled ? 'Enabled' : 'Disabled');
-            let influxTooltip = 'Disabled';
+            const on = this.t('ddv.enabled', 'Enabled'), off = this.t('lbl.disabled', 'Disabled');
+            const mqttTooltip = reg.mqtt_enabled && reg.mqtt_topic ? `${this.t('templates.topic', 'Topic')}: ${reg.mqtt_topic}` : (reg.mqtt_enabled ? on : off);
+            let influxTooltip = off;
             if (reg.influxdb_enabled) {
-                influxTooltip = reg.influxdb_measurement || 'Enabled';
+                influxTooltip = reg.influxdb_measurement || on;
                 if (reg.influxdb_tags && Object.keys(reg.influxdb_tags).length) {
                     influxTooltip += ` [${Object.entries(reg.influxdb_tags).map(([k, v]) => `${k}=${v}`).join(', ')}]`;
                 }
@@ -1278,16 +1361,13 @@ Object.assign(JanitzaMonitor.prototype, {
     },
 
     async saveSelectedRegisters() {
+        if (this._regStagedNow()) { this._regStage(); return; }
         const btn = document.getElementById('saveRegistersBtn');
         this.setButtonLoading(btn, true);
 
         try {
             // Save registers to file
-            const response = await fetch('/api/registers/selected' + this._regDeviceQS(), {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(this.selectedRegisters)
-            });
+            const response = await this._selSave(this._regSel, this._regDeviceQS(), this.selectedRegisters);
 
             if (!response.ok) {
                 throw new Error('Save failed');
@@ -1363,6 +1443,7 @@ Object.assign(JanitzaMonitor.prototype, {
 
     async setRegSource(sourceId) {
         if (this._regSource === sourceId) return;
+        if (!await this._regToolsLeave()) return;      // another source's map: the staged edits asked about
         this._regSource = sourceId;
         await this.loadAllRegisters?.();
         await this.loadSelectedRegisters?.();
@@ -1389,7 +1470,7 @@ Object.assign(JanitzaMonitor.prototype, {
             if (!sel) return;
             if (devices.length <= 1) { sel.style.display = 'none'; return; }
             sel.style.display = '';
-            const cur = this._regDevice || this._primaryDeviceId();
+            const cur = this._regDevice || this._defaultDeviceId();
             sel.innerHTML = devices.map(d =>
                 `<option value="${this._esc(d.id)}" ${d.id === cur ? 'selected' : ''}>${this._esc(d.name || d.id)}</option>`).join('');
             if (!sel._wired) {
@@ -1416,8 +1497,8 @@ Object.assign(JanitzaMonitor.prototype, {
     },
 
     _maybeResetRegDevice() {
-        if (this._regDevice && this._regDevice !== this._primaryDeviceId()) {
-            this._regDevice = this._primaryDeviceId();
+        if (this._regDevice && this._regDevice !== this._defaultDeviceId()) {
+            this._regDevice = this._defaultDeviceId();
             this.loadAllRegisters();
             this.loadSelectedRegisters();
         }
@@ -1428,27 +1509,14 @@ Object.assign(JanitzaMonitor.prototype, {
         this.jumpToDeviceRegisters(which === 'view' ? this._viewDeviceId() : this._primaryDeviceId());
     },
 
+    // the device's Measurements editor, from anywhere (the dashboard's and
+    // Monitor's shortcuts): the device page's full-screen editor — one
+    // editor, never a stand-alone overlay (L3-UX-6); a role that does not
+    // edit gets the Measurements tab (the view)
     async jumpToDeviceRegisters(id) {
-        if (this.currentPage !== 'devices') this.navigateTo('devices');
-        await this.setRegDevice(id);
-        // Register editor overlays the Devices page (hide list + detail).
-        const list = document.getElementById('devicesListView');
-        const detail = document.getElementById('deviceDetailView');
-        if (list) list.style.display = 'none';
-        if (detail) detail.style.display = 'none';
-        const dev = (this._devices || []).find(d => d.id === id);
-        const titleEl = document.getElementById('deviceRegistersTitle');
-        if (titleEl) titleEl.textContent =
-            (dev?.name || id) + ' · ' + this.t('registers.configured', 'Measurements');
-        const reg = document.getElementById('deviceRegistersView');
-        if (reg) reg.style.display = '';
-        // Available (catalog) + Selected are both device-scoped via setRegDevice.
-        this.registerSearchPage = 1;
-        this.renderRegistersTable();
-        this.updateConfigTabs();
-        this.renderSelectedRegistersList();
-        this._wireDeviceRegTabs();
-        this.switchDeviceRegTab('selected');    // what is read comes first
+        if (!id || !await this.openDeviceDetail(id)) return;
+        if (window.DeviceViewModel.allows(this._effRole(), 'admin')) this.ddvEdit('measurements');
+        else this._switchDeviceTab('measurements');
     },
 
     _wireDeviceRegTabs() {
@@ -1473,8 +1541,8 @@ Object.assign(JanitzaMonitor.prototype, {
     // Download this device's full register map. If the device has a template we
     // export it in the re-uploadable template format (round-trips with Upload
     // map); otherwise we export the live catalog as Janitza-model JSON.
-    downloadRegisterMap() {
-        const id = this._regDevice || this._primaryDeviceId();
+    downloadRegisterMap(deviceId) {
+        const id = deviceId || this._regDevice || this._defaultDeviceId();
         const dev = (this._devices || []).find(d => d.id === id);
         if (dev?.template) {
             const a = document.createElement('a');
@@ -1495,8 +1563,9 @@ Object.assign(JanitzaMonitor.prototype, {
     // Upload a register map (device-template JSON) and assign it to the current
     // device. The primary keeps its built-in Janitza catalog, so it's blocked
     // there to protect the byte-identical migration.
-    uploadDeviceMap() {
-        const id = this._regDevice || this._primaryDeviceId();
+    async uploadDeviceMap() {
+        if (!await this._regToolsLeave()) return;
+        const id = this._regDevice || this._defaultDeviceId();
         if (id === this._primaryDeviceId()) {
             this.showToast('info', this.t('registers.upload.primaryTitle', 'Uses built-in map'),
                            this.t('registers.upload.primaryMsg',
@@ -1528,7 +1597,7 @@ Object.assign(JanitzaMonitor.prototype, {
             });
             const res = await r.json();
             // (the 409 says builtin inside detail: a built-in id is never overwritten)
-            if (r.status === 409 && !res.detail?.builtin) {
+            if (r.status === 409 && !res.detail?.builtin && !res.detail?.config_blocked) {
                 if (await this._tplOverwriteAsk(data?.device_template?.id || data?.id))
                     return this._uploadMapAndAssign(data, deviceId, true);
                 return;
@@ -1539,24 +1608,17 @@ Object.assign(JanitzaMonitor.prototype, {
                 return;
             }
             const tplId = res.template.id;
-            // assign the imported template to the device — send its FULL current
-            // config with only the template swapped (the API validates connection).
-            const dev = (this._devices || []).find(d => d.id === deviceId);
-            const c = dev?.connection || {};
-            const payload = {
-                id: deviceId, name: dev?.name || deviceId, template: tplId,
-                enabled: dev?.enabled !== false,
-                // the device's own connection as it is (a bridge, a tap, RTU,
-                // ASCII, UDP…) — only the template changes
-                connection: this._connPayloadOf(dev) || {},
-                mqtt: { topic_prefix: dev?.mqtt_topic_prefix },
-                influxdb: { bucket: dev?.influxdb_bucket, device_tag: dev?.influxdb_device_tag },
-                ha_discovery_enabled: dev?.ha_discovery_enabled !== false,
-            };
-            const put = await fetch(`/api/devices/${encodeURIComponent(deviceId)}`, {
-                method: 'PUT', headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(payload),
-            });
+            // assign the imported template to the device: its Model section
+            // alone (the Edit modal's), never the rest of the device from a
+            // cached row — that undid a connection saved meanwhile (L3-F11).
+            // The tag: the page's when it holds this device, else read now.
+            let ifMatch = null;
+            if (window.DeviceStore.id !== String(deviceId)) {
+                const g = await fetch(`/api/devices/${encodeURIComponent(deviceId)}`);
+                ifMatch = g.ok ? g.headers.get('ETag') : null;
+            }
+            const put = await window.DeviceStore.devWrite(deviceId, 'PATCH', `/api/devices/${encodeURIComponent(deviceId)}`,
+                                                          { sections: { model: { template: tplId } } }, { ifMatch });
             if (!put.ok) {
                 const errs = (await put.json()).detail?.errors || ['assign failed'];
                 this.showToast('error', this.t('registers.upload.assignFail', 'Template imported but assign failed'),
@@ -1574,12 +1636,16 @@ Object.assign(JanitzaMonitor.prototype, {
     },
 
     // ── Modbus write (FC5/FC6/FC16) — gated, non-primary only ─────────────
-    openWriteModal() {
+    openWriteModal(deviceId) {
         // F3a: no hardcoded read-only — the per-device write LOCK decides
         // (the primary ships locked by default; the envelope lookup in
         // submitWrite surfaces the lock with a clear message).
-        const id = this._regDevice || this._primaryDeviceId();
+        const id = deviceId || this._regDevice || this._defaultDeviceId();
         this._writeDeviceId = id;
+        // the dialog writes to hardware: it says which device, from the start
+        const dev = (this._devices || []).find(d => d.id === id) || {};
+        const named = document.getElementById('writeModalDevice');
+        if (named) named.textContent = this.t('write.toDevice', 'To {name} ({id})', { name: dev.name || id, id });
         ['writeAddr', 'writeValue', 'writeLease'].forEach(k => { const e = document.getElementById(k); if (e) e.value = ''; });
         document.getElementById('writeScale').value = '1';
         document.getElementById('writeResult').innerHTML = '';
@@ -1626,7 +1692,7 @@ Object.assign(JanitzaMonitor.prototype, {
         const box = document.getElementById('writeResult');
         if (info?.write_locked) {
             box.innerHTML = `<div class="settings-card" style="padding:8px 12px;color:var(--danger-text,#c0392b);">
-                <i aria-hidden="true" class="bi bi-lock"></i> ${this.t('write.locked', 'This device is write-locked. Unlock it in the Outputs tab (write protection) first.')}</div>`;
+                <i aria-hidden="true" class="bi bi-lock"></i> ${this._roleHint('write.locked', 'This device is write-locked. Unlock it first from its ⋯ → Unlock writes….', 'write.lockedOther', 'This device is write-locked. An admin unlocks it.')}</div>`;
             return;
         }
         let guardTxt = '';
@@ -1645,6 +1711,12 @@ Object.assign(JanitzaMonitor.prototype, {
             }
             guardTxt = `<div style="font-size:12px;margin-top:4px;color:var(--success-text,#1a8f4c);">
                 <i aria-hidden="true" class="bi bi-shield-check"></i> ${this.t('write.guarded', 'Declared register')} · ${this._esc(info.data_type || '')}${g.length ? ' · ' + this._esc(g.join(' · ')) : ' · ' + this.t('write.noGuards', 'no guards declared')}</div>`;
+        } else if (!window.DeviceViewModel.allows(this._effRole(), 'admin')) {
+            // not declared writable: only a raw write is left, and the server
+            // gives that to the admin account alone — said before Confirm
+            box.innerHTML = `<div class="settings-card" style="padding:8px 12px;color:var(--danger-text,#c0392b);">
+                <i aria-hidden="true" class="bi bi-shield-lock"></i> ${this.t('write.rawAdmin', 'This register is not declared writable: a raw write needs the admin account.')}</div>`;
+            return;
         } else {
             body.unguarded = true;
             guardTxt = `<div style="font-size:12px;margin-top:6px;color:var(--warning-text,#c77700);">
@@ -1689,9 +1761,7 @@ Object.assign(JanitzaMonitor.prototype, {
         const orig = btn ? btn.innerHTML : '';
         if (btn) { btn.disabled = true; btn.innerHTML = '<span class="btn-spinner"></span>'; }
         try {
-            const r = await fetch(`/api/devices/${encodeURIComponent(id)}/write`, {
-                method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
-            });
+            const r = await window.DeviceStore.devWrite(id, 'POST', `/api/devices/${encodeURIComponent(id)}/write`, body);
             const res = await r.json();
             if (!r.ok) {
                 const errs = res.detail?.errors || [res.detail || 'write failed'];
@@ -1739,14 +1809,12 @@ Object.assign(JanitzaMonitor.prototype, {
         hint.textContent = '';
         list.innerHTML = `<div class="field-hint" style="padding:8px;">${this._esc(
             this.t('registers.custom.pickFetching', 'Fetching a live payload…'))}</div>`;
-        const device = this._regDevice || this._primaryDeviceId();
+        const device = this._regDevice || this._defaultDeviceId();
         const mqtt = this._regDeviceIsMqtt();
         const topic = mqtt ? (document.getElementById('addTopicInput')?.value || '').trim() : '';
         try {
-            const r = await fetch(`/api/devices/${encodeURIComponent(device)}/payload-sample`, {
-                method: 'POST', headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(topic ? { topic } : {}),
-            });
+            const r = await window.DeviceStore.devWrite(device, 'POST', `/api/devices/${encodeURIComponent(device)}/payload-sample`,
+                                                        topic ? { topic } : {});
             const data = await r.json();
             if (!r.ok) throw new Error((data.detail?.errors || [data.detail || r.statusText]).join('; '));
             if (!data.ok) throw new Error(data.error || 'sample failed');

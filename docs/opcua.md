@@ -36,8 +36,8 @@ In `config.yaml` it is the `opcua:` section, with the same names.
 
 ### Behind a load balancer
 
-Two gateways in a high-availability pair are one OPC UA server to their
-clients: a load balancer (HAProxy) in front sends the connections to the
+Two gateways in a high-availability pair (master/standby is available in
+MBG Pro) are one OPC UA server to their clients: a load balancer (HAProxy) in front sends the connections to the
 active one (it asks `GET /api/role`: 200 active, 503 standby). Set
 **Public address** to the balancer's, `opc.tcp://<balancer>:4840/mbg`:
 
@@ -51,8 +51,10 @@ active one (it asks `GET /api/role`: 200 active, 503 standby). Set
 
 ### Which devices and values are served
 
-Each device chooses, like its MQTT and InfluxDB outputs: **Device →
-Outputs → OPC UA**.
+Each device chooses, like its MQTT and InfluxDB outputs: the device's ⋯ →
+**Outputs…** → **OPC UA** (the Edit device dialog: set, then **Save**). An
+installation's unit shares its group's choice: the change is staged the same
+way, and the summary before **Save** names every unit it reaches.
 - **Enable:** the device is served, or not at all.
 - **Every value**, or **only the values I choose** (a filterable list of
   what the device reads). An HMI then gets exactly what it shows, and the

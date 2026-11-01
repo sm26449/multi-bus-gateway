@@ -1,5 +1,5 @@
 # Multi-Bus Gateway — multi-protocol Modbus/HTTP/MQTT acquisition gateway.
-# Copyright (C) 2024-2026 Stefan Maldaianu <sm26449@diysolar.ro>  — AGPL-3.0-or-later
+# Copyright (C) 2024-2026 Stefan Maldaianu <stefan@multibus.dev>  — AGPL-3.0-or-later
 """Config self-healing: a good load leaves a snapshot; a later corrupt config
 falls back to that snapshot (not bare defaults), preserves the broken file, and
 keeps saves disabled + surfaces the condition."""

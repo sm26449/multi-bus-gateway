@@ -1,5 +1,5 @@
 # Multi-Bus Gateway — multi-protocol Modbus/HTTP/MQTT acquisition gateway.
-# Copyright (C) 2024-2026 Stefan Maldaianu <sm26449@diysolar.ro>  — AGPL-3.0-or-later
+# Copyright (C) 2024-2026 Stefan Maldaianu <stefan@multibus.dev>  — AGPL-3.0-or-later
 """Rules with time: the clock in expressions (hour, weekday, between), a
 change that must hold for a while (for_s), the on/off timers (minimum run
 and stop time, maximum run time with a rest, starts per hour) and the

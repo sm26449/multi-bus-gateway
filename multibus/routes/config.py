@@ -1,5 +1,5 @@
 # Multi-Bus Gateway — multi-protocol Modbus/HTTP/MQTT acquisition gateway.
-# Copyright (C) 2024-2026 Stefan Maldaianu <sm26449@diysolar.ro>  — AGPL-3.0-or-later
+# Copyright (C) 2024-2026 Stefan Maldaianu <stefan@multibus.dev>  — AGPL-3.0-or-later
 """Configuration read + persist-only writes.
 
 The config sections that only READ or PERSIST settings (Modbus/MQTT/InfluxDB
@@ -20,7 +20,7 @@ from fastapi import APIRouter, Body, HTTPException, Request
 from ..payload import flag
 from fastapi.responses import JSONResponse
 
-from ._models import InfluxDBConfigUpdate, ModbusConfigUpdate, MQTTConfigUpdate
+from ._models import InfluxDBConfigUpdate, ModbusConfigUpdate, MQTTConfigUpdate, PreviewBudgetUpdate
 from ._shared import secrets_visible as _secrets_visible
 
 logger = logging.getLogger(__name__)
@@ -32,6 +32,22 @@ def build(ctx) -> APIRouter:
     auth_state = ctx.auth_state
     audit_log = ctx.audit_log
     app = ctx.app
+
+    def _pattern_check(field: str, pat, *, topic: bool) -> None:
+        """422 for a default pattern that cannot name a new device."""
+        if pat is None or not str(pat).strip():
+            return                          # empty: the identity scope's default
+        from ..identity import fill, pattern_error
+        msg = pattern_error(pat, config.gateway_id)
+        if not msg:
+            filled = fill(str(pat).strip(), "device", config.gateway_id or "gw")
+            if topic:
+                from ..topic_prefix import shape_error
+                msg = shape_error(filled)
+            elif any(c in filled for c in "/\\ "):
+                msg = f"'{filled}' is not a bucket name"
+        if msg:
+            raise HTTPException(status_code=422, detail={"errors": [f"{field}: {msg}"], "fields": {field: msg}})
 
     @r.get("/api/config")
     async def get_config(request: Request):
@@ -67,15 +83,33 @@ def build(ctx) -> APIRouter:
         }
 
     @r.post("/api/config/modbus")
-    async def update_modbus_config(update: ModbusConfigUpdate):
-        """Update Modbus configuration."""
+    def update_modbus_config(update: ModbusConfigUpdate):
+        """Update Modbus configuration — the primary meter's connection:
+        judged and written as PUT / PATCH /api/devices/{primary} judge and
+        write it (one validator, its entry lock, the devices rebuilt; L3.11a
+        review #7). A refusal is a 422 with `fields`; nothing reconnects
+        until Apply."""
         try:
-            config.update_modbus(**update.model_dump())
-            config.save_yaml_config()
+            ctx.write_primary_modbus({k: v for k, v in update.model_dump().items() if v is not None})
             return {"status": "ok", "message": "Modbus config updated. Apply to reconnect."}
+        except HTTPException:
+            raise
         except Exception as e:
             logger.exception("modbus config update failed")
             raise HTTPException(status_code=500, detail=f"internal error ({type(e).__name__}) — see the server log")
+
+    @r.get("/api/config/preview")
+    async def get_preview_budget():
+        """The read preview's budget (ADR-0031 §5): {max_requests, listen_s}."""
+        return config.preview_budget()
+
+    @r.post("/api/config/preview")
+    async def update_preview_budget(update: PreviewBudgetUpdate):
+        """Set the read preview's budget: max_requests 1..20, listen_s 1..60
+        (whole numbers; anything else 422). Applies to the next preview."""
+        config.update_preview(**update.model_dump())
+        config.save_yaml_config()
+        return config.preview_budget()
 
     @r.get("/api/config/mqtt")
     async def get_mqtt_config():
@@ -104,7 +138,10 @@ def build(ctx) -> APIRouter:
 
     @r.post("/api/config/mqtt")
     async def update_mqtt_config(update: MQTTConfigUpdate):
-        """Update MQTT configuration."""
+        """Update MQTT configuration. A default topic pattern is checked: the
+        prefix it gives a device must be a topic prefix, and {gateway} needs
+        a gateway id (ADR-0026)."""
+        _pattern_check("default_topic_pattern", update.default_topic_pattern, topic=True)
         try:
             config.update_mqtt(**update.model_dump())
             config.save_yaml_config()
@@ -326,6 +363,7 @@ def build(ctx) -> APIRouter:
             "bucket": config.influxdb.bucket,
             "write_interval": config.influxdb.write_interval,
             "publish_mode": config.influxdb.publish_mode,
+            "heartbeat_interval": config.influxdb.heartbeat_interval,
             "default_bucket_pattern": config.influxdb.default_bucket_pattern,
         }
 
@@ -333,7 +371,9 @@ def build(ctx) -> APIRouter:
     async def update_influxdb_config(update: InfluxDBConfigUpdate):
         """Update InfluxDB configuration. A URL that round-trips the GET's
         redacted form unchanged keeps the stored value — otherwise a settings
-        save made from a redacted view would overwrite the real credentials."""
+        save made from a redacted view would overwrite the real credentials.
+        A default bucket pattern is checked as the MQTT one is."""
+        _pattern_check("default_bucket_pattern", update.default_bucket_pattern, topic=False)
         try:
             _payload = update.model_dump()
             _cur = config.influxdb.url or ""

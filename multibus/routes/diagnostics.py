@@ -1,5 +1,5 @@
 # Multi-Bus Gateway — multi-protocol Modbus/HTTP/MQTT acquisition gateway.
-# Copyright (C) 2024-2026 Stefan Maldaianu <sm26449@diysolar.ro>
+# Copyright (C) 2024-2026 Stefan Maldaianu <stefan@multibus.dev>
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU Affero General Public License as published by
@@ -160,6 +160,7 @@ def build(ctx) -> APIRouter:
                 "interpretations": interpret_words(list(words))}
 
     @r.post("/api/devices/{device_id}/payload-sample")
+    @ctx.device_runtime
     async def payload_sample(device_id: str, payload: Dict = Body(default={})):
         """One full payload from a saved MQTT/HTTP device, for the json_path
         picker: MQTT grabs a message from the topic (retained → instant, creds

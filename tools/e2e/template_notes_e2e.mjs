@@ -1,5 +1,5 @@
 // Multi-Bus Gateway — multi-protocol Modbus/HTTP/MQTT acquisition gateway.
-// Copyright (C) 2024-2026 Stefan Maldaianu <sm26449@diysolar.ro>  — AGPL-3.0-or-later
+// Copyright (C) 2024-2026 Stefan Maldaianu <stefan@multibus.dev>  — AGPL-3.0-or-later
 //
 // Notes for users: what a template says before anyone relies on it. Written
 // in the Advanced editor, shown where the template is picked (wizard), at the
@@ -84,15 +84,17 @@ try {
   check('the command a warning names carries a mark with the note', await flag.count() === 1
     && /no effect/.test(await flag.getAttribute('title') || ''), await flag.count());
 
-  // ═══ 2. the wizard, where the template is picked ═══════════════════════
+  // ═══ 2. Add Device's "What is it?", where the model is picked (L3.9) ═══
   await page.evaluate(() => window.app.openDeviceWizard());
-  await page.waitForSelector('#deviceWizardModal.active');
-  await page.evaluate(tpl => { const w = window.app._devWiz; w.data.protocol = 'tcp'; w.step = 2; w.data.template = tpl; window.app._devWizRender(); }, TPL);
-  await page.waitForSelector('#devWizTplList');
-  check('the template list flags a template with a warning',
-    await page.locator(`#devWizTplList .tpl-pick[data-tpl="${TPL}"] .tpl-note-flag`).count() === 1);
-  check('picking it shows its notes', await page.locator('#deviceWizardModal .tpl-note').count() === 2);
-  await page.locator('#deviceWizardModal .modal-close').first().click().catch(() => {});
+  await page.waitForSelector('#addDeviceModal.active');
+  await page.waitForFunction(() => !document.querySelector('#addDevMain[aria-busy="true"]'));
+  await page.fill('#adQ', TPL);
+  check('the model list flags a template with a warning',
+    await page.locator(`#adResults [data-ad-tpl="${TPL}"] .ad-badge.is-note.is-warn`).count() === 1);
+  await page.click(`#adResults [data-ad-tpl="${TPL}"]`);
+  check('picking it shows its notes', await page.locator('#adTplNotes .tpl-note').count() === 2);
+  await page.locator('#addDeviceModal .modal-close').first().click().catch(() => {});
+  await page.locator('#appDialog button:has-text("Discard")').click({ timeout: 2000 }).catch(() => {});
   await page.waitForTimeout(300);
 
   // ═══ 3. written in the Advanced editor ═════════════════════════════════

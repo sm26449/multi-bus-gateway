@@ -1,5 +1,5 @@
 # Multi-Bus Gateway — multi-protocol Modbus/HTTP/MQTT acquisition gateway.
-# Copyright (C) 2024-2026 Stefan Maldaianu <sm26449@diysolar.ro>
+# Copyright (C) 2024-2026 Stefan Maldaianu <stefan@multibus.dev>
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU Affero General Public License as published by
@@ -62,6 +62,8 @@ def normalize_doc(doc: Dict[str, Any]) -> Dict[str, Any]:
         out['settings'] = {}
     if out['settings'].get('location_publish') not in cat.PUBLISH_MODES:
         out['settings']['location_publish'] = 'coarse'
+    if 'publish_serials' in out['settings'] and not isinstance(out['settings']['publish_serials'], bool):
+        out['settings'].pop('publish_serials')          # off, as when it was never set
     if not isinstance(out.get('site'), dict):
         out['site'] = {}
     for lv in ('installation', 'device'):
@@ -88,15 +90,19 @@ class AttributeService:
     - ``devices()`` → [(device id, installation id or '', kind or None,
       mppt count or None)] of the devices that exist now;
     - ``installations()`` → [installation id];
-    - ``on_change(trigger, who)`` → a rollback point, the publishers.
+    - ``on_change(trigger, who)`` → a rollback point, the publishers;
+    - ``device_type(device id)`` → (type id, its English label) or None, the
+      device's type as ``<dev>/meta`` says it (ADR-0027).
     """
 
     def __init__(self, path, *, devices: Callable[[], Iterable[Tuple[str, str, Optional[str], Optional[int]]]],
                  installations: Callable[[], Iterable[str]],
-                 audit=None, on_change: Optional[Callable[[str, str], None]] = None):
+                 audit=None, on_change: Optional[Callable[[str, str], None]] = None,
+                 device_type: Optional[Callable[[str], Optional[Tuple[str, str]]]] = None):
         self.store = FileStore(path, DEFAULT_DOC, normalize=normalize_doc)
         self._devices = devices
         self._installations = installations
+        self._device_type = device_type
         self._audit = audit
         self._on_change = on_change
         # the readers on a hot path (a formula each poll, the aggregator each
@@ -119,6 +125,13 @@ class AttributeService:
 
     def _invalidate(self) -> None:
         self._snap = None
+
+    def invalidate(self) -> None:
+        """Forget what the hot readers hold — the document and the devices'
+        kinds — so the next meta says what was just changed (a device's type,
+        a type's behaves_like)."""
+        self._snap = None
+        self._devmap = None
 
     # ── what exists ──────────────────────────────────────────────────────────
     def _device_map(self, cached: bool = False) -> Dict[str, Tuple[str, Optional[str], Optional[int]]]:
@@ -144,6 +157,12 @@ class AttributeService:
         doc = doc if doc is not None else self.store.read()[0]
         mode = ((doc.get('settings') or {}).get('location_publish') or 'coarse')
         return mode if mode in cat.PUBLISH_MODES else 'coarse'
+
+    def publish_serials(self, doc: Optional[Dict] = None) -> bool:
+        """Whether the private fields (a serial number) go out on MQTT and OPC
+        UA; off unless set (signed-in readers of the API always see them)."""
+        doc = doc if doc is not None else self.store.read()[0]
+        return (doc.get('settings') or {}).get('publish_serials') is True
 
     def _view(self, obj: Any, exact: bool, doc: Dict) -> Any:
         """What a reader may see: exact for an admin; else per the setting
@@ -251,16 +270,38 @@ class AttributeService:
             return vals[0] if all(v == vals[0] for v in vals) else None
         return value.get(field) if isinstance(value, dict) else None
 
+    def labels_of(self, level: str, target: str) -> List[str]:
+        """A device's or an installation's identity labels (the device list
+        and its ``label`` filter read them; a snapshot a second old)."""
+        doc, _rev = self._read()
+        ident = (((doc.get(level) or {}).get(target) or {}).get('identity') or {})
+        labels = ident.get('labels') if isinstance(ident, dict) else None
+        return [x for x in labels if isinstance(x, str)] if isinstance(labels, list) else []
+
     # ── published (MQTT meta, OPC UA): what anyone may read ─────────────────
     def meta(self, level: str, target: str = '') -> Dict[str, Any]:
         """A place's attributes as published: versioned, coordinates as the
         publishing setting says (never exact unless it says exact)."""
         doc, rev = self._read()
         attrs = (doc.get('site') or {}) if level == 'site' else ((doc.get(level) or {}).get(target) or {})
+        if not self.publish_serials(doc):
+            attrs = cat.without_private(attrs)
+        if self.publish_mode(doc) == 'off':
+            # where it is mounted says where someone lives as much as the
+            # coordinates do: the same switch keeps it off the broker
+            attrs = cat.without_fields(attrs, (('identity', 'location'),))
         out: Dict[str, Any] = {'schema': SCHEMA, 'rev': rev, 'level': level, 'id': target or 'site',
                                'attributes': self._view(attrs, False, doc)}
         if level == 'device':
             out['kind'] = self._device_map(cached=True).get(target, ('', None, None))[1]
+            typ = None
+            if self._device_type is not None:
+                try:
+                    typ = self._device_type(target)
+                except Exception:  # noqa: BLE001 — a label never fails a publish
+                    logger.exception("attributes: the type of %s could not be told", target)
+            if typ:
+                out['type'], out['type_label'] = typ
         loc, src = self.effective_location(level, target, doc)
         if loc and self.publish_mode(doc) != 'off':
             out['location'] = {'value': self._view(loc, False, doc), 'from': src}
@@ -278,7 +319,8 @@ class AttributeService:
                         out[f"{c}.{i}.{f}"] = x
             elif isinstance(v, dict):
                 for f, x in v.items():
-                    out[f"{c}.{f}"] = x
+                    # a list (identity labels) is one string on a node
+                    out[f"{c}.{f}"] = ', '.join(map(str, x)) if isinstance(x, list) else x
         for f, x in ((m.get('location') or {}).get('value') or {}).items():
             out.setdefault(f"location.{f}", x)
         return out
@@ -368,6 +410,60 @@ class AttributeService:
         doc, rev, _ = self.store.mutate(change, expected_rev)
         self._invalidate()
         self._record('settings', 'site', '', 'location_publish', box.get('before'), mode, who, ip, doc)
+        return rev
+
+    def set_publish_serials(self, on: Any, *, who: str = '', ip: str = '',
+                            expected_rev: Optional[str] = None) -> str:
+        if not isinstance(on, bool):
+            raise Invalid(["publish_serials: true or false"])
+        box: Dict[str, Any] = {}
+
+        def change(doc):
+            s = doc.setdefault('settings', {})
+            box['before'] = s.get('publish_serials', False)
+            s['publish_serials'] = on
+        doc, rev, _ = self.store.mutate(change, expected_rev)
+        self._invalidate()
+        self._record('settings', 'site', '', 'publish_serials', box.get('before'), on, who, ip, doc)
+        return rev
+
+    @staticmethod
+    def check_many(level: str, values: Any, *, mppt_count: Optional[int] = None,
+                   where: str = 'attributes') -> Tuple[Dict[str, Any], List[str]]:
+        """``{category: value}`` as a new device's would be stored: (clean,
+        errors). Nothing is written — the device is not made yet."""
+        if not isinstance(values, dict):
+            return {}, [f"{where}: an object {{category: value}}"]
+        clean: Dict[str, Any] = {}
+        errors: List[str] = []
+        for c, v in values.items():
+            got, e, _w = cat.validate(str(c), v, level=level, mppt_count=mppt_count)
+            errors += [f"{where}.{x}" for x in e]
+            if not e:
+                clean[str(c)] = got
+        return clean, errors
+
+    def put_many(self, level: str, target: str, values: Dict[str, Any], *, who: str = '',
+                 ip: str = '') -> str:
+        """Several categories at once, checked first (all or nothing): a
+        device created with its attributes."""
+        if not self._exists(level, target):
+            raise NotFound(f"no {level} {target!r}")
+        mppt = self._device_map().get(target, ('', None, None))[2] if level == 'device' else None
+        clean, errors = self.check_many(level, values, mppt_count=mppt)
+        if errors:
+            raise Invalid(errors)
+        befores: Dict[str, Any] = {}
+
+        def change(doc):
+            node = doc.setdefault(level, {}).setdefault(target, {})
+            for c, v in clean.items():
+                befores[c] = node.get(c)
+                node[c] = v
+        doc, rev, _ = self.store.mutate(change)
+        self._invalidate()
+        for c, v in clean.items():
+            self._record('set', level, target, c, befores.get(c), v, who, ip, doc)
         return rev
 
     def copy_to(self, source: str, category: str, targets: List[str], *, who: str = '',

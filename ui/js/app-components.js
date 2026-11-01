@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-// Copyright (C) 2024-2026 Stefan Maldaianu <sm26449@diysolar.ro>
+// Copyright (C) 2024-2026 Stefan Maldaianu <stefan@multibus.dev>
 //
 // components — augments JanitzaMonitor.prototype
 //
@@ -59,13 +59,13 @@ Object.assign(JanitzaMonitor.prototype, {
         </div>`;
     },
 
-    // a component's "Read via" tab: its parent's connection (read-only),
-    // its instance, and what can be done to it from here
-    _componentReadViaHtml(s) {
+    // how a component is read (the Edit device modal's Connection, "set on its
+    // device", L3.11b): its parent's connection (read-only) and
+    // its instance — Rename…, Disable… and Remove… are the ⋯ menu's (L3-UX-2)
+    _componentReadViaFactsHtml(s) {
         const t = this.t.bind(this);
         const parent = (this._devices || []).find(x => x.id === s.component_of) || { id: s.component_of };
         const reach = this._reachWords(parent);
-        const d = s.data || {};
         const fact = (label, val) => `<div><div style="color:var(--text-secondary);font-size:11.5px;">${label}</div><div style="font-weight:600;font-size:13.5px;word-break:break-all;">${val}</div></div>`;
         return `
         <div class="settings-card">
@@ -77,25 +77,30 @@ Object.assign(JanitzaMonitor.prototype, {
                     ${fact(t('components.type', 'Type'), this._esc(s.component_type_name || s.component_type))}
                     ${fact(t('components.instance', 'Instance'), this._esc(s.component_instance))}
                 </div>
-                <p class="field-hint" style="margin:0 0 12px;">${t('components.readThroughEdit', 'Its connection is its device’s: change it on that device’s Edit tab.')}</p>
-                <div style="display:flex;gap:8px;flex-wrap:wrap;">
-                    <button data-admin class="btn btn-secondary btn-sm" ${this._act('renameComponentUi', [s.id, d.name, s.component_of])}><i aria-hidden="true" class="bi bi-pencil"></i> ${t('components.rename', 'Rename')}</button>
-                    <button data-admin class="btn btn-secondary btn-sm" ${this._act('switchComponentUi', [s.id, !d.enabled, s.component_of])}><i aria-hidden="true" class="bi bi-${d.enabled ? 'pause' : 'play'}-circle"></i> ${d.enabled ? t('components.disable', 'Disable') : t('components.enable', 'Enable')}</button>
-                    <button data-admin class="btn btn-ghost btn-sm" ${this._act('removeComponentUi', [s.id, s.component_of])}><i aria-hidden="true" class="bi bi-trash"></i> ${t('components.remove', 'Remove')}</button>
-                </div>
+                <p class="field-hint" style="margin:0;">${this._esc(this._roleHint('components.readThroughEdit', 'Its connection is its device’s: change it from that device’s ⋯ → Edit connection….', 'components.readThroughOther', 'Its connection is its device’s, set there.'))}</p>
             </div>
         </div>`;
     },
 
     // after a change made on a component's own page, that page shows it
-    // (renamed, switched); on its parent's page, the Components card does
-    async _componentChanged(s) {
-        if (s.component_of) {
-            await this.openDeviceDetail(s.id);
-            this._switchDeviceTab('connection');
-        } else {
-            await this.renderComponentsCard();
-        }
+    // (renamed, switched) where it was; on its parent's page, the Components
+    // card does
+    // after a component changed, wherever it was changed from: its own page
+    // drawn again, its parent's Components card, or (a list row, a bridge
+    // line: no page open, L3.10 review B1) the list
+    async _componentChanged(id, parent) {
+        const s = this._devDetail;
+        const onPage = this._view?.type === 'device' && s;
+        if (onPage && s.id === id) return this._ddvRedraw(id);
+        if (onPage && s.id === parent) return this.renderComponentsCard();
+        await this._fetchDevices(true).catch(() => null);
+        if (this.currentPage === 'devices' && !onPage && this._view?.type !== 'installation') this.renderDevicesList();
+    },
+
+    // the device a component is part of: said by the caller, else its row
+    _componentParent(id, parentId) {
+        return parentId || ((this._devices || []).find(x => x.id === id) || {}).component_of
+            || (this._devDetail?.id !== id ? this._devDetail?.id : '') || '';
     },
 
     // ── the Components card on a parent's Overview ──────────────────────────
@@ -170,9 +175,9 @@ Object.assign(JanitzaMonitor.prototype, {
         if (hint) hint.textContent = x.instance_hint || '';
     },
 
-    async _componentCall(url, method, body) {
-        const r = await fetch(url, { method, headers: { 'Content-Type': 'application/json' },
-                                     body: body === undefined ? undefined : JSON.stringify(body) });
+    // a write to the parent device `id` (its tag sent and kept: ADR-0030)
+    async _componentCall(id, url, method, body) {
+        const r = await window.DeviceStore.devWrite(id, method, url, body);
         const res = await r.json().catch(() => ({}));
         if (!r.ok) {
             const det = res.detail;
@@ -191,7 +196,7 @@ Object.assign(JanitzaMonitor.prototype, {
         const nm = (name ?? document.getElementById('compName')?.value ?? '').trim();
         if (nm) body.name = nm;
         try {
-            const res = await this._componentCall(`/api/devices/${encodeURIComponent(s.id)}/components`, 'POST', body);
+            const res = await this._componentCall(s.id, `/api/devices/${encodeURIComponent(s.id)}/components`, 'POST', body);
             this.showToast('success', this.t('components.added', 'Component added'), res.component?.name || '');
             await this.renderComponentsCard();
             if (this._compFoundLast) this._paintFoundComponents(this._compFoundLast);
@@ -200,44 +205,45 @@ Object.assign(JanitzaMonitor.prototype, {
         }
     },
 
+    // Rename…, Disable… / Enable, Remove… of a component: from its page, its
+    // parent's card, a list row, a table row or a bridge line alike — none
+    // waits for a page (L3.10 review B1); the parent's entry holds it
     async renameComponentUi(id, current, parentId) {
-        const s = this._devDetail;
-        if (!s) return;
-        const parent = parentId || s.id;
+        const parent = this._componentParent(id, parentId);
+        if (!parent) return;
         const name = await this.askValue({
             title: this.t('components.renameTitle', 'Rename {id}', { id }),
             kind: 'text', initial: current || '',
             label: this.t('components.renamePrompt', 'New name'),
             confirmLabel: this.t('common.save', 'Save'),
         });
-        if (name === null || this._devDetail !== s) return;
+        if (name === null) return;
         try {
-            await this._componentCall(`/api/devices/${encodeURIComponent(parent)}/components/${encodeURIComponent(id)}`, 'PATCH', { name: name.trim() });
-            await this._componentChanged(s);
+            await this._componentCall(parent, `/api/devices/${encodeURIComponent(parent)}/components/${encodeURIComponent(id)}`, 'PATCH', { name: name.trim() });
+            await this._componentChanged(id, parent);
         } catch (e) { this.showToast('error', this.t('components.saveFail', 'Could not save'), e.message); }
     },
 
     async switchComponentUi(id, enabled, parentId) {
-        const s = this._devDetail;
-        if (!s) return;
-        const parent = parentId || s.id;
+        const parent = this._componentParent(id, parentId);
+        if (!parent) return;
         try {
-            await this._componentCall(`/api/devices/${encodeURIComponent(parent)}/components/${encodeURIComponent(id)}`, 'PATCH', { enabled: !!enabled });
-            await this._componentChanged(s);
+            await this._componentCall(parent, `/api/devices/${encodeURIComponent(parent)}/components/${encodeURIComponent(id)}`, 'PATCH', { enabled: !!enabled });
+            await this._componentChanged(id, parent);
         } catch (e) { this.showToast('error', this.t('components.saveFail', 'Could not save'), e.message); }
     },
 
     async removeComponentUi(id, parentId) {
         const s = this._devDetail;
-        const parent = parentId || s?.id;
-        const name = s?.component_of ? s.data?.name : ((this._devices || []).find(x => x.id === id) || {}).name;
-        if (!s) return;
-        const own = s.id === id;            // removed from its own page
+        const parent = this._componentParent(id, parentId);
+        if (!parent) return;
+        const own = this._view?.type === 'device' && s?.id === id;     // removed from its own page
+        const name = own ? s.data?.name : ((this._devices || []).find(x => x.id === id) || {}).name;
         if (own && this._ubCount(s.usedBy)
             && !await this._ubRecheck('device', id, document.getElementById('devUsedBy'), deps => this._applyDeviceUsedBy(id, deps))) return;
         // asks the server first: a component something uses says what, on its page
         const ask = {
-            kind: 'device', id,
+            kind: 'device', id, writeId: parent,          // the parent's entry holds it
             url: `/api/devices/${encodeURIComponent(parent)}/components/${encodeURIComponent(id)}`,
             host: own ? document.getElementById('devUsedBy') : null,
             title: this.t('components.removeTitle', 'Remove component {id}', { id: name ? `${name} (${id})` : id }),
@@ -252,9 +258,13 @@ Object.assign(JanitzaMonitor.prototype, {
         try {
             this.showToast('success', this.t('components.removed', 'Component removed'), id);
             // removed from its own page: back to its device
-            if (s.component_of) { this.closeDeviceDetail(); return; }
-            await this.renderComponentsCard();
-            if (this._compFoundLast) this._paintFoundComponents(this._compFoundLast);
+            if (own) { this.closeDeviceDetail(); return; }
+            if (this._view?.type === 'device' && s?.id === parent) {
+                await this.renderComponentsCard();
+                if (this._compFoundLast) this._paintFoundComponents(this._compFoundLast);
+                return;
+            }
+            await this._componentChanged(id, parent);
         } catch (e) { this.showToast('error', this.t('components.removeFail', 'Could not remove'), e.message); }
     },
 
@@ -266,7 +276,7 @@ Object.assign(JanitzaMonitor.prototype, {
         box.innerHTML = `<div class="field-hint" style="margin-top:10px;"><span class="spinner-border spinner-border-sm" aria-hidden="true"></span> ${this.t('components.listening', 'Asking the device what it holds… (a few seconds)')}</div>`;
         if (btn) btn.disabled = true;
         try {
-            const res = await this._componentCall(`/api/devices/${encodeURIComponent(s.id)}/components/discover`, 'POST');
+            const res = await this._componentCall(s.id, `/api/devices/${encodeURIComponent(s.id)}/components/discover`, 'POST');
             if (this._devDetail?.id !== s.id) return;
             this._compFoundLast = res.found || [];
             await this.renderComponentsCard();

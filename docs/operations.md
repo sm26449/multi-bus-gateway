@@ -14,7 +14,7 @@ touches your configuration (the loader is additive-forward across 3.x — see
 
 ```bash
 # published image: pin the release in .env, pull it, restart on it
-sed -i 's/^#\? *MBG_VERSION=.*/MBG_VERSION=3.84.2/' .env
+sed -i 's/^#\? *MBG_VERSION=.*/MBG_VERSION=3.92.1/' .env
 docker compose pull multi-bus-gateway
 docker compose up -d multi-bus-gateway
 
@@ -22,7 +22,7 @@ docker compose up -d multi-bus-gateway
 git pull && docker compose build multi-bus-gateway && docker compose up -d multi-bus-gateway
 ```
 
-`MBG_VERSION` accepts a version (`3.84.2`), a minor line (`3.84`) or
+`MBG_VERSION` accepts a version (`3.92.1`), a minor line (`3.92`) or
 `latest`; `docker compose build` ignores it. Naming the service keeps the
 bundled broker/InfluxDB untouched. Running the RTU bridge? It carries the
 same tag, so pull and restart it in the same breath:
@@ -66,7 +66,9 @@ Everything the gateway itself owns is in the mounted **`./config`**:
 | `device_templates/` | your own device register maps | bundled maps live in the image |
 | `templates/` | virtual-meter templates (YAML) | the three shipped ones are baked in too |
 | `virtual_meters.yaml` | virtual-meter instances | |
-| `rules.yaml` | rules | in the bundle since 3.79.0 |
+| `rules.yaml`, `sequences.yaml` | rules and command sequences | in the bundle since 3.79.0 |
+| `attributes.yaml` | facts about the equipment: site, installations, devices (identity, nameplate, location) | in every snapshot and the export; coordinates only when the export includes identity |
+| `ha_discovery_cleared.json` | devices whose Home Assistant entities the gateway has taken back | small; safe to lose (the deletes are sent again once) |
 | `calculated_templates.json` | calculated-register presets | |
 | `builder_profiles.json` | hardware profiles of the removed Device Builder | no longer read or backed up; safe to delete |
 | `passkeys.json` | WebAuthn credentials | `0600`; only in with-secrets backups and snapshots |
@@ -130,6 +132,24 @@ docker compose up -d multi-bus-gateway      # the entrypoint chowns it for uid 1
 
 Ownership needs no fixing by hand (the container does it at start); only a
 `docker run --user` deployment must match the directory owner itself.
+
+**The gateway's identity survives a restore.** A snapshot restore or a
+backup import keeps this gateway's `gateway.id` and `identity_scope` (the
+names new devices get) unless you ask for the bundle's
+(`restore_identity=true`), so restoring one gateway's backup onto another
+does not make them announce the same topics and entities.
+
+**A deleted device.** Deleting a device keeps its definition
+(`devices/<id>/device.json`) and its register file. Right after the delete
+a toast offers **Undo** for 10 s; later, ⋯ → **Deleted devices: restore…**
+(on the Devices list or a device page) opens the **Restore** dialog. Each
+deleted device is listed with when it was deleted and how many measurements
+it had; one that cannot come back as it was says why, in the restore's own
+words, before you click. A restored device rebuilds
+exactly — connection, template, register selection — except that it comes
+back **write-locked** with its **command bindings off**: unlock them from
+its ⋯ when ready. A REST push it had resumes with it. API:
+`GET /api/devices/restorable?check=true`.
 
 ## Logs
 
@@ -201,8 +221,8 @@ Removing the gateway completely, in the order that leaves nothing behind:
    ```bash
    docker compose --profile rtu-bridge down -v      # containers, network, AND the named volumes
    rm -rf ./config                                  # your configuration, snapshots, audit trail
-   docker image rm ghcr.io/sm26449/multi-bus-gateway:3.84.2 \
-                   ghcr.io/sm26449/multi-bus-gateway-serial-bridge:3.84.2
+   docker image rm ghcr.io/sm26449/multi-bus-gateway:3.92.1 \
+                   ghcr.io/sm26449/multi-bus-gateway-serial-bridge:3.92.1
    ```
    `down -v` deletes `influxdb-data` and `grafana-data` — export what you
    want to keep first. Without `-v` the volumes stay for a later reinstall.
@@ -216,9 +236,9 @@ Removing the gateway completely, in the order that leaves nothing behind:
    # inventory first
    mosquitto_sub -h 192.168.1.10 -v --retained-only -t 'multibus/#' -t 'meters/#' -t 'mbg/#' -t 'homeassistant/#'
    # then clear (repeat per topic; a loop over the inventory works)
-   mosquitto_pub -h 192.168.1.10 -r -n -t 'multibus/umg512/status'
+   mosquitto_pub -h 192.168.1.10 -r -n -t 'mbg/gateway/status'
    ```
-   What to look for: `<mqtt.topic_prefix>/#` (default `multibus/umg512` —
+   What to look for: `<mqtt.topic_prefix>/#` (default `mbg/gateway`; an older install `multibus/umg512` —
    values, `status`, `availability`, `alert`, `vmeter/<id>/state`,
    `pq/event`), each non-primary device's own prefix (default pattern
    `mbg/devices/<id>`), `mbg/#` (endpoint aggregates `mbg/endpoints/<id>/…`),

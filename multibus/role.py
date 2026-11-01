@@ -1,5 +1,5 @@
 # Multi-Bus Gateway — multi-protocol Modbus/HTTP/MQTT acquisition gateway.
-# Copyright (C) 2024-2026 Stefan Maldaianu <sm26449@diysolar.ro>  — AGPL-3.0-or-later
+# Copyright (C) 2024-2026 Stefan Maldaianu <stefan@multibus.dev>  — AGPL-3.0-or-later
 """The gateway's role: active (the usual: it polls, writes, runs its rules
 and publishes) or standby (it does none of that; devices it only listens to
 keep being heard). A gateway is active unless an outside service, holding a
@@ -25,7 +25,7 @@ logger = logging.getLogger(__name__)
 ROLES = ('active', 'standby')
 # the sources a standby keeps: they only listen (a tap on the bus, an MQTT
 # subscription), so the active one and the standby never both talk to a device
-LISTENING_PROTOCOLS = ('rtu_tap', 'mqtt')
+LISTENING_PROTOCOLS = ('rtu_tap', 'mqtt', 'can')
 
 # the role of this process, for the code that cannot be handed it (a Modbus
 # connection deep in a poller); None = no role installed = active
@@ -48,8 +48,21 @@ def is_active() -> bool:
     return _installed is None or _installed.active
 
 
-def listens_only(protocol: str) -> bool:
-    return str(protocol or '').lower() in LISTENING_PROTOCOLS
+def listens_only(protocol: str, mode: str = '') -> bool:
+    """Does a source of this protocol only listen? A virtual-map bus
+    (seplos_v2) does when its connection's mode is listen — it never
+    transmits; polled (or a mode it cannot trust) it talks, and stops."""
+    p = str(protocol or '').lower()
+    if p in LISTENING_PROTOCOLS:
+        return True
+    from .config import VIRTUAL_MAP_PROTOCOLS
+    return p in VIRTUAL_MAP_PROTOCOLS and str(mode or '').lower() == 'listen'
+
+
+def source_listens(src) -> bool:
+    """listens_only for a source (its protocol and its connection's mode)."""
+    return listens_only(getattr(src, 'protocol', ''),
+                        getattr(getattr(src, 'connection', None), 'mode', ''))
 
 
 STANDBY_WRITE = "standby gateway: writes are done by the active one"

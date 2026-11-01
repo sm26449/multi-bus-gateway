@@ -1,5 +1,5 @@
 # Multi-Bus Gateway — multi-protocol Modbus/HTTP/MQTT acquisition gateway.
-# Copyright (C) 2024-2026 Stefan Maldaianu <sm26449@diysolar.ro>  — AGPL-3.0-or-later
+# Copyright (C) 2024-2026 Stefan Maldaianu <stefan@multibus.dev>  — AGPL-3.0-or-later
 """The connection form (ui/js/connform-model.js), as the server receives it.
 
 The chain, with no browser:
@@ -122,7 +122,7 @@ def test_a_serial_mode_never_carries_a_host_nor_a_bridge_a_line(tmp_path):
     fixtures = json.loads(PAYLOADS.read_text())
     for did, conn in fixtures['wire'].items():
         proto = conn.get('protocol')
-        if proto in ('rtu', 'ascii') or (proto == 'rtu_tap' and not conn.get('bridge')):
+        if proto in ('rtu', 'ascii', 'seplos_v2') or (proto == 'rtu_tap' and not conn.get('bridge')):
             assert 'host' not in conn and conn.get('serial_port', '').startswith('/dev/'), (did, conn)
         if conn.get('bridge'):
             assert not {'host', 'port', 'baudrate', 'parity', 'stopbits', 'bytesize', 'serial_port'} & set(conn), (did, conn)

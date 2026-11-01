@@ -511,6 +511,60 @@ path skips it (a stale safe, a `fast` step).
 A command says what "on" means with `on: "${value} > 0"`. `run_at 0` stops
 the motor; `set_frequency` neither starts nor stops it.
 
+**Asked again at the bus (3.94).** A rule decides on the rules thread and
+writes when its device's bus is free — on a Fronius Datamanager with four
+units that can be seconds later. Just before the write, under the bus lock,
+the gateway asks again on what the rule decided:
+
+- **paused** — an outside writer (`override_s`) or an operator paused the
+  rule meanwhile: nothing is written, **urgent wants included** (a `fast`
+  step, a stale safe). Someone took the channel to set it; writing would
+  overwrite their value within milliseconds. A protection that must never be
+  paused belongs at layer `safety`, which nothing from outside pauses.
+- **yielded** — another rule won the channel meanwhile (a force, a higher
+  rule's new want, a lower value on a `min` channel). Not for urgent wants.
+- **held** — something else wrote the channel since the rule decided (a
+  refresh, a dead-man's revert, another rule's release) and its pace or
+  timers hold it now. Not for urgent wants.
+
+The write is then `cancelled` (not a failure): the decision log keeps the
+`run`, its result reads `cancelled — held: …`, and the rule sends it again
+when it may — as if that send never happened. A standby gateway at that
+moment cancels it the same way (`standby`). Every write, whoever sends it,
+stamps the channel before the bus is released, so two writers cannot both
+pass the channel's pace.
+
+**A correction waits for the channel too (3.95).** When the read-back drifts
+from what the rule asked for `reassert_s`, the rule writes it again — and
+since 3.95 that reassert meets the channel's pace like any other write: on a
+GX setpoint kept in flash (`min_interval_s: 60`) a refresh or a dead-man's
+revert is not followed two seconds later by the rule's correction; a drive a
+revert stopped is not restarted inside `min_off_s` or past `max_starts_per_h`.
+The decision log says `drift seen — <channel>: …`; the drift is kept, so the
+correction goes out the first tick the channel opens. **Emergency wants never
+wait** for the channel: a `fast` step, a stale safe or fixed value, a rest
+after `max_on_s` (a forced want is not one). The rule's own `min_interval_s`
+still applies to every correction. A safety-layer rule's routine correction
+meets the pace too — the layer orders who writes, the pace protects the
+equipment. At the bus, an urgent write that lost the channel to another rule
+since it was decided is dropped (`yielded`) — an emergency must not overwrite
+a stricter limit — but never held.
+
+If someone else writes a channel faster than its pace, a rule's correction can
+wait for ever: the rule's state says `drift_held_s`, the listing counts the
+drifts held over 5 minutes (`drift_held_long`), and the status page names the
+rule while it lasts.
+
+A `steps` rule with a `fast` step **may not drive a channel with a pace**
+(`min_interval_s`, `min_on_s`, `min_off_s`, `max_starts_per_h`): saving or
+arming it is refused, and so is giving such a channel a pace while the rule
+is armed (its emergency step would pass the pace while its other corrections
+wait on it). A `rules.yaml` that already holds both is loaded as it is and
+said in the log — a protection is never disarmed at boot.
+
+This is always on: its kill switch `rules.recheck` was removed in 3.97 (see
+[config-reference.md](config-reference.md#rules-and-commands--removed-in-397)).
+
 Two armed rules with the **same priority** on a `priority` channel are
 refused: they could only fight. Give one another layer.
 
@@ -703,6 +757,7 @@ API: `GET /api/rules/export[?ids=a,b]`,
 | changes too often | debounce/min interval too short | raise `debounce` (samples) and `min_interval_s` |
 | reacts too slowly | debounce × every_s too long | lower them, or mark the emergency step `fast: true` |
 | result **sent**, then **queued** | the device has not answered the last command yet; the next one waits for it (in order, never piled up) | normal for a slow link; if it stays, the device or its bus is away — after 3 failures an alert says so |
+| result **cancelled — paused / yielded / held** | asked again at the bus, the write was no longer right: the rule was paused, another rule won the channel, or the channel was written meanwhile and holds (§3.9) | nothing to do: it is sent again when it may. Often: look for the other writer (an EMS with `override_s`, a refresh) |
 | alert *the rules engine has not run* | the rules thread stopped (the watchdog checks every 10 s) | look at the log; restart the gateway |
 
 Every decision is also an InfluxDB point (`rule_event`) and an MQTT state

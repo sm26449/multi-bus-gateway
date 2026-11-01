@@ -1,5 +1,5 @@
 # Multi-Bus Gateway — multi-protocol Modbus/HTTP/MQTT acquisition gateway.
-# Copyright (C) 2024-2026 Stefan Maldaianu <sm26449@diysolar.ro>  — AGPL-3.0-or-later
+# Copyright (C) 2024-2026 Stefan Maldaianu <stefan@multibus.dev>  — AGPL-3.0-or-later
 """The opt-in OV tuning keys through the runtime and the API (ADR-0012):
 judged on a save (never at load, never on the way out of armed), tried with
 ?dry_run, kept by an unchanged save, and what they do on the wire — the

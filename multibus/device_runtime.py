@@ -1,5 +1,5 @@
 # Multi-Bus Gateway — multi-protocol Modbus/HTTP/MQTT acquisition gateway.
-# Copyright (C) 2024-2026 Stefan Maldaianu <sm26449@diysolar.ro>  — AGPL-3.0-or-later
+# Copyright (C) 2024-2026 Stefan Maldaianu <stefan@multibus.dev>  — AGPL-3.0-or-later
 """Building a device's client — the ONE place that does it.
 
 There used to be two: one in ``main.py`` for boot and one in ``api.py`` for a
@@ -20,11 +20,22 @@ from __future__ import annotations
 import logging
 from typing import Any, Dict, List, Tuple
 
-from .config import MODBUS_PROTOCOLS
+from .config import CAN_PROTOCOLS, MODBUS_PROTOCOLS, VIRTUAL_MAP_PROTOCOLS
 
 logger = logging.getLogger(__name__)
 
-DRIVER_PROTOCOLS = MODBUS_PROTOCOLS + ('http', 'mqtt')
+DRIVER_PROTOCOLS = MODBUS_PROTOCOLS + VIRTUAL_MAP_PROTOCOLS + ('http', 'mqtt') + CAN_PROTOCOLS
+
+# a virtual-map protocol -> (module, client class): each protocol lives in its
+# own module and is picked by name only
+VIRTUAL_MAP_DRIVERS = {'seplos_v2': ('seplos_v2', 'SeplosV2Client'),
+                       'seplos_v2-tcp': ('seplos_v2', 'SeplosV2Client')}
+
+
+def virtual_map_driver(proto: str):
+    import importlib
+    mod, cls = VIRTUAL_MAP_DRIVERS[proto]
+    return getattr(importlib.import_module(f'.{mod}', __package__), cls)
 
 
 GATEWAY_BROKER = '@gateway'
@@ -81,6 +92,48 @@ def driver_for(config, template_registry, dev_cfg, src, regs, groups, allow_nonl
         mqtt_cfg['link'] = getattr(dev_cfg, 'component_of', '') or dev_cfg.id
         return MqttInputClient(mqtt_cfg=mqtt_cfg, registers=regs,
                                poll_groups=groups)
+    if proto in CAN_PROTOCOLS:
+        # frames from a carrier, decoded by the template's signal rows;
+        # listen-only by construction (can_client.py, ADR-0020)
+        from .can_client import CanClient
+        tid = src.template or dev_cfg.template
+        if tid and template_registry.get(tid) is None:
+            raise ValueError(f"template {tid!r} is not loaded — not decoding CAN frames without its map")
+        return CanClient(can_cfg=getattr(src, 'can', None) or {}, registers=regs, poll_groups=groups,
+                         stale_after_s=getattr(src.connection, 'stale_after_s', 30) or 30,
+                         device_id=dev_cfg.id)
+    if proto in VIRTUAL_MAP_DRIVERS:
+        # a non-Modbus bus decoded into a fixed virtual register map; the
+        # template's byte order applies to the map's words as for Modbus
+        tid = src.template or dev_cfg.template
+        tpl = template_registry.get(tid) if tid else None
+        if tid and tpl is None:
+            raise ValueError(f"template {tid!r} is not loaded — not reading the bus without its map")
+        conn_cfg = src.connection
+        from .device_template import template_listens_only
+        if (tpl is not None and template_listens_only(tpl)
+                and str(getattr(conn_cfg, 'mode', '') or '').lower() != 'listen'):
+            # a map only ever heard listens, however the config got here
+            # (an import, a restore, hand-edited YAML) — SV2-9
+            logger.warning("device %s: template %s is listen-only — listening, not %r",
+                           dev_cfg.id, tid, getattr(conn_cfg, 'mode', '') or 'poll')
+            import copy
+            conn_cfg = copy.copy(conn_cfg)
+            conn_cfg.mode = 'listen'
+        return virtual_map_driver(proto)(conn_cfg=conn_cfg, registers=regs,
+                                         poll_groups=groups,
+                                         byte_order=template_registry.byte_order_for(tid),
+                                         device_id=dev_cfg.id)
+    if proto in MODBUS_PROTOCOLS and proto != 'rtu_tap':
+        from .device_template import template_listens
+        tid = src.template or dev_cfg.template
+        tpl = template_registry.get(tid) if tid else None
+        if tpl is not None and template_listens(tpl):
+            # a map written for listening never polls, however the config got
+            # here (an import, a restore, hand-edited YAML) — ADR-0025, ADD-8
+            logger.warning("device %s: template %s only listens — starting it as rtu_tap, not %r",
+                           dev_cfg.id, tid, proto)
+            proto = 'rtu_tap'
     if proto == 'rtu_tap':
         # listen-only observer of a bus mastered by someone else — byte order
         # resolves from the template exactly like an active Modbus source
@@ -122,7 +175,8 @@ def driver_for(config, template_registry, dev_cfg, src, regs, groups, allow_nonl
                         setup_steps=setup, setup_gate=setup_gate if setup else None,
                         min_write_gap_s=float(((getattr(tpl, 'protocol', None) or {}).get('min_write_gap_s')) or 0),
                         max_read=int(((getattr(tpl, 'protocol', None) or {}).get('max_registers_per_read')) or 0),
-                        single_writes=bool((getattr(tpl, 'protocol', None) or {}).get('single_register_writes')))
+                        single_writes=bool((getattr(tpl, 'protocol', None) or {}).get('single_register_writes')),
+                        connect_settle_s=float(((getattr(tpl, 'protocol', None) or {}).get('connect_settle_s')) or 0))
 
 
 def apply_template_hygiene(regs, template):
@@ -207,6 +261,7 @@ def build_device_client(config, template_registry, dev_cfg, allow_nonlan=False):
                                         device_id=dev_cfg.id)
                 taps[src.id] = _tap
             where = ((src.http or {}).get('url')
+                     or (getattr(src, 'can', None) or {}).get('channel')
                      or src.connection.bus)
             logger.info("Device '%s' source '%s': %s, %d registers, %s",
                         dev_cfg.id, src.id, src.protocol, len(regs), where)

@@ -2,6 +2,7 @@
 things a template says the device holds, each added by instance and read
 through the parent's connection."""
 import json
+import time
 from types import SimpleNamespace
 
 import pytest
@@ -356,7 +357,13 @@ def test_finding_components_listens_through_the_parents_connection(tmp_path, fak
                                                "last": 0.0, "owners": []}
     mqtt_link._pool[("gx",)] = link
 
+    real_sleep = time.sleep
+
     def speak(_s):
+        # only the discovery's 4 s listen speaks; any other thread's sleep
+        # (a leftover of an earlier test) sleeps for real (FLK-3)
+        if _s != 4.0:
+            return real_sleep(_s)
         for t, v in [(f"N/{PORTAL}/battery/288/ProductName", "SmartShunt 1000A/50mV"),
                      (f"N/{PORTAL}/battery/512/ProductName", "BMS16S200A-SP112"),
                      (f"N/{PORTAL}/battery/512/CustomName", "SEPLOS V4"),

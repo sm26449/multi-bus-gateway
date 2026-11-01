@@ -1,0 +1,412 @@
+{
+ "invalid": {
+  "device": [
+   {
+    "code": "listen_ascii",
+    "framing": "ascii",
+    "mode": "listen",
+    "port": "serial",
+    "protocol": "modbus",
+    "reach": "here",
+    "text": "listening decodes Modbus RTU frames: an ASCII bus is read by polling it, or listened to only once its master speaks RTU",
+    "udp": false
+   },
+   {
+    "code": "listen_ascii",
+    "framing": "ascii",
+    "mode": "listen",
+    "port": "serial",
+    "protocol": "modbus",
+    "reach": "address",
+    "text": "listening decodes Modbus RTU frames: an ASCII bus is read by polling it, or listened to only once its master speaks RTU",
+    "udp": false
+   },
+   {
+    "code": "listen_ascii",
+    "framing": "ascii",
+    "mode": "listen",
+    "port": "serial",
+    "protocol": "modbus",
+    "reach": "bridge",
+    "text": "listening decodes Modbus RTU frames: an ASCII bus is read by polling it, or listened to only once its master speaks RTU",
+    "udp": false
+   },
+   {
+    "code": "listen_mbap",
+    "framing": "mbap",
+    "mode": "listen",
+    "port": "ethernet",
+    "protocol": "modbus",
+    "reach": "address",
+    "text": "a Modbus TCP server only answers the questions asked of it: there is no bus traffic to hear. Listen on the serial side: a port here or a transparent bridge",
+    "udp": false
+   },
+   {
+    "code": "listen_mbap",
+    "framing": "mbap",
+    "mode": "listen",
+    "port": "ethernet",
+    "protocol": "modbus",
+    "reach": "address",
+    "text": "a Modbus TCP server only answers the questions asked of it: there is no bus traffic to hear. Listen on the serial side: a port here or a transparent bridge",
+    "udp": true
+   },
+   {
+    "code": "listen_gateway_bridge",
+    "framing": "mbap",
+    "mode": "listen",
+    "port": "ethernet",
+    "protocol": "modbus",
+    "reach": "bridge",
+    "text": "this bridge is a Modbus TCP gateway: it only answers questions, it does not pass the bus's traffic on. Listening needs a transparent bridge or the MBG serial bridge",
+    "udp": false
+   },
+   {
+    "code": "can_poll",
+    "framing": null,
+    "mode": "poll",
+    "port": "can",
+    "protocol": "can_signals",
+    "reach": "socketcan",
+    "text": "CAN is read listen-only: the gateway opens the interface for reception and has no transmit path",
+    "udp": false
+   },
+   {
+    "code": "can_poll",
+    "framing": null,
+    "mode": "poll",
+    "port": "can",
+    "protocol": "can_signals",
+    "reach": "bridge",
+    "text": "CAN is read listen-only: the gateway opens the interface for reception and has no transmit path",
+    "udp": false
+   }
+  ]
+ },
+ "labels": {
+  "framing": {
+   "ascii": "ASCII",
+   "mbap": "Modbus TCP (MBAP)",
+   "rtu": "RTU"
+  },
+  "mode": {
+   "listen": "Listen-only",
+   "poll": "Master"
+  },
+  "port": {
+   "can": "CAN",
+   "ethernet": "Ethernet / Wi-Fi",
+   "http": "Web API (HTTP)",
+   "mqtt": "MQTT",
+   "serial": "RS-485 / serial"
+  },
+  "protocol": {
+   "can_signals": "CAN signals",
+   "json_http": "HTTP / JSON",
+   "json_mqtt": "MQTT / JSON",
+   "modbus": "Modbus",
+   "seplos_v2": "Seplos V2"
+  },
+  "reach": {
+   "address": "At a network address",
+   "bridge": "Through a bridge",
+   "here": "A port on this host",
+   "socketcan": "SocketCAN interface"
+  }
+ },
+ "matrix": {
+  "device": [
+   {
+    "connection": {
+     "protocol": "rtu"
+    },
+    "framing": "rtu",
+    "mode": "poll",
+    "port": "serial",
+    "protocol": "modbus",
+    "reach": "here",
+    "status": "today",
+    "udp": false,
+    "writable": true
+   },
+   {
+    "connection": {
+     "protocol": "ascii"
+    },
+    "framing": "ascii",
+    "mode": "poll",
+    "port": "serial",
+    "protocol": "modbus",
+    "reach": "here",
+    "status": "today",
+    "udp": false,
+    "writable": true
+   },
+   {
+    "connection": {
+     "protocol": "rtu_tap"
+    },
+    "framing": "rtu",
+    "mode": "listen",
+    "port": "serial",
+    "protocol": "modbus",
+    "reach": "here",
+    "status": "today",
+    "udp": false,
+    "writable": false
+   },
+   {
+    "connection": {
+     "protocol": "rtu-tcp"
+    },
+    "framing": "rtu",
+    "mode": "poll",
+    "port": "serial",
+    "protocol": "modbus",
+    "reach": "address",
+    "status": "today",
+    "udp": false,
+    "writable": true
+   },
+   {
+    "connection": {
+     "protocol": "ascii-tcp"
+    },
+    "framing": "ascii",
+    "mode": "poll",
+    "port": "serial",
+    "protocol": "modbus",
+    "reach": "address",
+    "status": "today",
+    "udp": false,
+    "writable": true
+   },
+   {
+    "connection": {
+     "protocol": "rtu_tap"
+    },
+    "framing": "rtu",
+    "mode": "listen",
+    "note": "the runtime can listen at a host:port; a device save asks for a serial port or a bridge",
+    "port": "serial",
+    "protocol": "modbus",
+    "reach": "address",
+    "status": "new",
+    "udp": false,
+    "writable": false
+   },
+   {
+    "connection": {},
+    "framing": "rtu",
+    "mode": "poll",
+    "port": "serial",
+    "protocol": "modbus",
+    "reach": "bridge",
+    "status": "today",
+    "udp": false,
+    "writable": true
+   },
+   {
+    "connection": {},
+    "framing": "ascii",
+    "mode": "poll",
+    "port": "serial",
+    "protocol": "modbus",
+    "reach": "bridge",
+    "status": "today",
+    "udp": false,
+    "writable": true
+   },
+   {
+    "connection": {
+     "protocol": "rtu_tap"
+    },
+    "framing": "rtu",
+    "mode": "listen",
+    "port": "serial",
+    "protocol": "modbus",
+    "reach": "bridge",
+    "status": "today",
+    "udp": false,
+    "writable": false
+   },
+   {
+    "connection": {
+     "mode": "poll",
+     "protocol": "seplos_v2"
+    },
+    "framing": null,
+    "mode": "poll",
+    "port": "serial",
+    "protocol": "seplos_v2",
+    "reach": "here",
+    "status": "today",
+    "udp": false,
+    "writable": false
+   },
+   {
+    "connection": {
+     "mode": "listen",
+     "protocol": "seplos_v2"
+    },
+    "framing": null,
+    "mode": "listen",
+    "port": "serial",
+    "protocol": "seplos_v2",
+    "reach": "here",
+    "status": "today",
+    "udp": false,
+    "writable": false
+   },
+   {
+    "connection": {
+     "mode": "poll",
+     "protocol": "seplos_v2-tcp"
+    },
+    "framing": null,
+    "mode": "poll",
+    "port": "serial",
+    "protocol": "seplos_v2",
+    "reach": "address",
+    "status": "today",
+    "udp": false,
+    "writable": false
+   },
+   {
+    "connection": {
+     "mode": "listen",
+     "protocol": "seplos_v2-tcp"
+    },
+    "framing": null,
+    "mode": "listen",
+    "port": "serial",
+    "protocol": "seplos_v2",
+    "reach": "address",
+    "status": "today",
+    "udp": false,
+    "writable": false
+   },
+   {
+    "connection": {
+     "mode": "poll",
+     "protocol": "seplos_v2-tcp"
+    },
+    "framing": null,
+    "mode": "poll",
+    "note": "a Seplos V2 bus is reached by its serial port or a bridge's host and port",
+    "port": "serial",
+    "protocol": "seplos_v2",
+    "reach": "bridge",
+    "status": "not_yet",
+    "udp": false,
+    "writable": false
+   },
+   {
+    "connection": {
+     "mode": "listen",
+     "protocol": "seplos_v2-tcp"
+    },
+    "framing": null,
+    "mode": "listen",
+    "note": "a Seplos V2 bus is reached by its serial port or a bridge's host and port",
+    "port": "serial",
+    "protocol": "seplos_v2",
+    "reach": "bridge",
+    "status": "not_yet",
+    "udp": false,
+    "writable": false
+   },
+   {
+    "connection": {
+     "protocol": "tcp"
+    },
+    "framing": "mbap",
+    "mode": "poll",
+    "port": "ethernet",
+    "protocol": "modbus",
+    "reach": "address",
+    "status": "today",
+    "udp": false,
+    "writable": true
+   },
+   {
+    "connection": {
+     "protocol": "udp"
+    },
+    "framing": "mbap",
+    "mode": "poll",
+    "port": "ethernet",
+    "protocol": "modbus",
+    "reach": "address",
+    "status": "today",
+    "udp": true,
+    "writable": true
+   },
+   {
+    "connection": {},
+    "framing": "mbap",
+    "mode": "poll",
+    "port": "ethernet",
+    "protocol": "modbus",
+    "reach": "bridge",
+    "status": "today",
+    "udp": false,
+    "writable": true
+   },
+   {
+    "connection": {
+     "protocol": "can"
+    },
+    "framing": null,
+    "mode": "listen",
+    "port": "can",
+    "protocol": "can_signals",
+    "reach": "socketcan",
+    "status": "today",
+    "udp": false,
+    "writable": false
+   },
+   {
+    "connection": {
+     "carrier": "bridge",
+     "protocol": "can"
+    },
+    "framing": null,
+    "mode": "listen",
+    "note": "CAN over the serial bridge is not available yet",
+    "port": "can",
+    "protocol": "can_signals",
+    "reach": "bridge",
+    "status": "not_yet",
+    "udp": false,
+    "writable": false
+   },
+   {
+    "connection": {
+     "protocol": "http"
+    },
+    "framing": null,
+    "mode": "poll",
+    "port": "http",
+    "protocol": "json_http",
+    "reach": null,
+    "status": "today",
+    "udp": false,
+    "writable": false
+   },
+   {
+    "connection": {
+     "protocol": "mqtt"
+    },
+    "framing": null,
+    "mode": "listen",
+    "port": "mqtt",
+    "protocol": "json_mqtt",
+    "reach": null,
+    "status": "today",
+    "udp": false,
+    "writable": true
+   }
+  ]
+ }
+}

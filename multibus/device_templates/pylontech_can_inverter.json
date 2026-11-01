@@ -1,0 +1,793 @@
+{
+  "device_template": {
+    "schema_version": 1,
+    "id": "pylontech_can_inverter",
+    "name": "Pylontech CAN (BMS → inverter link, listen-only)",
+    "vendor": "Pylontech (protocol)",
+    "model": "Pylontech-compatible BMS CAN",
+    "version": "0.1.0",
+    "author": "Stefan Maldaianu",
+    "kind": "battery",
+    "description": "The BMS → inverter link most batteries speak (Pylontech, Seplos V2/V3, JK and Daly in Pylontech mode), read LISTEN-ONLY with protocol can: the gateway never transmits on it. Standard 11-bit frames, little endian, 500 kbit/s, one frame set per second; the inverter answers 0x305 every second. Core frames (0x351, 0x355, 0x356, 0x359, 0x35C, 0x35E) follow Pylontech's document; rows marked UNVERIFIED come from one vendor's extension (Seplos 0x370/0x371, LuxPower capacity and cycles) and were checked only on the bench capture of a Seplos V2 bank talking to a Deye. Cell voltages and per-pack data stay on the inter-pack maps (seplos_bms_v3_rtu_tap, seplos_bms_v2); field names match them.",
+    "source_document": "Pylontech 'PYLON CANBUS Protocol' V1.2 (2018-04-08); Seplos 'CANBUS Protocol V1.0' (2020, akkudoktor.net mirror); LuxPower 'Battery communication CAN Protocol' V04 (2024-03-13); cross-checked (no code taken) against esphome-yambms packages/yambms/yambms_canbus.yaml (Sleeper85, GPLv3); verified on a 2-minute candump of a Deye SG05LP1 ↔ Seplos V2 bank (tests/fixtures/can/deye_seplos_v2_20261026.candump, listen-only, 2026-10-26).",
+    "protocol": {
+      "transports": [
+        "can"
+      ],
+      "bitrate": 500000,
+      "byte_order": "little",
+      "default_register_type": "input"
+    },
+    "poll_groups": {
+      "realtime": {
+        "interval": 1,
+        "description": "informational: the BMS sends every frame once a second"
+      }
+    },
+    "categories": {
+      "battery": {
+        "label": "Battery",
+        "icon": "battery-half"
+      },
+      "limits": {
+        "label": "Limits (to the inverter)",
+        "icon": "sliders"
+      },
+      "alarms": {
+        "label": "Protection and warnings",
+        "icon": "exclamation-triangle"
+      },
+      "requests": {
+        "label": "Requests",
+        "icon": "toggles"
+      },
+      "cells": {
+        "label": "Cells",
+        "icon": "grid-3x3"
+      },
+      "inverter": {
+        "label": "Inverter",
+        "icon": "lightning"
+      },
+      "diagnostics": {
+        "label": "Diagnostics",
+        "icon": "wrench"
+      }
+    },
+    "notes": [
+      {
+        "level": "info",
+        "text": "Listen-only: the gateway opens the CAN interface for reception and has no transmit path. Set the interface listen-only on the host too (ip link set can0 type can bitrate 500000 listen-only on)."
+      },
+      {
+        "level": "warning",
+        "text": "Rows marked UNVERIFIED in their description come from one vendor's extension and were checked only on a Seplos V2 bank; a real Pylontech or another BMS may fill those bytes differently or not at all.",
+        "fields": [
+          "discharge_voltage_limit",
+          "total_capacity",
+          "online_packs",
+          "cycles",
+          "max_cell_temp",
+          "min_cell_temp",
+          "max_cell_voltage",
+          "min_cell_voltage"
+        ]
+      },
+      {
+        "level": "info",
+        "text": "inverter_keepalive is the inverter's 0x305 frame: always 0; when it goes stale the inverter has stopped talking.",
+        "fields": [
+          "inverter_keepalive"
+        ]
+      }
+    ],
+    "registers": [
+      {
+        "address": 50,
+        "name": "inverter_keepalive",
+        "label": "Inverter keepalive (0x305)",
+        "unit": "",
+        "data_type": "uint64",
+        "register_type": "input",
+        "category": "inverter",
+        "poll_group": "realtime",
+        "can_id": "0x305",
+        "start_bit": 0,
+        "bit_length": 64,
+        "byte_order": "little",
+        "description": "Sent by the inverter every second (8 zero bytes). Its value carries nothing; its freshness says the inverter is talking on the link. Source: Pylontech CANBUS V1.2; Seplos CANBUS V1.0; LuxPower CAN V04; bench capture 2026-10-26 (Deye + Seplos V2).",
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": true
+          }
+        }
+      },
+      {
+        "address": 810,
+        "name": "charge_voltage_limit",
+        "label": "Charge voltage limit (CVL)",
+        "unit": "V",
+        "data_type": "uint16",
+        "register_type": "input",
+        "category": "limits",
+        "poll_group": "realtime",
+        "can_id": "0x351",
+        "start_bit": 0,
+        "bit_length": 16,
+        "byte_order": "little",
+        "scale": 10,
+        "description": "Source: Pylontech CANBUS V1.2; Seplos CANBUS V1.0; LuxPower CAN V04; bench capture 2026-10-26 (Deye + Seplos V2).",
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": true
+          }
+        }
+      },
+      {
+        "address": 811,
+        "name": "charge_current_limit",
+        "label": "Charge current limit (CCL)",
+        "unit": "A",
+        "data_type": "int16",
+        "register_type": "input",
+        "category": "limits",
+        "poll_group": "realtime",
+        "can_id": "0x351",
+        "start_bit": 16,
+        "bit_length": 16,
+        "byte_order": "little",
+        "scale": 10,
+        "description": "Source: Pylontech CANBUS V1.2; Seplos CANBUS V1.0; LuxPower CAN V04; bench capture 2026-10-26 (Deye + Seplos V2).",
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": true
+          }
+        }
+      },
+      {
+        "address": 812,
+        "name": "discharge_current_limit",
+        "label": "Discharge current limit (DCL)",
+        "unit": "A",
+        "data_type": "int16",
+        "register_type": "input",
+        "category": "limits",
+        "poll_group": "realtime",
+        "can_id": "0x351",
+        "start_bit": 32,
+        "bit_length": 16,
+        "byte_order": "little",
+        "scale": 10,
+        "description": "Source: Pylontech CANBUS V1.2; Seplos CANBUS V1.0; LuxPower CAN V04; bench capture 2026-10-26 (Deye + Seplos V2).",
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": true
+          }
+        }
+      },
+      {
+        "address": 813,
+        "name": "discharge_voltage_limit",
+        "label": "Discharge voltage limit (DVL)",
+        "unit": "V",
+        "data_type": "uint16",
+        "register_type": "input",
+        "category": "limits",
+        "poll_group": "realtime",
+        "can_id": "0x351",
+        "start_bit": 48,
+        "bit_length": 16,
+        "byte_order": "little",
+        "scale": 10,
+        "description": "UNVERIFIED against Pylontech: bytes 6-7 are empty in Pylontech V1.2; Seplos, LuxPower and Victron fill them with the discharge cut-off voltage. Source: Seplos CANBUS V1.0; LuxPower CAN V04; bench capture 2026-10-26 (Deye + Seplos V2).",
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": true
+          }
+        }
+      },
+      {
+        "address": 850,
+        "name": "soc",
+        "label": "State of charge",
+        "unit": "%",
+        "data_type": "uint16",
+        "register_type": "input",
+        "category": "battery",
+        "poll_group": "realtime",
+        "can_id": "0x355",
+        "start_bit": 0,
+        "bit_length": 16,
+        "byte_order": "little",
+        "description": "Source: Pylontech CANBUS V1.2; Seplos CANBUS V1.0; LuxPower CAN V04; bench capture 2026-10-26 (Deye + Seplos V2).",
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": true
+          }
+        }
+      },
+      {
+        "address": 851,
+        "name": "soh",
+        "label": "State of health",
+        "unit": "%",
+        "data_type": "uint16",
+        "register_type": "input",
+        "category": "battery",
+        "poll_group": "realtime",
+        "can_id": "0x355",
+        "start_bit": 16,
+        "bit_length": 16,
+        "byte_order": "little",
+        "description": "Source: Pylontech CANBUS V1.2; Seplos CANBUS V1.0; LuxPower CAN V04; bench capture 2026-10-26 (Deye + Seplos V2).",
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": true
+          }
+        }
+      },
+      {
+        "address": 860,
+        "name": "pack_voltage",
+        "label": "Battery voltage",
+        "unit": "V",
+        "data_type": "int16",
+        "register_type": "input",
+        "category": "battery",
+        "poll_group": "realtime",
+        "can_id": "0x356",
+        "start_bit": 0,
+        "bit_length": 16,
+        "byte_order": "little",
+        "scale": 100,
+        "description": "Source: Pylontech CANBUS V1.2; Seplos CANBUS V1.0; LuxPower CAN V04; bench capture 2026-10-26 (Deye + Seplos V2).",
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": true
+          }
+        }
+      },
+      {
+        "address": 861,
+        "name": "battery_current",
+        "label": "Battery current (+ charging)",
+        "unit": "A",
+        "data_type": "int16",
+        "register_type": "input",
+        "category": "battery",
+        "poll_group": "realtime",
+        "can_id": "0x356",
+        "start_bit": 16,
+        "bit_length": 16,
+        "byte_order": "little",
+        "scale": 10,
+        "description": "Source: Pylontech CANBUS V1.2; Seplos CANBUS V1.0; LuxPower CAN V04; bench capture 2026-10-26 (Deye + Seplos V2).",
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": true
+          }
+        }
+      },
+      {
+        "address": 862,
+        "name": "battery_temperature",
+        "label": "Battery temperature",
+        "unit": "°C",
+        "data_type": "int16",
+        "register_type": "input",
+        "category": "battery",
+        "poll_group": "realtime",
+        "can_id": "0x356",
+        "start_bit": 32,
+        "bit_length": 16,
+        "byte_order": "little",
+        "scale": 10,
+        "description": "Pylontech: average cell temperature; LuxPower: max cell temperature (the bench Seplos sends the max, equal to 0x370's). Source: Pylontech CANBUS V1.2; Seplos CANBUS V1.0; LuxPower CAN V04; bench capture 2026-10-26 (Deye + Seplos V2).",
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": true
+          }
+        }
+      },
+      {
+        "address": 890,
+        "name": "protection_flags",
+        "label": "Protection (0x359 bytes 0-1)",
+        "unit": "",
+        "data_type": "uint16",
+        "register_type": "input",
+        "category": "alarms",
+        "poll_group": "realtime",
+        "can_id": "0x359",
+        "start_bit": 0,
+        "bit_length": 16,
+        "byte_order": "little",
+        "description": "Byte 1 bit 0 (charge over current) is bit 8 here; bit 11 is byte 1 bit 3. Source: Pylontech CANBUS V1.2; Seplos CANBUS V1.0; LuxPower CAN V04; bench capture 2026-10-26 (Deye + Seplos V2).",
+        "bits": {
+          "1": "over voltage",
+          "2": "under voltage",
+          "3": "over temperature",
+          "4": "under temperature",
+          "7": "discharge over current",
+          "8": "charge over current",
+          "11": "system error"
+        },
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": true
+          }
+        }
+      },
+      {
+        "address": 891,
+        "name": "alarm_flags",
+        "label": "Warnings (0x359 bytes 2-3)",
+        "unit": "",
+        "data_type": "uint16",
+        "register_type": "input",
+        "category": "alarms",
+        "poll_group": "realtime",
+        "can_id": "0x359",
+        "start_bit": 16,
+        "bit_length": 16,
+        "byte_order": "little",
+        "description": "'cell failure' (bit 12) is Seplos-only. Source: Pylontech CANBUS V1.2; Seplos CANBUS V1.0; LuxPower CAN V04; bench capture 2026-10-26 (Deye + Seplos V2).",
+        "bits": {
+          "1": "high voltage",
+          "2": "low voltage",
+          "3": "high temperature",
+          "4": "low temperature",
+          "7": "discharge high current",
+          "8": "charge high current",
+          "11": "internal communication fail",
+          "12": "cell failure"
+        },
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": true
+          }
+        }
+      },
+      {
+        "address": 892,
+        "name": "module_count",
+        "label": "Modules in parallel",
+        "unit": "",
+        "data_type": "uint16",
+        "register_type": "input",
+        "category": "battery",
+        "poll_group": "realtime",
+        "can_id": "0x359",
+        "start_bit": 32,
+        "bit_length": 8,
+        "byte_order": "little",
+        "description": "Source: Pylontech CANBUS V1.2; Seplos CANBUS V1.0; LuxPower CAN V04; bench capture 2026-10-26 (Deye + Seplos V2).",
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": true
+          }
+        }
+      },
+      {
+        "address": 893,
+        "name": "total_capacity",
+        "label": "Battery capacity",
+        "unit": "Ah",
+        "data_type": "uint16",
+        "register_type": "input",
+        "category": "battery",
+        "poll_group": "realtime",
+        "can_id": "0x359",
+        "start_bit": 40,
+        "bit_length": 16,
+        "byte_order": "little",
+        "description": "UNVERIFIED against Pylontech: Pylontech puts 'P','N' (0x50 0x4E) in bytes 5-6, Seplos V1.0 leaves them empty; LuxPower V04 defines the capacity in Ah. Reads 0 or 20048 on a real Pylontech. Source: LuxPower CAN V04; bench capture 2026-10-26 (Deye + Seplos V2). Not selected by default (add it from the catalog on a BMS that sends it)."
+      },
+      {
+        "address": 894,
+        "name": "online_packs",
+        "label": "Packs online (DIP addresses)",
+        "unit": "",
+        "data_type": "uint16",
+        "register_type": "input",
+        "category": "alarms",
+        "poll_group": "realtime",
+        "can_id": "0x359",
+        "start_bit": 56,
+        "bit_length": 8,
+        "byte_order": "little",
+        "description": "UNVERIFIED against Pylontech: Seplos V1.0 only (table 5). Source: Seplos CANBUS V1.0; bench capture 2026-10-26 (Deye + Seplos V2). Not selected by default (add it from the catalog on a BMS that sends it).",
+        "bits": {
+          "0": "pack 0",
+          "1": "pack 1",
+          "2": "pack 2",
+          "3": "pack 3",
+          "4": "pack 4",
+          "5": "pack 5",
+          "6": "pack 6",
+          "7": "pack 7"
+        }
+      },
+      {
+        "address": 920,
+        "name": "full_charge_request",
+        "label": "Full charge request",
+        "unit": "",
+        "data_type": "uint16",
+        "register_type": "input",
+        "category": "requests",
+        "poll_group": "realtime",
+        "can_id": "0x35C",
+        "start_bit": 3,
+        "bit_length": 1,
+        "byte_order": "little",
+        "description": "Source: Pylontech CANBUS V1.2; LuxPower CAN V04.",
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": true
+          }
+        }
+      },
+      {
+        "address": 921,
+        "name": "force_charge_2",
+        "label": "Force charge request II",
+        "unit": "",
+        "data_type": "uint16",
+        "register_type": "input",
+        "category": "requests",
+        "poll_group": "realtime",
+        "can_id": "0x35C",
+        "start_bit": 4,
+        "bit_length": 1,
+        "byte_order": "little",
+        "description": "LuxPower V04 swaps the names of bits 4 and 5 (bit 4 = request 1). Source: Pylontech CANBUS V1.2; Seplos CANBUS V1.0.",
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": true
+          }
+        }
+      },
+      {
+        "address": 922,
+        "name": "force_charge_1",
+        "label": "Force charge request I",
+        "unit": "",
+        "data_type": "uint16",
+        "register_type": "input",
+        "category": "requests",
+        "poll_group": "realtime",
+        "can_id": "0x35C",
+        "start_bit": 5,
+        "bit_length": 1,
+        "byte_order": "little",
+        "description": "Source: Pylontech CANBUS V1.2; Seplos CANBUS V1.0.",
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": true
+          }
+        }
+      },
+      {
+        "address": 923,
+        "name": "discharge_enable",
+        "label": "Discharge enable",
+        "unit": "",
+        "data_type": "uint16",
+        "register_type": "input",
+        "category": "requests",
+        "poll_group": "realtime",
+        "can_id": "0x35C",
+        "start_bit": 6,
+        "bit_length": 1,
+        "byte_order": "little",
+        "description": "Source: Pylontech CANBUS V1.2; Seplos CANBUS V1.0; LuxPower CAN V04; bench capture 2026-10-26 (Deye + Seplos V2).",
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": true
+          }
+        }
+      },
+      {
+        "address": 924,
+        "name": "charge_enable",
+        "label": "Charge enable",
+        "unit": "",
+        "data_type": "uint16",
+        "register_type": "input",
+        "category": "requests",
+        "poll_group": "realtime",
+        "can_id": "0x35C",
+        "start_bit": 7,
+        "bit_length": 1,
+        "byte_order": "little",
+        "description": "Source: Pylontech CANBUS V1.2; Seplos CANBUS V1.0; LuxPower CAN V04; bench capture 2026-10-26 (Deye + Seplos V2).",
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": true
+          }
+        }
+      },
+      {
+        "address": 925,
+        "name": "cycles",
+        "label": "Cycle count",
+        "unit": "",
+        "data_type": "uint16",
+        "register_type": "input",
+        "category": "battery",
+        "poll_group": "realtime",
+        "can_id": "0x35C",
+        "start_bit": 16,
+        "bit_length": 16,
+        "byte_order": "little",
+        "description": "UNVERIFIED against Pylontech: a LuxPower V04 field; empty in Pylontech V1.2 and Seplos V1.0. Source: LuxPower CAN V04; bench capture 2026-10-26 (Deye + Seplos V2). Not selected by default (add it from the catalog on a BMS that sends it)."
+      },
+      {
+        "address": 940,
+        "name": "manufacturer",
+        "label": "Manufacturer",
+        "unit": "",
+        "data_type": "string:4",
+        "register_type": "input",
+        "category": "diagnostics",
+        "poll_group": "realtime",
+        "can_id": "0x35E",
+        "start_bit": 0,
+        "bit_length": 64,
+        "byte_order": "little",
+        "description": "ASCII, NUL/space padded (\"PYLON\", \"SHEnergy\" = Seplos). Source: Pylontech CANBUS V1.2; Seplos CANBUS V1.0; LuxPower CAN V04; bench capture 2026-10-26 (Deye + Seplos V2).",
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": true
+          }
+        }
+      },
+      {
+        "address": 1120,
+        "name": "max_cell_temp",
+        "label": "Highest cell temperature",
+        "unit": "°C",
+        "data_type": "int16",
+        "register_type": "input",
+        "category": "cells",
+        "poll_group": "realtime",
+        "can_id": "0x370",
+        "start_bit": 0,
+        "bit_length": 16,
+        "byte_order": "little",
+        "scale": 10,
+        "description": "UNVERIFIED against Pylontech: Seplos extension. Source: Seplos CANBUS V1.0; bench capture 2026-10-26 (Deye + Seplos V2).",
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": true
+          }
+        }
+      },
+      {
+        "address": 1121,
+        "name": "min_cell_temp",
+        "label": "Lowest cell temperature",
+        "unit": "°C",
+        "data_type": "int16",
+        "register_type": "input",
+        "category": "cells",
+        "poll_group": "realtime",
+        "can_id": "0x370",
+        "start_bit": 16,
+        "bit_length": 16,
+        "byte_order": "little",
+        "scale": 10,
+        "description": "UNVERIFIED against Pylontech: Seplos extension. Source: Seplos CANBUS V1.0; bench capture 2026-10-26 (Deye + Seplos V2).",
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": true
+          }
+        }
+      },
+      {
+        "address": 1122,
+        "name": "max_cell_voltage",
+        "label": "Highest cell voltage",
+        "unit": "V",
+        "data_type": "uint16",
+        "register_type": "input",
+        "category": "cells",
+        "poll_group": "realtime",
+        "can_id": "0x370",
+        "start_bit": 32,
+        "bit_length": 16,
+        "byte_order": "little",
+        "scale": 1000,
+        "description": "UNVERIFIED against Pylontech: Seplos extension; its document says 0.1 °C (a copy error) — the bench frames are millivolts (3289 = 3.289 V, equal to 0x355 bytes 4-5). Source: Seplos CANBUS V1.0; bench capture 2026-10-26 (Deye + Seplos V2).",
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": true
+          }
+        }
+      },
+      {
+        "address": 1123,
+        "name": "min_cell_voltage",
+        "label": "Lowest cell voltage",
+        "unit": "V",
+        "data_type": "uint16",
+        "register_type": "input",
+        "category": "cells",
+        "poll_group": "realtime",
+        "can_id": "0x370",
+        "start_bit": 48,
+        "bit_length": 16,
+        "byte_order": "little",
+        "scale": 1000,
+        "description": "UNVERIFIED against Pylontech: Seplos extension, millivolts (see max). Source: Seplos CANBUS V1.0; bench capture 2026-10-26 (Deye + Seplos V2).",
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": true
+          }
+        }
+      },
+      {
+        "address": 1130,
+        "name": "max_cell_temp_id",
+        "label": "Highest-temperature cell (id)",
+        "unit": "",
+        "data_type": "int16",
+        "register_type": "input",
+        "category": "cells",
+        "poll_group": "realtime",
+        "can_id": "0x371",
+        "start_bit": 0,
+        "bit_length": 16,
+        "byte_order": "little",
+        "description": "UNVERIFIED against Pylontech: Seplos extension. Source: Seplos CANBUS V1.0; bench capture 2026-10-26 (Deye + Seplos V2).",
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": true
+          }
+        }
+      },
+      {
+        "address": 1131,
+        "name": "min_cell_temp_id",
+        "label": "Lowest-temperature cell (id)",
+        "unit": "",
+        "data_type": "int16",
+        "register_type": "input",
+        "category": "cells",
+        "poll_group": "realtime",
+        "can_id": "0x371",
+        "start_bit": 16,
+        "bit_length": 16,
+        "byte_order": "little",
+        "description": "UNVERIFIED against Pylontech: Seplos extension. Source: Seplos CANBUS V1.0; bench capture 2026-10-26 (Deye + Seplos V2).",
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": true
+          }
+        }
+      },
+      {
+        "address": 1132,
+        "name": "max_cell_voltage_id",
+        "label": "Highest-voltage cell (id)",
+        "unit": "",
+        "data_type": "int16",
+        "register_type": "input",
+        "category": "cells",
+        "poll_group": "realtime",
+        "can_id": "0x371",
+        "start_bit": 32,
+        "bit_length": 16,
+        "byte_order": "little",
+        "description": "UNVERIFIED against Pylontech: Seplos extension. Source: Seplos CANBUS V1.0; bench capture 2026-10-26 (Deye + Seplos V2).",
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": true
+          }
+        }
+      },
+      {
+        "address": 1133,
+        "name": "min_cell_voltage_id",
+        "label": "Lowest-voltage cell (id)",
+        "unit": "",
+        "data_type": "int16",
+        "register_type": "input",
+        "category": "cells",
+        "poll_group": "realtime",
+        "can_id": "0x371",
+        "start_bit": 48,
+        "bit_length": 16,
+        "byte_order": "little",
+        "description": "UNVERIFIED against Pylontech: Seplos extension. Source: Seplos CANBUS V1.0; bench capture 2026-10-26 (Deye + Seplos V2).",
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": true
+          }
+        }
+      }
+    ]
+  }
+}

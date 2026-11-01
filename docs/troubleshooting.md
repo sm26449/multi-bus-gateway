@@ -41,7 +41,9 @@ against a threshold of `max(stale_after_s, fastest_interval × 3 + 2)` s.
 | HTTP/JSON (Solar API) device degrades at night or mid-day | `HTTP device: initial fetch failed (…) — pollers will retry`; a datalogger answers slowly or not at all while it sleeps or is polled by another client | Longer poll interval; `drop_all_zero: true` for an inverter that answers zeros while asleep; `stale_after_s` above the device's quiet gaps |
 | Values freeze but the device is `ok` | `stale_groups` on Status: one poll group's batch keeps failing (`batch_failures`) while the fastest group drives the timestamp | A register the slave rejects — add it to `illegal_registers`, or set `max_gap: 0` for a strict slave |
 | Values look like garbage | Data type / word order | **Diagnostics → Register probe** shows the type × order matrix |
-| RTU device flaps | Two masters on one line (a second device on the same bridge endpoint or `/dev` node) | One master per serial line / bridge endpoint — [rtu-serial.md §5](rtu-serial.md#5-multi-slave-on-one-bus-current-limit) |
+| RTU device flaps | Two masters on one line: another program or box polls the same bus, or a second gateway reaches the same bridge endpoint | One master per serial line. Several slaves on one line are several devices of this gateway on the same bus ([rtu-serial.md §5](rtu-serial.md#5-several-slaves-on-one-bus)); where another master already polls, listen instead (**Role on the bus: Listen-only**) |
+| CAN device: `no CAN interface 'can0' here` | A CAN interface belongs to a network namespace; the gateway container of the default stack does not see the host's | Run the CAN device on a gateway on bare metal ([install.md §E](install.md#e-raspberry-pi--arm64-notes)) |
+| CAN device: `can0 exists but is down`, or *not listen-only* | The host sets the interface up; the gateway reads only through a listen-only one | On the host: `ip link set can0 down && ip link set can0 type can bitrate 500000 listen-only on && ip link set can0 up` (the bitrate is the bus's) |
 
 ## No data in Home Assistant
 
@@ -52,15 +54,16 @@ against a threshold of `max(stale_after_s, fastest_interval × 3 + 2)` s.
 | `MQTT broker mosquitto:1883 not reachable after 30s` at boot | The bundled broker is not running, or you started only the gateway | `docker compose up -d mosquitto`, or point the sink at your broker |
 | Entities exist but stay **unavailable** | Availability: `<prefix>/status` (retained, LWT `offline`) and each device's `<device prefix>/availability`; a broker restarted without persistence lost the retained `online` | The gateway re-asserts availability on every reconnect; `mosquitto_sub -v -t '<prefix>/status'` shows the current retained value |
 | Entities never update | `publish_mode: changed` publishes only changes — a steady reading looks frozen | Set `mqtt.heartbeat_interval` (seconds) so unchanged values are republished with a fresh timestamp |
-| Entities missing after renaming a device / changing its topic prefix | The routing identity is fixed after creation; discovery is keyed `mbg_dev_<device>_<addr>_<name>` | Delete the device (this clears its retained discovery) and recreate it, or use `mqtt.compat_aliases` during a topic migration |
-| Old entities linger after a device was deleted | Retained discovery configs outlive a gateway that was stopped before the delete | Clear `homeassistant/+/mbg_dev_<id>/+/config` with `mosquitto_pub -r -n` ([operations.md](operations.md#uninstalling)) |
+| One device has no entities | Its discovery is published only while the device's MQTT output and its Home Assistant switch are on (⋯ → **Outputs…**); turning either off takes its entities back | Turn both on and **Save** |
+| Entities missing after renaming a device / changing its topic prefix | The routing identity is fixed after creation; discovery is keyed by the device's HA node: `mbg_<gateway>_dev_<id>` for a device created under `identity_scope: gateway` (a fresh install), else `mbg_dev_<id>` ([mqtt-contract.md](mqtt-contract.md#home-assistant-discovery--haconfig)) | Delete the device (this clears its retained discovery) and recreate it, or use `mqtt.compat_aliases` during a topic migration |
+| Old entities linger after a device was deleted | Retained discovery configs outlive a gateway that was stopped before the delete | Clear `homeassistant/+/<node>/+/config` (`<node>` as above) with `mosquitto_pub -r -n` ([operations.md](operations.md#uninstalling)) |
 | No `number`/`select` entities for writable registers | Controls exist only for non-primary devices and only with `mqtt.allow_write_entities` **and** `security.allow_writes` | See *MQTT writes ignored* below |
 
 ## Nothing in InfluxDB
 
 | Symptom | Check | Fix |
 |---|---|---|
-| The sink is off | `influxdb.enabled` (**Config → InfluxDB**) **and** the device's InfluxDB output toggle (device → *Edit* / *Outputs*) | Enable both; the per-device bucket is auto-created (`Bucket auto-create failed for '…' (non-fatal)` if the token cannot) |
+| The sink is off | `influxdb.enabled` (**Config → InfluxDB**) **and** the device's InfluxDB output (⋯ → **Outputs…**; *Setup* shows it) | Enable both; the per-device bucket is auto-created (`Bucket auto-create failed for '…' (non-fatal)` if the token cannot) |
 | `InfluxDB rejected writes with HTTP 401 — token revoked/rotated or bucket missing. Points are buffered until this is fixed.` | Token, org, bucket; with the bundled stack the token is `DOCKER_INFLUXDB_INIT_ADMIN_TOKEN` from `.env`, org/bucket `multibus` | Paste the right token; buffered points replay on their own — `influx_auth_failed` clears |
 | `InfluxDB write retry: …` then `InfluxDB batch failed permanently (…)` | URL reachable from the container? (`http://influxdb:8086` inside the stack, not `localhost`) | Fix the URL; the failed batch is recovered into the buffer and replayed |
 | `InfluxDB connection failed: …` at boot | Same — plus the bundled InfluxDB still initialising | Wait for the monitor thread (`InfluxDB reconnection failed, monitor thread will keep trying`) or fix the URL |
@@ -94,7 +97,9 @@ the first gate that failed:
 | `MQTT command <name> ignored: mqtt.allow_write_entities is on but the broker connection is anonymous — set mqtt.username/password (broker ACLs are the only authentication a publish carries)` | **3.80.0:** the broker session must be authenticated | The bundled broker already requires credentials (3.81.0, `MQTT_USERNAME`/`MQTT_PASSWORD` in `.env`); set the same pair as `mqtt.username`/`password` in the gateway (Config → MQTT) |
 | `MQTT command on <topic> ignored: retained message (stale write replay)` | Retained messages on command topics are never obeyed (they would re-actuate hardware on every reconnect) | Publish commands without `retain`; the gateway clears the retained copy at subscribe |
 | `MQTT command for <device> addr=<n> failed: …` | The write handler refused: register not declared writable in the template, value outside `write_min`/`write_max`, the primary device (always read-only), an HTTP/JSON device, or the per-IP rate limit | Fix the template row or the value; use a non-primary device |
-| `MQTT command on <topic> dropped: write queue full` | Commands are executed one at a time off paho's thread; a flood backs up | Slow the sender |
+| `MQTT command on <topic> dropped: write queue full` | Commands are taken off paho's thread by one worker (a queue of 32) and handed to the device's lane; a flood backs up | Slow the sender |
+| `<dev>/cmd/result` says `rejected`, reason *write-locked* | Every device made from the UI or the API, and every restored one, starts **write-locked** | An admin chooses ⋯ → **Unlock writes…** on the device; a restored device also has its command bindings off — turn them on in **Commands & bindings…** |
+| `<dev>/cmd/result` says `superseded` / `expired` / `held` | A newer value for the same channel replaced this one while it waited; it waited longer than the channel's `max_age_s` (30 s by default); the channel's pace (`min_interval_s`…) holds it, `retry_after_s` says how long | Expected under load; send the latest value only, or lower the channel's pace on the device ([mqtt-contract.md](mqtt-contract.md#commands--devcmdname)) |
 | API write returns 403 `writes require authentication — enable login (ui.auth) or set an API_KEY` | Anonymous writes are refused even with the gate open | Log in, or send `X-API-Key` |
 
 Every attempt, accepted or refused, is an `AUDIT` line.
@@ -107,8 +112,20 @@ Every attempt, accepted or refused, is an `AUDIT` line.
 | Same, but the bridge is running | The container is not named `mbg-serial-bridge` (it was `pv-stack-serial-bridge` before 3.79.0), or it is on another network | Set `SERIAL_BRIDGE_URL` on the gateway to the real name/port, or rename the container |
 | Adapter missing from Scan | Not plugged in, listed in `BRIDGE_EXCLUDE` (shown as unavailable), or a `/dev` node that is not ttyUSB/ttyACM (the cgroup rules allow only majors 188/166) | `docker logs mbg-serial-bridge`; adjust `BRIDGE_EXCLUDE` |
 | `[supervisor] PORTMAP UNREADABLE (…) — starting empty` | The port map in the `serial-bridge-data` volume is corrupt; endpoints get reassigned | Re-scan and re-bind the affected devices |
-| Adapter renumbers after a replug | Direct-serial mode (`/dev/ttyUSBn`) — exactly what the bridge avoids | Move the device to *Over network* |
+| Adapter renumbers after a replug | Direct-serial mode (`/dev/ttyUSBn`) — exactly what the bridge avoids | Map the adapter by its `/dev/serial/by-id` link or a udev alias, or move the device to the bridge (⋯ → **Edit connection…**) |
 | Test connection times out | Unit id, baud (the bridge is 9600 8N1), A/B swapped, missing termination | The frames are identical over TCP and serial — the template and wiring are the suspects |
+
+## Adding or editing a device
+
+| Symptom | Check | Fix |
+|---|---|---|
+| A serial port shows **Not mapped** | The host has it, the container has no node for it | Add the `devices:` line shown (or the `--device` flag for `docker run`), recreate the container, **Refresh** ([rtu-serial.md §1.1](rtu-serial.md#11-the-port-list)) |
+| Test, Scan or the Check answers 409 naming a listening device | An enabled device only listens on that bus (a tap, Seplos V2 in listen mode, a listen-only template): nothing that transmits may run there | Choose **Listen-only** for the new device, or disable the listener first |
+| Check answers 409 *busy* / 429 | One preview or scan per bus at a time; at most 4 at once | Wait and **Run again**; the check never blocks **Next — without a check** |
+| Check asks to **Open the connection anyway** | A converter or bridge port cannot say whether another program is connected to it | Tick it only when you know nothing else polls that bus (the choice is audited) |
+| Save says *This device was changed elsewhere since you opened it* (412) | Another tab or an API client saved the device meanwhile; nothing was saved | The dialog reads the stored version, keeps your edits over it and marks what both changed: review, then **Save** again |
+| The line is locked: *Set by the bus: … reads it at 9600 8N1* | A bus has one line; the devices already on it set it | **Edit bus line…** changes it for every device on that bus (admin; they restart). Through a converter it is *set on the box* |
+| **Create** stays disabled | The gateway's dry run refuses the device; the reason is beside the button | Fix the field it names (**Change** in *What will be created* jumps to it) |
 
 ## Container restarts or will not start
 

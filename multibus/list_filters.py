@@ -1,5 +1,5 @@
 # Multi-Bus Gateway — multi-protocol Modbus/HTTP/MQTT acquisition gateway.
-# Copyright (C) 2024-2026 Stefan Maldaianu <sm26449@diysolar.ro>  — AGPL-3.0-or-later
+# Copyright (C) 2024-2026 Stefan Maldaianu <stefan@multibus.dev>  — AGPL-3.0-or-later
 """Search, filter and sort for the device and template lists.
 
 Every parameter is optional; with none, a list comes back exactly as before.
@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
-from .config import MODBUS_PROTOCOLS
+from .config import CAN_PROTOCOLS, MODBUS_PROTOCOLS, VIRTUAL_MAP_FAMILY, VIRTUAL_MAP_PROTOCOLS
 from .device_kind import KINDS, normalize
 
 DEVICE_STATES = ('online', 'offline', 'disabled')
@@ -22,7 +22,7 @@ TEMPLATE_ORIGINS = ('builtin', 'custom')
 TEMPLATE_SORTS = ('name', 'id', 'vendor', 'kind', 'used_by')
 # one vocabulary for both lists: a device's own protocols, plus `modbus` for
 # any of them — a template is filed by transport (modbus / http / mqtt)
-PROTOCOLS = ('modbus',) + MODBUS_PROTOCOLS + ('http', 'mqtt')
+PROTOCOLS = ('modbus',) + MODBUS_PROTOCOLS + VIRTUAL_MAP_PROTOCOLS + ('http', 'mqtt') + CAN_PROTOCOLS
 MAX_Q = 200            # characters
 MAX_VALUES = 20        # per comma list
 
@@ -61,6 +61,20 @@ def _kinds(raw: Optional[str], errors: Dict[str, str]) -> List[str]:
     out = [normalize(v) or v for v in got]
     _check('kind', out, KINDS, errors)
     return out
+
+
+def _types(raw: Optional[str], errors: Dict[str, str]) -> List[str]:
+    """A device-type list (ADR-0027): built-ins (aliases read as their kind)
+    and the user types held now."""
+    from .device_types import is_user_type, type_ids
+    got = _list('type', raw, errors)
+    out = [v if is_user_type(v) else (normalize(v) or v) for v in got]
+    _check('type', out, type_ids(), errors)
+    return out
+
+
+def _labels(raw: Optional[str], errors: Dict[str, str]) -> List[str]:
+    return _list('label', raw, errors)
 
 
 def _protocols(raw: Optional[str], errors: Dict[str, str]) -> List[str]:
@@ -121,7 +135,8 @@ def device_search_text(dev, entry: Dict, templates=None, *, redact: bool = False
     it is read from, its installation and its kind."""
     from .redact import redact_url
     parts: List[Any] = [entry.get('id'), entry.get('name'), entry.get('endpoint_id'),
-                        entry.get('component_of'), entry.get('kind'), entry.get('host'),
+                        entry.get('component_of'), entry.get('kind'), entry.get('type'),
+                        entry.get('type_label'), *(entry.get('labels') or []), entry.get('host'),
                         entry.get('http_url'), entry.get('mqtt_in_topic'), entry.get('mqtt_in_broker')]
     tids = [getattr(dev, 'template', '') or '']
     for s in getattr(dev, 'sources', None) or []:
@@ -154,11 +169,15 @@ def _proto_hit(protocols: Set[str], wanted: List[str]) -> bool:
 def filter_devices(rows: List[Tuple[Dict, Set[str], str]], *, q: Optional[str] = None,
                    kind: Optional[str] = None, state: Optional[str] = None,
                    protocol: Optional[str] = None, installation: Optional[str] = None,
-                   sort: Optional[str] = None) -> List[Dict]:
+                   sort: Optional[str] = None, type: Optional[str] = None,  # noqa: A002 — the API's word
+                   label: Optional[str] = None) -> List[Dict]:
     """``rows`` = [(entry, protocols, search text)] in registry order; the
-    entries that match, sorted if asked."""
+    entries that match, sorted if asked. ``type``: the device's type (a user
+    type or a built-in); ``label``: any of its identity labels."""
     errors: Dict[str, str] = {}
     kinds = _kinds(kind, errors)
+    types = _types(type, errors)
+    labels = _labels(label, errors)
     states = _list('state', state, errors)
     _check('state', states, DEVICE_STATES, errors)
     protos = _protocols(protocol, errors)
@@ -170,6 +189,10 @@ def filter_devices(rows: List[Tuple[Dict, Set[str], str]], *, q: Optional[str] =
     out = []
     for entry, protocols, text in rows:
         if kinds and entry.get('kind') not in kinds:
+            continue
+        if types and entry.get('type') not in types:
+            continue
+        if labels and not set(labels) & set(entry.get('labels') or ()):
             continue
         if states and device_state(entry) not in states:
             continue
@@ -196,15 +219,22 @@ def filter_devices(rows: List[Tuple[Dict, Set[str], str]], *, q: Optional[str] =
 
 def template_transport_of(protocol: str) -> str:
     """A protocol of the shared vocabulary as a template's transport."""
+    if protocol in VIRTUAL_MAP_FAMILY:
+        return VIRTUAL_MAP_FAMILY[protocol]
     return 'modbus' if protocol in ('modbus',) + MODBUS_PROTOCOLS else protocol
 
 
 def filter_templates(rows: List[Tuple[Dict, str]], *, q: Optional[str] = None,
                      kind: Optional[str] = None, protocol: Optional[str] = None,
-                     origin: Optional[str] = None, sort: Optional[str] = None) -> List[Dict]:
-    """``rows`` = [(summary, device kind)] in library order."""
+                     origin: Optional[str] = None, sort: Optional[str] = None,
+                     type: Optional[str] = None) -> List[Dict]:  # noqa: A002 — the API's word
+    """``rows`` = [(summary, device kind)] in library order. ``type``: the
+    templates for a device type — its built-in kind's, and the ones that
+    list it (ADR-0027)."""
+    from .device_types import template_matches
     errors: Dict[str, str] = {}
     kinds = _kinds(kind, errors)
+    types = _types(type, errors)
     protos = {template_transport_of(p) for p in _protocols(protocol, errors)}
     origins = _list('origin', origin, errors)
     _check('origin', origins, TEMPLATE_ORIGINS, errors)
@@ -215,6 +245,8 @@ def filter_templates(rows: List[Tuple[Dict, str]], *, q: Optional[str] = None,
     out = []
     for s, dkind in rows:
         if kinds and dkind not in kinds:
+            continue
+        if types and not any(template_matches(t, dkind, s.get('types')) for t in types):
             continue
         if protos and str(s.get('transport') or '').lower() not in protos:
             continue

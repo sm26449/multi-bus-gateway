@@ -9,6 +9,9 @@ RUN apt-get update && apt-get upgrade -y --no-install-recommends \
         ser2net python3 python3-pyudev tini \
     && rm -rf /var/lib/apt/lists/*
 COPY supervisor.py /app/supervisor.py
+# the port enumerator shared with the gateway (a copy of multibus/serial_ports.py,
+# kept identical by tests/test_serial_ports.py — ADR-0028)
+COPY serial_ports.py /app/serial_ports.py
 # Reported by GET /adapters and /health so a gateway can tell which bridge
 # build it talks to (release: --build-arg BRIDGE_VERSION=<tag>).
 ARG BRIDGE_VERSION=dev
@@ -18,7 +21,7 @@ ENV BRIDGE_VERSION=${BRIDGE_VERSION}
 # paths get explicit ownership: /etc/ser2net/ (config rewritten per reconcile),
 # the UUCP lock dirs (ser2net lockfiles + the stale-lock sweep), /data is the
 # state volume (chown'd host-side). Device access stays doubly bounded by the
-# compose device_cgroup_rules (tty majors 188/166 only).
+# compose device_cgroup_rules (exact tty majors only — ADR-0016).
 RUN useradd --uid 10002 --user-group --no-create-home --shell /usr/sbin/nologin bridge \
     && usermod -aG dialout bridge \
     && mkdir -p /etc/ser2net /var/lock /run/lock /data \
