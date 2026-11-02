@@ -25,7 +25,6 @@ unchanged. Mirrors the parts of ModbusClient the API/UI rely on
 
 Values come from JSON already in engineering units, so there is no scale-factor
 or block-size handling to worry about (unlike a fragile Modbus gateway)."""
-import concurrent.futures as _futures
 import http.client
 import ipaddress
 import json
@@ -69,15 +68,37 @@ def _classify_lan(addrs) -> Optional[str]:
 
 # Bound DNS resolution by the caller's timeout: socket.getaddrinfo ignores any
 # timeout, so a slow/unreachable resolver (a flaky link) can wedge a poller
-# thread for tens of seconds past its configured timeout. Run it in a small pool
-# and stop waiting on time-out — the orphaned lookup finishes on its own and
-# frees its worker; we never block on it.
-_RESOLVER_POOL = _futures.ThreadPoolExecutor(max_workers=4, thread_name_prefix="dns-resolve")
+# thread for tens of seconds past its configured timeout. Run it on a thread of
+# its own and stop waiting on time-out — the orphaned lookup finishes on its own;
+# we never block on it. A daemon thread, not a ThreadPoolExecutor: the
+# interpreter joins an executor's workers at exit, so a wedged lookup held the
+# process (a shutdown, a test run) until the resolver gave up (FLK-9). At most
+# _RESOLVER_SLOTS lookups run at once, as the pool's four workers did.
+_RESOLVER_SLOTS = threading.BoundedSemaphore(4)
 
 
 def _getaddrinfo(host: str, timeout: float):
     """``socket.getaddrinfo(host, None)`` bounded by ``timeout`` seconds."""
-    return _RESOLVER_POOL.submit(socket.getaddrinfo, host, None).result(timeout=timeout)
+    deadline = time.monotonic() + timeout
+    if not _RESOLVER_SLOTS.acquire(timeout=max(0.0, timeout)):
+        raise TimeoutError(f"resolving {host!r}: every resolver slot is busy")
+    box: Dict[str, Any] = {}
+    done = threading.Event()
+
+    def lookup() -> None:
+        try:
+            box['infos'] = socket.getaddrinfo(host, None)
+        except BaseException as e:  # noqa: BLE001 — handed to the caller
+            box['error'] = e
+        finally:
+            _RESOLVER_SLOTS.release()
+            done.set()
+    threading.Thread(target=lookup, daemon=True, name="dns-resolve").start()
+    if not done.wait(max(0.0, deadline - time.monotonic())):
+        raise TimeoutError(f"resolving {host!r} took longer than {timeout:g} s")
+    if 'error' in box:
+        raise box['error']
+    return box['infos']
 
 
 def lan_url_error(url: str, timeout: float = 5.0) -> Optional[str]:

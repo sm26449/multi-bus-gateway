@@ -45,6 +45,7 @@ import logging
 import math
 import threading
 import time
+import weakref
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Dict, Optional, Tuple
@@ -146,6 +147,8 @@ class OpcUaServer:
     # shares (ADR-0018 D4)
     COMMAND_WORKERS = 4
     _command_executor = None
+    # every server made, so a test can stop the ones it left running
+    _instances: "weakref.WeakSet[OpcUaServer]" = weakref.WeakSet()
 
     def __init__(self, cfg, *, devices: Callable, authenticate: Callable[[str, str], Optional[str]],
                  config_dir: Path, version: str = '', run_command: Optional[Callable] = None):
@@ -165,6 +168,9 @@ class OpcUaServer:
         self._loop: Optional[asyncio.AbstractEventLoop] = None
         self._stop: Optional[asyncio.Event] = None
         self._ready = threading.Event()
+        # stop() before the server is up: _main sees it and does not come up
+        # (the asyncio event of the loop does not exist yet then) — FLK-7
+        self._halt = threading.Event()
         self.error: Optional[str] = None
         self.endpoint = ''
         self._nodes: Dict[Tuple[str, str], Tuple[Any, str]] = {}    # (dev, name) → (node, variant type)
@@ -172,12 +178,15 @@ class OpcUaServer:
         self._dev_nodes: Dict[str, Any] = {}
         self._unread: set = set()                        # (dev, name) made before their first value
         self.updates = 0
+        OpcUaServer._instances.add(self)
 
     # ── the outside ──
     def start(self, wait_s: float = 15.0) -> bool:
         if self._thread is not None:
             return True
         self._ready.clear()
+        self._halt.clear()
+        self._loop = self._stop = None             # the last run's, closed
         self.error = None
         self._thread = threading.Thread(target=self._run, name='opcua', daemon=True)
         self._thread.start()
@@ -185,8 +194,12 @@ class OpcUaServer:
         return self.error is None and self._ready.is_set()
 
     def stop(self) -> None:
+        self._halt.set()
         if self._loop is not None and self._stop is not None:
-            self._loop.call_soon_threadsafe(self._stop.set)
+            try:
+                self._loop.call_soon_threadsafe(self._stop.set)
+            except RuntimeError:                   # its loop has already closed
+                pass
         if self._thread is not None:
             self._thread.join(10)
         self._thread = None
@@ -281,6 +294,8 @@ class OpcUaServer:
         mbg = await server.nodes.objects.add_folder(ua.NodeId("MBG", idx), ua.QualifiedName("MBG", idx))
         devs = await mbg.add_folder(ua.NodeId("Devices", idx), ua.QualifiedName("Devices", idx))
         self._stop = asyncio.Event()
+        if self._halt.is_set():
+            return                                 # stopped while it was coming up
         # the whole address space before the first client: one that subscribes
         # the moment the gateway is back must find every node it knew (a node
         # that is not there answers BadNodeIdUnknown, and most clients never
@@ -293,7 +308,7 @@ class OpcUaServer:
             self._ready.set()
             logger.info("OPC UA server on %s (%s)", self.endpoint,
                         ', '.join(getattr(p, 'name', str(p)) for p in policies))
-            while not self._stop.is_set():
+            while not self._stop.is_set() and not self._halt.is_set():
                 try:
                     await self._sync(server, idx, devs, ua)
                 except Exception as e:  # noqa: BLE001 — one bad pass must not stop the server

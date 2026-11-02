@@ -128,3 +128,61 @@ def _reset_attribute_providers():
     _ex._SUN_CACHE.clear()
     _ea.set_sun_provider(None)
     _ea._last_fresh_elev.clear()
+
+
+@pytest.fixture(autouse=True)
+def _forget_preview_jobs():
+    """The preview/scan job registry is process-wide (FLK-8): a job of an
+    earlier test still counted as running made a later test's FIRST preview
+    answer 429. Every job a test left is asked to stop and forgotten."""
+    yield
+    from multibus import preview
+    with preview._LOCK:
+        for job in preview._JOBS.values():
+            job.cancel.set()
+        preview._JOBS.clear()
+        preview._BUSY.clear()
+
+
+def stop_app_threads() -> None:
+    """Stop the background threads an app built by create_api left running
+    (FLK-9): its event harvester and its bridge poller — create_api starts
+    both, only the lifespan's shutdown stops them, and most tests never run
+    it — and an OPC UA server still up (FLK-7: one whose start outlived the
+    test's wait served on for the rest of the run)."""
+    from multibus import api
+    from multibus.bridge_diag import BridgeDiag
+    from multibus.opcua.server import OpcUaServer
+    for ev in list(api._HARVESTER_STOPS):
+        ev.set()
+    for bd in list(BridgeDiag._instances):
+        bd.stop()
+    for srv in list(OpcUaServer._instances):
+        if srv._thread is not None:
+            srv.stop()
+
+
+@pytest.fixture(autouse=True)
+def _stop_leaked_app_threads():
+    """Each harvester + poller pair kept its app alive and woke every 5 s for
+    the rest of the run: ~90 pairs by 6 % of a random-order suite, over a
+    thousand threads by a third of it — the GIL so contended that a plain
+    test took over 120 s, an OPC UA server missed its start window, and the
+    process still burned 175 % CPU after the last test, its summary unwritten."""
+    yield
+    try:
+        stop_app_threads()
+    except Exception:  # noqa: BLE001 — teardown must never fail a test
+        pass
+
+
+def pytest_sessionfinish(session, exitstatus):
+    """Name any non-daemon thread still alive at the end: one would keep
+    the process from exiting after its summary (FLK-7/FLK-9)."""
+    left = [t for t in threading.enumerate()
+            if t is not threading.main_thread() and not t.daemon and t.is_alive()]
+    if left:
+        tr = session.config.pluginmanager.get_plugin("terminalreporter")
+        msg = "non-daemon threads still alive at the end: " + ", ".join(t.name for t in left)
+        if tr is not None:
+            tr.write_line(msg, yellow=True)

@@ -247,6 +247,31 @@ def test_pinned_fetch_connects_to_validated_ip_defeating_rebind(monkeypatch):
     assert calls["resolve"] == 1                 # resolved exactly once — no re-lookup
 
 
+_WEDGED_LOOKUP = """
+import socket, time
+socket.getaddrinfo = lambda *a, **k: time.sleep(60)      # a resolver that never answers
+from multibus.http_client import lan_url_error
+assert lan_url_error("http://meter.lan/x", timeout=0.2) is not None
+print("returned", flush=True)
+"""
+
+
+def test_a_wedged_dns_lookup_does_not_hold_the_process_at_exit():
+    """FLK-9: the lookup is abandoned at its timeout, but it ran on a
+    ThreadPoolExecutor, whose workers the interpreter joins at exit — the
+    process (a test run, the gateway's shutdown) waited for the resolver."""
+    import os
+    import subprocess
+    import sys
+    import time
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    t0 = time.monotonic()
+    p = subprocess.run([sys.executable, "-c", _WEDGED_LOOKUP], cwd=root, capture_output=True,
+                       text=True, timeout=50)
+    assert p.returncode == 0 and "returned" in p.stdout, p.stderr
+    assert time.monotonic() - t0 < 20, "the exit waited for the wedged lookup"
+
+
 def test_same_host_redirect_blocks_cross_origin():
     import urllib.request
     import urllib.error

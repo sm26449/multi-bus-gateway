@@ -29,6 +29,7 @@ import os
 import re
 import threading
 import time
+import weakref
 from typing import Any, Callable, Dict, List, Optional, Set, Tuple
 from datetime import datetime
 from contextlib import asynccontextmanager
@@ -67,6 +68,10 @@ _PROTO_WORDS = {'tcp': 'Modbus TCP', 'udp': 'Modbus UDP', 'rtu-tcp': 'Modbus RTU
                 'ascii-tcp': 'Modbus ASCII over TCP', 'seplos_v2': 'Seplos V2',
                 'seplos_v2-tcp': 'Seplos V2 over TCP'}
 _VMAP_MODES = ('poll', 'listen')
+
+# the stop of every app's event harvester: the lifespan's shutdown sets its
+# own; an app built and dropped without one (a test) is stopped from here
+_HARVESTER_STOPS: "weakref.WeakSet[threading.Event]" = weakref.WeakSet()
 
 
 def _vmap_mode_missing(conn: Dict, stored: Optional[Dict]) -> bool:
@@ -1346,6 +1351,7 @@ def create_api(config, modbus_client, mqtt_publisher, influxdb_publisher,
 
     harvester_stop = threading.Event()
     app.state.harvester_stop = harvester_stop
+    _HARVESTER_STOPS.add(harvester_stop)
     threading.Thread(target=_harvest_events, daemon=True, name="event-harvester").start()
 
     # ── Tier 2: devices + device templates ─────────────────────────────────

@@ -1,5 +1,18 @@
 # Changelog
 
+## 3.98.2
+
+A fix release for 3.98.1, whose release images were not published either:
+the release build's test run never ended.
+
+- **OPC UA:** stopping the server while it was still starting did nothing, so
+  it came up afterwards and kept serving with no owner. It now stops.
+- **Shutdown:** a DNS lookup stuck on a slow or unreachable resolver kept the
+  gateway's process alive at exit until the resolver gave up. Lookups still
+  time out as before, and no longer hold the exit.
+- **Build:** the test suite stops each app's background threads after every
+  test, so a run ends in any test order.
+
 ## 3.98.1
 
 A packaging fix for 3.98.0, whose release images were not published: the

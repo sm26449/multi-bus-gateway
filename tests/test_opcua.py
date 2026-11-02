@@ -136,6 +136,28 @@ def test_a_server_still_coming_up_says_starting_not_failed(tmp_path):
         srv._thread.join(2)
 
 
+def test_a_stop_while_the_server_is_still_coming_up_stops_it(tmp_path, monkeypatch):
+    """FLK-7: a start that outlived start()'s wait, then stop(), left the
+    server thread running for good — stop() only signalled a server that was
+    already up, so this one came up afterwards and served on, unowned."""
+    import asyncio
+    from asyncua import Server
+    real_init = Server.init
+
+    async def slow_init(self, *a, **k):
+        await asyncio.sleep(1.0)                   # a loaded host
+        return await real_init(self, *a, **k)
+    monkeypatch.setattr(Server, 'init', slow_init)
+    port = _port()
+    srv = OpcUaServer(_cfg(port=port), devices=lambda: [], authenticate=_auth, config_dir=tmp_path)
+    assert srv.start(wait_s=0.1) is False and srv.status()['starting'] is True
+    th = srv._thread
+    srv.stop()
+    th.join(15)
+    assert not th.is_alive(), "the server came up after stop() and kept running"
+    assert _port_frees(port)
+
+
 # ── a real server, a real client ─────────────────────────────────────────────
 
 def _server(tmp_path, plant, **kw):

@@ -530,9 +530,13 @@ def test_usernames_must_differ_across_roles(tmp_path):
 
 
 @needs_tc
-def test_session_store_is_bounded():
+def test_session_store_is_bounded(monkeypatch):
     """F-27 (3.83.0): beyond MAX_SESSIONS the oldest sessions go first."""
     from multibus.config import UIConfig
+    # 266 logins at the real 600 000 PBKDF2 rounds took ~95 s, close to the
+    # suite's 120 s timeout (FLK-9); what is tested here is the bound
+    monkeypatch.setattr(auth, "_ITERATIONS", 1000)
+    monkeypatch.setattr(auth, "_MIN_ITERATIONS", 1000)
     ui = UIConfig(auth_enabled=True, auth_username="admin", auth_password=auth.hash_password("pw"))
     st = auth.AuthState(ui)
     tokens = [st.login("1.2.3.4", "admin", "pw")[0] for _ in range(auth.MAX_SESSIONS + 10)]

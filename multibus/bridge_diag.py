@@ -31,6 +31,7 @@ import threading
 import time
 import urllib.error
 import urllib.request
+import weakref
 from collections import deque
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
@@ -379,6 +380,9 @@ class BridgeDiag:
     short history per bus, and serves the cached result. Never polls from a
     request; one thread for all bridges."""
 
+    # every poller made, so a test can stop the ones its app left running
+    _instances: "weakref.WeakSet[BridgeDiag]" = weakref.WeakSet()
+
     def __init__(self, config, registry=None, alert_mgr=None,
                  publishers: Optional[Callable[[], Tuple[Any, Any]]] = None,
                  types: Optional[Dict[str, Dict]] = None,
@@ -402,6 +406,7 @@ class BridgeDiag:
         self._alerting: Dict[str, Dict[str, Any]] = {}  # alert key → hysteresis state
         self._stop = threading.Event()
         self._thread: Optional[threading.Thread] = None
+        BridgeDiag._instances.add(self)
 
     # -- lifecycle --
     def start(self) -> None:
