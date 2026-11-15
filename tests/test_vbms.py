@@ -4,7 +4,6 @@
 values through a profile, behind an arm gate. The frames are checked against the ones the Deye
 accepted on the 2026-11-09 bench."""
 import json
-import pytest
 import pathlib
 
 from multibus.codec.can_signal import decode_signal, parse_can_id

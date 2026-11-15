@@ -22,7 +22,6 @@ password path's."""
 import json
 from types import SimpleNamespace
 
-import pytest
 
 from multibus import auth as _a
 from multibus.passkeys import PasskeyStore

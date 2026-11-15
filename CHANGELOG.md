@@ -1,8 +1,10 @@
 # Changelog
 
-## 3.101.0-rc1
+## 3.101.0-rc2
 
-A release candidate. Everything since 3.98.2. Read the upgrade notes first
+A release candidate (rc1 was withdrawn before any image was built: the
+release build stopped on two unused imports in the tests; rc2 is the same
+gateway code). Everything since 3.98.2. Read the upgrade notes first
 (and [docs/upgrade-guide.md](docs/upgrade-guide.md), "3.98 → 3.101"):
 nothing in `config.yaml` is renamed, but `/metrics` is closed to remote
 scrapers until you allow them, and a restore or an import now locks writes.
@@ -150,6 +152,11 @@ scrapers until you allow them, and a restore or an import now locks writes.
 - Enabling MQTT or InfluxDB through *apply* re-points rules and sequences
   to the new output.
 - The installation page fits a phone; each row's ⋯ menu is fully visible.
+
+## 3.101.0-rc1
+
+Withdrawn — no images were built (lint stopped the release build). Use
+3.101.0-rc2.
 
 ## 3.98.2
 
