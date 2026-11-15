@@ -1,7 +1,7 @@
 # Multi-Bus Gateway
 # Digest-pinned base image (Dependabot's docker ecosystem refreshes the pin);
 # the tag is kept for humans, the digest is what is built.
-FROM python:3.11-slim@sha256:bab1b7ef4b450c81002278d035eff85ebe394ae94df904f7a3ba14f7e16e487b
+FROM python:3.15-slim@sha256:94d3426f1def7db4a106a232ac121bfd975393e5dfd40a619b955fae45fe7913
 LABEL org.opencontainers.image.licenses="AGPL-3.0-or-later"
 
 # Debian security fixes newer than the base image's last rebuild: the digest
