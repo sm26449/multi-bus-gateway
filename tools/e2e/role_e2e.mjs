@@ -12,6 +12,7 @@
  * enabled, writes allowed, and modules: [{id: ha, name: Redundancy, icon: shield-check, url: /ha/, health: /health}].
  */
 import { chromium, request as pwRequest } from 'playwright';
+import { openPage } from './lib/nav.mjs';
 const BASE = process.env.MBG_URL || 'http://127.0.0.1:18090';
 const results = [];
 const check = (name, cond, extra = '') => { results.push({ name, ok: !!cond }); console.log(`${cond ? 'PASS' : 'FAIL'} ${name}${extra ? ' — ' + JSON.stringify(extra) : ''}`); };
@@ -29,7 +30,7 @@ try {
   check('an active gateway shows no banner', await page.locator('#roleBanner').isHidden());
 
   // an ha token, made from Settings → Security like any other
-  await page.click('[data-page="config"]'); await page.waitForTimeout(800);
+  await openPage(page, 'config'); await page.waitForTimeout(800);
   await page.click('[data-cfgtab="modules"]'); await page.waitForTimeout(500);
   const row = page.locator('[data-cfgpanel="modules"] .module-row[data-module="ha"]');
   check('a module is in Settings → Modules, with Open', await row.count() === 1

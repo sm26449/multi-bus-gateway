@@ -117,6 +117,28 @@ def _results(g, dev='ctrl'):
     return out
 
 
+def _lane(g, timeout=10.0, running=True, pending=None):
+    """Wait until the lanes are in the state a step needs (TEST-FLAKE-1): a
+    job taken off its lane and blocked on the held bus (``running``), and
+    ``pending`` jobs waiting behind it. A fixed sleep guessed at this and lost
+    under a loaded suite; the dispatcher's own lane view is read instead."""
+    end = time.monotonic() + timeout
+    while True:
+        lanes = g.cd.lanes().values()
+        now = (any(ln['running'] for ln in lanes), sum(ln['pending'] for ln in lanes))
+        if now[0] == running and (pending is None or now[1] == pending):
+            return
+        assert time.monotonic() < end, f"lanes never reached running={running} pending={pending}: {now}"
+        time.sleep(0.005)
+
+
+def _until(cond, timeout=10.0):
+    end = time.monotonic() + timeout
+    while not cond():
+        assert time.monotonic() < end, 'the expected state was never reached'
+        time.sleep(0.005)
+
+
 def _call(g, *a, timeout=1.0):
     """Run the handler as the MQTT worker would; True when it returned in time."""
     t = threading.Thread(target=g.handler, args=a, daemon=True)
@@ -138,9 +160,7 @@ def test_the_mqtt_worker_returns_while_the_bus_is_held(tmp_path, monkeypatch):
         # another device's write is not behind it
         returned2, _t2 = _call(g, 'other', _reg(200, 'setpoint'), '7')
         assert returned2
-        assert g.cd.drain(5) is False or True
-        time.sleep(0.2)
-        assert g.fakes['other'].reg.get(200) == 7.0
+        _until(lambda: g.fakes['other'].reg.get(200) == 7.0)
         assert 200 not in g.fakes['ctrl'].reg
     finally:
         lock.release()
@@ -187,8 +207,9 @@ def test_a_raw_write_that_waited_past_its_age_expires(tmp_path, monkeypatch):
     assert lock.acquire(timeout=5)
     try:
         assert _call(g, 'ctrl', _reg(200, 'setpoint'), '1')[0]       # runs, waits for the bus
-        time.sleep(0.2)
+        _lane(g, pending=0)
         assert _call(g, 'ctrl', _reg(300, 'mode'), '1')[0]         # waits in the lane
+        _lane(g, pending=1)
         now[0] += 31.0
     finally:
         lock.release()
@@ -205,12 +226,40 @@ def test_a_device_locked_while_a_raw_write_waits_is_not_written(tmp_path, monkey
     assert lock.acquire(timeout=5)
     try:
         assert _call(g, 'ctrl', _reg(200, 'setpoint'), '5')[0]
-        time.sleep(0.2)
+        _lane(g, pending=0)                                      # runs: waits for the bus
         g.app.state.registry.find('ctrl')[1].write_locked = True
     finally:
         lock.release()
     assert g.cd.drain(5)
     assert 200 not in g.fakes['ctrl'].reg
+    told = _results(g)
+    assert told and told[-1]['status'] == 'rejected' and 'write-locked' in told[-1]['reason'], told
+
+
+@needs_tc
+def test_a_device_locked_by_the_route_while_a_raw_write_waits_is_not_written(tmp_path, monkeypatch):
+    """REFAC-SAFE-2: /write-lock REBUILDS the DeviceConfig (set_write_locked →
+    registry.resync), so the head must read the lock from the config it resolves
+    UNDER the bus lock — the copy taken before the lock (for the lock key) is stale.
+    The in-place-mutation test above passes even without the re-resolve."""
+    g = _gw(tmp_path, monkeypatch)
+    g.cfg.upsert_raw_device({'id': 'ctrl', 'template': 'ctrl_tpl',
+                             'connection': {'protocol': 'tcp', 'host': '192.0.2.1'},
+                             'mqtt': {'topic_prefix': 't/ctrl'}})
+    g.app.state.registry.resync(g.cfg.devices, None)
+    before = g.app.state.registry.find('ctrl')[1]
+    lock = _bus(g)
+    assert lock.acquire(timeout=5)
+    try:
+        assert _call(g, 'ctrl', _reg(200, 'setpoint'), '5')[0]
+        _lane(g, pending=0)                                      # runs: waits for the bus
+        r = g.client.post('/api/devices/ctrl/write-lock', json={'locked': True})
+        assert r.status_code == 200, r.text
+        assert g.app.state.registry.find('ctrl')[1] is not before      # a new object; the old copy is stale
+    finally:
+        lock.release()
+    assert g.cd.drain(5)
+    assert 200 not in g.fakes['ctrl'].reg and not g.fakes['ctrl'].writes
     told = _results(g)
     assert told and told[-1]['status'] == 'rejected' and 'write-locked' in told[-1]['reason'], told
 
@@ -264,7 +313,7 @@ def test_a_standby_tells_nothing_and_writes_nothing(tmp_path, monkeypatch):
     assert lock.acquire(timeout=5)
     try:
         assert _call(g, 'ctrl', _reg(200, 'setpoint'), '5')[0]
-        time.sleep(0.2)
+        _lane(g, pending=0)                                      # runs: waits for the bus
         g.app.state.role.role = 'standby'
     finally:
         lock.release()
@@ -378,9 +427,9 @@ def test_rest_answers_superseded_in_its_error_body_and_ha_replaces_a_waiting_res
     assert lock.acquire(timeout=5)
     try:
         t1, r1 = _bg(g.client.post, '/api/devices/ctrl/write', json={'address': 200, 'value': 1})
-        time.sleep(0.3)                                          # runs: waits for the bus
+        _lane(g, pending=0)                                      # runs: waits for the bus
         t2, r2 = _bg(g.client.post, '/api/devices/ctrl/write', json={'address': 200, 'value': 2})
-        time.sleep(0.3)                                          # waits in the lane
+        _lane(g, pending=1)                                      # waits in the lane
         g.handler('ctrl', _reg(200, 'setpoint'), '3')            # the same register, from HA
         t2.join(5)
         assert not t2.is_alive(), 'a REST write waited for the bus instead of being replaced'
@@ -409,7 +458,7 @@ def test_the_raw_lease_revert_is_a_revert_job_asked_again_under_the_bus_lock(tmp
     assert lock.acquire(timeout=5)
     try:
         t, out = _bg(revert, lambda: current[0])
-        time.sleep(0.3)
+        _lane(g, pending=0)                                      # runs: waits for the bus
         current[0] = False                                       # renewed while it waited
     finally:
         lock.release()
@@ -544,3 +593,36 @@ def test_no_builtin_setup_step_writes_a_commands_register():
             if any(lo <= a < lo + max(1, len(s.get('values') or [])) for a in cmd_addrs):
                 bad.append((tid, s.get('name')))
     assert bad == []
+
+
+# ── publishing parity (§2 L1) ────────────────────────────────────────────────
+
+@needs_tc
+def test_ha_write_with_writes_off_is_told_rejected(tmp_path, monkeypatch):
+    """CMD-9: an HA `…/set` write refused because MQTT writes are off now
+    publishes a `rejected` on cmd/result (before the fix it returned silently)."""
+    g = _gw(tmp_path, monkeypatch)
+    g.cfg.mqtt.allow_write_entities = False                 # MQTT writes off
+    g.handler('ctrl', _reg(200, 'setpoint'), '7')           # refused synchronously
+    res = [x for x in _results(g) if x.get('command') == 'raw:holding@200']
+    assert res and res[-1]['status'] == 'rejected', _results(g)
+    assert 'writes over MQTT are off' in (res[-1].get('reason') or '')
+    assert 200 not in g.fakes['ctrl'].reg                   # nothing written
+
+
+@needs_tc
+def test_rest_raw_write_is_told_on_cmd_result(tmp_path, monkeypatch):
+    """CMD-10: a REST raw `/write` is told on cmd/result too (before the fix
+    only HA raw writes were), so a monitor sees every raw write."""
+    g = _gw(tmp_path, monkeypatch)
+    r = g.client.post('/api/devices/ctrl/write', json={'address': 200, 'value': 7})
+    assert r.status_code == 200, r.text
+    end = time.time() + 3
+    res = []
+    while time.time() < end:
+        res = [x for x in _results(g) if x.get('command') == 'raw:holding@200' and x.get('via') == 'api']
+        if res:
+            break
+        time.sleep(0.02)
+    assert res, _results(g)
+    assert res[-1]['status'] in ('success', 'mismatch', 'unverified')

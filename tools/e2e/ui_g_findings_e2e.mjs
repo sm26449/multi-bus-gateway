@@ -70,7 +70,17 @@ const go = async (page, hash, wait = 3500) => { await page.evaluate(h => { locat
   const upsIn = Object.values((await api('/api/values?device=ups')).values || {}).find(v => v.name === 'power_in');
   check('G1: In is the input meter\'s power (W, same reading)', meterIn && upsIn && Math.abs(meterIn.value - upsIn.value) < Math.max(25, meterIn.value * 0.05),
         { meter: meterIn?.value, ups: upsIn?.value });
-  await row.screenshot({ path: `${SHOTS}/g1-ups-row.png` });
+  // the live fleet refresh draws the row again every few seconds: a
+  // screenshot taken while it is replaced is taken again (E2E-398-F1)
+  let shot = null;
+  for (let i = 0; i < 5 && shot === null; i++) {
+    shot = await row.screenshot({ path: `${SHOTS}/g1-ups-row.png`, timeout: 5000 }).catch(e => {
+      if (!/not attached|detached|not stable|Timeout/i.test(String(e))) throw e;
+      return null;
+    });
+    if (shot === null) await sleep(300);
+  }
+  check('G1: the row could be photographed', shot !== null);
   check('G1: no page errors', errs.length === 0, errs);
   await ctx.close();
 }
@@ -98,7 +108,15 @@ for (const [lang, d] of [['en', en], ['ro', ro]]) {
   await sleep(400);
   const roleQ = await page.locator('#csAddRoleQ').innerText().catch(() => '');
   check(`G2 ${lang}: the role question says what each answer means`, roleQ.includes((d['cs.role.master'] || 'Master').split(' ')[0]) && roleQ.length > 40, roleQ);
-  if (lang === 'en') await page.screenshot({ path: `${SHOTS}/g2-add-connection.png` });
+  check(`G2 ${lang}: the protocol is asked after the role`, await page.locator('#csAddSpeaksQ').count() === 0);
+  await page.locator('label:has(#csAddRole-listen)').click().catch(() => {});
+  await sleep(400);
+  check(`G2 ${lang}: Listen-only filters the protocols (Modbus ASCII refused, with why; RTU and Seplos V2 offered)`,
+        await page.getAttribute('#csAddSpeaks-modbus-ascii', 'aria-disabled').catch(() => null) === 'true'
+        && await page.getAttribute('#csAddSpeaks-modbus-rtu', 'aria-disabled').catch(() => 'x') === null
+        && await page.getAttribute('#csAddSpeaks-seplos_v2', 'aria-disabled').catch(() => 'x') === null);
+  await page.locator('#csAddSpeaksQ').scrollIntoViewIfNeeded().catch(() => {});
+  await page.screenshot({ path: `${SHOTS}/g2-add-connection${lang === 'en' ? '' : '-' + lang}.png` });
   check(`G2 ${lang}: no page errors`, errs.length === 0, errs);
   await ctx.close();
 }

@@ -1,0 +1,217 @@
+# Multi-Bus Gateway — multi-protocol Modbus/HTTP/MQTT acquisition gateway.
+# Copyright (C) 2024-2026 Stefan Maldaianu <stefan@multibus.dev>  — AGPL-3.0-or-later
+"""Monotonic-counter hygiene for cumulative energy registers.
+
+A cumulative energy counter (Wh/kWh/varh…) only ever grows. A single corrupt
+Modbus read that decodes *lower* than the last good value looks to every
+downstream consumer — the Home Assistant Energy Dashboard, Victron's own
+accounting, an InfluxDB `difference()` — like a **counter reset**, which
+silently injects a huge phantom delta and poisons the day's totals.
+
+`MonotonicFilter` sits on the poll path for registers flagged ``monotonic: true``
+and lets a *lower* value through only when it is a **genuine** reset (meter
+replaced / rebooted), not a one-read glitch:
+
+* value ≥ last accepted  → accept (normal growth; flat is fine).
+* value < last, transient → **drop** (hold the last value; the read is treated
+  as missing, so the cache keeps serving the last-good counter).
+* value < last by a SMALL step (less than ``small_drop_frac`` of the baseline,
+  default 1 %) → **hold**: the last good value is published again and the
+  filter keeps waiting. Such a back-step is a meter re-sync / a read after a
+  stall (prod 2026-11-14: 491475.44 → 491473.06 after a 25 s stall), never a
+  reset; adopting it made every downstream consumer — a virtual meter feeding
+  a Fronius DataManager in whole Wh — see energy run backwards (CNT-1). The
+  counter recovers on its own once it grows past the held value. Only if the
+  lower value PERSISTS for ``reset_hold_s`` (default 1 h) is it adopted.
+* value < last by a LARGE step (≥ ``small_drop_frac``: a fall to near zero, a
+  replaced meter), sustained and coherent for ``reset_confirm`` consecutive
+  reads → accept it as a real reset and adopt the new, lower baseline.
+
+The guard is per register and lives on the poller, so it resets (re-seeds on the
+first read) whenever the device is reloaded — no persistence, no surprises.
+Non-numeric values pass through untouched.
+"""
+from __future__ import annotations
+
+import time
+from typing import Callable, Optional
+
+
+class MonotonicFilter:
+    """Stateful reject-on-regression guard for one cumulative counter.
+
+    ``reset_confirm`` consecutive below-baseline reads are required before a
+    downward step is believed (a real meter reset), so a lone glitch never
+    propagates. ``noise`` absorbs sub-unit float jitter from scale division so a
+    counter that is momentarily flat is not mistaken for a regression.
+    """
+
+    __slots__ = ("reset_confirm", "noise", "small_drop_frac", "reset_hold_s",
+                 "_clock", "_last", "_regressions", "_reset_first",
+                 "_hold_since", "just_reset", "reset_reason")
+
+    def __init__(self, reset_confirm: int = 3, noise: float = 0.0,
+                 small_drop_frac: float = 0.01, reset_hold_s: float = 3600.0,
+                 clock: Callable[[], float] = time.monotonic):
+        # at least 1 confirming read; 1 = accept every downward step immediately
+        self.reset_confirm = max(1, int(reset_confirm))
+        self.noise = abs(float(noise))
+        # CNT-1: a back-step smaller than this share of the baseline is held
+        # (last good value re-published), never confirmed by read count. 1 %
+        # of a mature counter is days to months of energy — no re-sync or
+        # stalled read steps back that far, while a real reset (to ~0) or a
+        # replaced meter falls by far more. 0 disables the hold (old rule).
+        self.small_drop_frac = min(max(float(small_drop_frac), 0.0), 1.0)
+        # a held small back-step that persists this long is adopted anyway
+        # (a genuinely re-based counter must not be frozen forever)
+        self.reset_hold_s = max(0.0, float(reset_hold_s))
+        self._clock = clock
+        self._last: Optional[float] = None
+        self._regressions = 0
+        self._reset_first: Optional[float] = None
+        self._hold_since: Optional[float] = None
+        # set for exactly one feed() when a reset was ADOPTED — the caller
+        # logs it with register context (an adopted reset used to be the one
+        # transition that left no trace at all)
+        self.just_reset = False
+        self.reset_reason = ""
+
+    def feed(self, value):
+        """Return the value to publish, or ``None`` to drop it (hold last).
+
+        A small back-step returns the held last good value itself (CNT-1)."""
+        self.just_reset = False
+        # bool is an int subclass — exclude it; non-numerics are not counters
+        if not isinstance(value, (int, float)) or isinstance(value, bool):
+            return value
+
+        if self._last is None:                     # first sample seeds the baseline
+            self._last = value
+            return value
+
+        if value >= self._last - self.noise:       # grew, flat, or within noise
+            # SYMMETRY (external audit): a corrupt read is as likely to jump
+            # UP as down — a flipped high word turns 1,000,000 Wh into 2.1e9,
+            # and accepting it both records a phantom mega-delta AND poisons
+            # the baseline so the next correct reads look like a "reset". An
+            # implausible upward step (>50% above baseline, beyond noise) now
+            # needs the same coherent confirmation as a downward one; real
+            # post-gap catch-up growth confirms in reset_confirm reads.
+            if (self._last > 0 and value > self._last * 1.5 + self.noise):
+                # Coherence here is ASCENDING continuation, not tight spread:
+                # a real counter that grows >50 % per read (freshly reset, an
+                # EV session counter near zero) keeps climbing, while a
+                # flipped-word glitch falls back on the next read and restarts
+                # the count. The old spread test (±5 % of the value) could
+                # never be satisfied by steady growth >5 %/read, so the
+                # baseline froze FOREVER on a fast-growing counter (audit
+                # 2026-10-01, verified by execution: 100, 210, 440, 920 … →
+                # every read after the first dropped, indefinitely).
+                if (self._regressions and self._reset_first is not None
+                        and value >= self._reset_first - self.noise):
+                    self._regressions += 1         # still climbing → coherent
+                else:
+                    self._regressions = 1          # first suspect, or fell back
+                self._reset_first = value          # next read must not be below this
+                if self._regressions >= self.reset_confirm:
+                    return self._adopt(value, f"{self.reset_confirm} coherent "
+                                              f"ascending reads after a jump")
+                return None                        # implausible jump → hold
+            if value > self._last:
+                self._last = value                 # never let the baseline slip down
+            self._regressions = 0
+            self._reset_first = None
+            self._hold_since = None                # recovered: no back-step pending
+            return value
+
+        # CNT-1: a SMALL back-step is held, not counted towards a reset — the
+        # last good value is served again (fresh, so freshness-bound readers
+        # such as a virtual meter keep it), until the counter grows past it or
+        # the lower value has persisted for reset_hold_s.
+        now = self._clock()
+        if self._hold_since is None:
+            self._hold_since = now
+        if (self.small_drop_frac > 0
+                and self._last - value < self.small_drop_frac * abs(self._last)):
+            self._regressions = 0
+            self._reset_first = None
+            if now - self._hold_since >= self.reset_hold_s:
+                return self._adopt(value, f"lower value persisted "
+                                          f"{now - self._hold_since:.0f}s")
+            return self._last
+
+        # Below baseline — glitch until proven a reset. A REAL reset produces
+        # a COHERENT low sequence: the post-reset counter grows by tiny
+        # increments compared to the size of the drop itself, so the SPREAD of
+        # the confirming reads must stay small relative to that drop (5%, or
+        # the noise band). A burst of unrelated corrupt reads — even an
+        # ascending one — spreads on the same order as the drop and never
+        # confirms (audit DP-10: three random garbage values could previously
+        # be adopted as a baseline, the exact phantom-delta this filter
+        # exists to stop).
+        if self._regressions == 0 or self._reset_first is None:
+            self._reset_first = value
+            self._regressions = 1
+        else:
+            spread = value - self._reset_first
+            allowed = max(self.noise, 0.05 * (self._last - self._reset_first))
+            if -self.noise <= spread <= allowed:
+                self._regressions += 1             # coherent continuation
+            else:
+                self._reset_first = value          # incoherent → restart the count
+                self._regressions = 1
+        if self._regressions >= self.reset_confirm:
+            # sustained + coherent → adopt
+            return self._adopt(value, f"{self.reset_confirm} coherent low reads")
+        return None                                # transient → drop, keep last-good
+
+    def _adopt(self, value, reason: str):
+        self._last = value
+        self._regressions = 0
+        self._reset_first = None
+        self._hold_since = None
+        self.just_reset = True
+        self.reset_reason = reason
+        return value
+
+
+class DailyCounterFilter:
+    """Hold-the-day's-maximum guard for a *day* counter that a source
+    recomputes from whatever is awake.
+
+    The Fronius Solar API's ``Site.E_Day`` is the SUM of the inverters' own
+    day counters, taken over the inverters that still answer: as they fall
+    asleep one by one at sunset the sum drops (272.8 → 199 → 137 → 125 kWh on
+    2026-09-14), and Home Assistant's ``total_increasing`` statistics read
+    every drop as a meter reset. Within a day the true value never decreases,
+    so a lower read is HELD (the last maximum keeps being served) unless it is
+    a real reset — the counter fell to (near) zero at midnight, below
+    ``reset_below`` (2 %) of the held maximum — which is adopted at once. A
+    plant with one of four inverters still awake reads ~25 % of the day's sum
+    at dusk, never 2 %; the midnight value is 0 exactly.
+
+    Non-numeric values pass through untouched. Per register, on the poller,
+    like MonotonicFilter (no persistence: the first read re-seeds).
+    """
+
+    __slots__ = ("reset_below", "_max", "just_reset")
+
+    def __init__(self, reset_below: float = 0.02):
+        self.reset_below = min(max(float(reset_below), 0.0), 1.0)
+        self._max: Optional[float] = None
+        self.just_reset = False
+
+    def feed(self, value):
+        """Return the value to publish, or ``None`` to hold the day's maximum."""
+        self.just_reset = False
+        if not isinstance(value, (int, float)) or isinstance(value, bool):
+            return value
+        if self._max is None or value >= self._max:
+            self._max = value
+            return value
+        if value <= self._max * self.reset_below:        # a new day: adopt the reset
+            self._max = value
+            self.just_reset = True
+            return value
+        return None                                       # sunset: hold the maximum
+

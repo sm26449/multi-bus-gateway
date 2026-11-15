@@ -559,19 +559,26 @@ def test_names_follow_the_v3_template_where_the_meaning_is_the_same():
     v3 = json.loads(Path("multibus/device_templates/seplos_bms_v3_rtu_tap.json").read_text())['device_template']
     v2 = _tpl()['device_template']
     names2 = {r['name'] for r in v2['registers']} | {c['name'] for c in v2['calculated']}
-    shared = {'pack_voltage', 'current', 'remaining_capacity', 'total_capacity', 'soc', 'soh', 'cycles',
+    shared = {'pack_voltage', 'remaining_capacity', 'total_capacity', 'soc', 'soh', 'cycles',
               'average_cell_voltage', 'max_cell_voltage', 'min_cell_voltage', 'max_cell_temp', 'min_cell_temp',
-              'average_cell_temp', 'ambient_temp', 'mosfet_temp', 'status', 'balancing_bits', 'power',
+              'average_cell_temp', 'ambient_temp', 'mosfet_temp', 'status', 'balancing_bits',
               'cell_delta', 'alarm_count', 'warning_count', 'protection_count', 'failure_count',
               'energy_remaining', 'energy_to_full', 'fet_charge', 'fet_discharge', 'alarm_cell_high_v',
               'alarm_short_circuit_prot', 'alarm_soc_low'} | {f'cell_{i}' for i in range(1, 17)} \
         | {f'cell_temp_{i}' for i in range(1, 5)}
     names3 = {r['name'] for r in v3['registers']} | {c['name'] for c in v3['calculated']}
     assert shared <= names2 and shared <= names3
-    # the same scale where both read the same unit
+    # current and power are canonical in v2 (battery_current / battery_power, both + charging,
+    # like seplos_bms_v2_tap and canonical-fields.md), still legacy in the production v3 tap
+    # (current / power, power - charging): FINDINGS SV2-CANON-1. v3 is renamed later, under
+    # EMS coordination; until then the two taps differ on these two names on purpose.
+    assert {'battery_current', 'battery_power'} <= names2 and 'current' not in names2 and 'power' not in names2
+    assert 'current' in names3 and 'power' in names3
+    # the current decode is unchanged by the rename: the same scale as v3's current
     s2 = {r['name']: r.get('scale') for r in v2['registers']}
     s3 = {r['name']: r.get('scale') for r in v3['registers']}
-    for n in ('pack_voltage', 'current', 'soc', 'soh', 'cell_1', 'remaining_capacity'):
+    assert s2['battery_current'] == s3['current']
+    for n in ('pack_voltage', 'soc', 'soh', 'cell_1', 'remaining_capacity'):
         assert s2[n] == s3[n], n
 
 
@@ -591,9 +598,23 @@ def test_the_template_decodes_a_golden_frame_end_to_end(fake_port):
     assert c.poll_once(CMD_TELEMETRY) and c.poll_once(CMD_ALARMS)
     v = {d['register'].name: d['value'] for d in c._values(regs, time.monotonic()).values()}
     c.disconnect()
-    assert v['pack_voltage'] == 52.23 and v['current'] == -12.34 and v['soc'] == 94.6
+    assert v['pack_voltage'] == 52.23 and v['battery_current'] == -12.34 and v['soc'] == 94.6
     assert v['cell_16'] == 3.305 and v['max_cell_voltage'] == 3.305 and v['min_cell_voltage'] == 3.287
     assert v['cell_temp_1'] == 25.1 and v['ambient_temp'] == 23.0 and v['mosfet_temp'] == 28.7
     assert v['max_cell_temp'] == 25.2 and v['total_capacity'] == 39.0 and v['cycles'] == 70
     assert v['status'] == 'Unknown' and v['alarm_cell_high_v'] == 0
     assert 'device_name' not in v                       # 0x51 not asked: absent, not empty
+
+
+def test_a_monotonic_register_decodes_on_the_virtual_map():
+    """DUP-19 (closed 2026-11-07): `_values` imported a class that never existed
+    (`CounterFilter`) for a `monotonic: true` row, so the first such register
+    raised and the pack's whole value set was lost that cycle."""
+    from multibus.codec.counter_filter import MonotonicFilter
+    r = reg(0, 'energy', monotonic=True)
+    client = sv.SeplosV2Client(conn(), [r], {}, device_id='dup19')
+    client.words[0] = 100
+    data = client._values([r], 1.0)
+    assert data and next(iter(data.values()))['value'] == 100
+    assert client._counter_filters and all(isinstance(f, MonotonicFilter)
+                                           for f in client._counter_filters.values())

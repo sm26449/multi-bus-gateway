@@ -3,6 +3,8 @@
 # FROZEN: multibus/rules.py as of 042bdee (before the opt-in OV tuning keys,
 # ADR-0012) — the reference tests/test_ov_tuning_identity.py compares the
 # engine against. Never edit; replace only when a later lot changes the baseline.
+# Changed since: RULE-RB-1 (the read-back match-skip needs a read-back taken
+# after the rule's last write) — an unconditional fix, so the baseline has it.
 """Rules — the declarative controller (docs/rules-design.md).
 
 A rule decides WHEN a command runs and with WHAT parameters. This module is
@@ -1235,7 +1237,10 @@ class RuleState:
         p = r.param
         fresh = actual is not None and not (actual_stale_s is not None and actual_age_s is not None and actual_age_s > actual_stale_s)
         if self.pending:
-            if fresh and isinstance(self.want.get(p), (int, float)) and _num(actual) is not None \
+            # RULE-RB-1 (unconditional fix, carried into the baseline): only a
+            # read-back sampled after the last write may stand in for a send
+            after = self.last_cmd_ts is None or (actual_age_s is not None and now - actual_age_s > self.last_cmd_ts)
+            if fresh and after and isinstance(self.want.get(p), (int, float)) and _num(actual) is not None \
                     and abs(_num(actual) - float(self.want[p])) <= r.tolerance:
                 # the device already holds it: nothing to send, nothing to burn on the wire
                 self._note_sent(now, self.want)

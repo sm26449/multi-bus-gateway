@@ -30,7 +30,7 @@ def test_secret_query_params_masked():
 
 
 def test_benign_url_unchanged():
-    url = "http://sms-gateway:5080/api/sms/send"
+    url = "http://hooks.example:5080/api/notify"
     assert redact_url(url) == url
 
 

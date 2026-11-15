@@ -23,7 +23,14 @@
 Object.assign(JanitzaMonitor.prototype, {
 
     _ROUTE_PAGES: ['dashboard', 'monitor', 'history', 'energy', 'pq', 'devices', 'templates', 'vmeters',
-                   'rules', 'status', 'diagnostics', 'config'],
+                   'vbms', 'rules', 'status', 'diagnostics', 'config'],
+
+    // the page scrolls inside .content (#mainContent, overflow-y:auto), NOT the
+    // window — so a return-to-list/overview must save and restore THAT element's
+    // scroll, not window.scrollY (which stays ~0). One helper, used everywhere.
+    _scrollEl() { return document.getElementById('mainContent') || document.scrollingElement || document.documentElement; },
+    _scrollTop() { try { return this._scrollEl().scrollTop || 0; } catch (e) { return 0; } },
+    _scrollTo(y) { try { this._scrollEl().scrollTop = y || 0; } catch (e) { /* */ } },
 
     _routeParse(hash) {
         const h = String(hash || '').replace(/^#/, '');
@@ -53,6 +60,14 @@ Object.assign(JanitzaMonitor.prototype, {
             const q = this._find?.templates ? this._findToQuery(this._find.templates) : '';
             return `#/templates${q ? '?' + q : ''}`;
         }
+        // the dashboard's device drill-in is a real route, so Back/Forward, a
+        // refresh and a shared link all land on the same view (not a hidden flag).
+        // Use _dashDeviceId() (not this.dashDevice): the PRIMARY is held as null,
+        // so dashDevice alone would drop the primary device from the URL.
+        if (page === 'dashboard' && (this._dashMode || 'fleet') === 'device' && this._dashDeviceId) {
+            const did = this._dashDeviceId();
+            if (did) return `#/dashboard/${encodeURIComponent(did)}`;
+        }
         return `#/${page}`;
     },
 
@@ -66,8 +81,8 @@ Object.assign(JanitzaMonitor.prototype, {
         try {
             if (push) {
                 const leave = this._routeLeave || {};
-                history.replaceState({ ...(history.state || {}), scrollY: leave.scrollY ?? window.scrollY,
-                                       opened: this._view?.id || null }, '', location.hash);
+                history.replaceState({ ...(history.state || {}), scrollY: leave.scrollY ?? this._scrollTop(),
+                                       opened: leave.opened ?? this._view?.id ?? null }, '', location.hash);
                 history.pushState(null, '', h);
             } else {
                 history.replaceState(history.state, '', h);
@@ -104,7 +119,18 @@ Object.assign(JanitzaMonitor.prototype, {
             return document.querySelector('#deviceDetailView .section-header h2');
         }
         const page = document.getElementById(`${this.currentPage}Page`);
-        return page && page.querySelector('.section-header h2, h2, h3');
+        if (!page) return null;
+        // On the settings page, prefer the ACTIVE sub-panel's heading, not the
+        // first in the DOM (A-LOW-9): #/config showed the MQTT panel but titled
+        // "General" because _routeHeading grabbed the first h2 it found.
+        const activeTab = page.querySelector('.config-main-tab.active[data-cfgtab]');
+        if (activeTab) {
+            const panel = page.querySelector(
+                `.cfg-panel[data-cfgpanel="${CSS.escape(activeTab.dataset.cfgtab)}"]`);
+            const ph = panel && panel.querySelector('.section-header h2, h2, h3');
+            if (ph) return ph;
+        }
+        return page.querySelector('.section-header h2, h2, h3');
     },
 
     _routeAnnounce({ focus = true } = {}) {
@@ -221,6 +247,27 @@ Object.assign(JanitzaMonitor.prototype, {
             } else if (first === 'templates') {
                 this._findFromQuery(this._findState('templates'), r.params);
                 this.navigateTo('templates', { fromNav: true, _fromRoute: true });
+            } else if (first === 'dashboard') {
+                this.navigateTo('dashboard', { _fromRoute: true });
+                if (id && this.openFleetDevice) {
+                    // a deleted / restricted device in the URL must not show silently
+                    // as another one: when the fleet is loaded and has no such device,
+                    // land on the overview and say so (if not loaded yet, let the
+                    // drill-in try — it resolves against the real device set).
+                    const known = !this.fleetData || (this.fleetData.devices || []).some(d => d.id === id);
+                    if (!known) {
+                        if (this.showFleetView) this.showFleetView();
+                        this.showToast && this.showToast('info', this.t('route.noDevice', 'No device "{id}" here', { id }),
+                            this.t('route.noDeviceDash', 'Showing the overview instead.'));
+                    } else if (!((this._dashMode || 'fleet') === 'device' && this._dashDeviceId && this._dashDeviceId() === id)) {
+                        // drill into the device the URL names (no double history entry:
+                        // _routeSync bails while applying, then _routeNow already matches)
+                        await this.openFleetDevice(id);
+                    }
+                } else if (this.showFleetView && (this._dashMode || 'fleet') === 'device') {
+                    this.showFleetView();     // bare #/dashboard → the overview, never a stale device
+                    restore = state;          // Back to the overview restores its scroll + the row left from
+                }
             } else if (this._ROUTE_PAGES.includes(first)) {
                 this.navigateTo(first, { _fromRoute: true });
             }
@@ -235,12 +282,16 @@ Object.assign(JanitzaMonitor.prototype, {
         if (h !== location.hash) { try { history.replaceState(history.state, '', h); } catch (e) { /* */ } }
         this._routeLast = h;
         this._routeAnnounce({ focus: !initial });
-        // back on a list: where it was scrolled, the row it was left from
+        // back on a list/overview: where it was scrolled (in .content, not the
+        // window), and the row it was left from — so the operator keeps their place.
         if (restore && restore.scrollY != null && !initial) {
-            window.scrollTo(0, restore.scrollY);
-            // the one shown (the tree and the list both hold the device)
+            this._scrollTo(restore.scrollY);
+            // the one shown: a devices-list/tree row, or a fleet-overview row on the
+            // dashboard. Severity re-ordering may move it — find it by id, not pixels.
             const row = restore.opened && [...document.querySelectorAll(
-                `#devicesList [data-f="${CSS.escape(restore.opened)}"] .device-row-name, #devicesTable tr[data-f="${CSS.escape(restore.opened)}"] a`)]
+                `#devicesList [data-f="${CSS.escape(restore.opened)}"] .device-row-name, `
+                + `#devicesTable tr[data-f="${CSS.escape(restore.opened)}"] a, `
+                + `#fleetView .fleet-row[data-id="${CSS.escape(restore.opened)}"]`)]
                 .find(el => el.offsetParent);
             if (row) row.focus({ preventScroll: true });
         }
@@ -265,8 +316,8 @@ Object.assign(JanitzaMonitor.prototype, {
             const href = a.getAttribute('href');
             if (href === location.hash) return;
             try {
-                history.replaceState({ ...(history.state || {}), scrollY: window.scrollY,
-                                       opened: r.parts[0] === 'devices' || r.parts[0] === 'installations' ? r.parts[1] || null : null },
+                history.replaceState({ ...(history.state || {}), scrollY: this._scrollTop(),
+                                       opened: ['devices', 'installations', 'dashboard'].includes(r.parts[0]) ? r.parts[1] || null : null },
                                      '', location.hash);
                 history.pushState(null, '', href);
             } catch (err) { location.hash = href; return; }
@@ -288,7 +339,7 @@ Object.assign(JanitzaMonitor.prototype, {
         if (typeof orig !== 'function') return;
         P[name] = function (...args) {
             // the scroll of the place being left, for Back to come home to
-            if (!this._routePending && !this._routeApplying) this._routeLeave = { scrollY: window.scrollY };
+            if (!this._routePending && !this._routeApplying) this._routeLeave = { scrollY: this._scrollTop() };
             this._routePending = (this._routePending || 0) + 1;
             let out;
             try { out = orig.apply(this, args); } catch (e) { this._routePending -= 1; throw e; }
@@ -310,4 +361,8 @@ Object.assign(JanitzaMonitor.prototype, {
     follow('closeDeviceDetail', true);
     follow('openEndpointDetail', true);
     follow('_switchDeviceTab', false);
+    // the dashboard's device drill-in and the return to the overview are each a
+    // user step → one history entry, so Back/Forward walk them (app-fleet.js)
+    follow('openFleetDevice', true);
+    follow('showFleetView', true);
 })();

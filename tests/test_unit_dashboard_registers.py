@@ -138,6 +138,6 @@ def test_calc_engine_wildcards_the_tap_group():
     the tap's calcs were dead because only 'mqtt' wildcarded (cutover bug:
     battery power/counts were retained ghosts from the collector)."""
     import re
-    src = open('multibus/calc_engine.py').read()
+    src = open('multibus/devices/calc_engine.py').read()
     m = re.search(r"_wildcard = poll_group in \('mqtt', 'tap'\)", src)
     assert m, "tap must wildcard calc groups like mqtt does"

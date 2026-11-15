@@ -10,6 +10,7 @@
 import { chromium } from 'playwright';
 import { execFileSync } from 'node:child_process';
 import { openDeviceTab } from './lib/device-page.mjs';
+import { openPage } from './lib/nav.mjs';
 
 const BASE = process.env.MBG_URL || 'http://127.0.0.1:8099';
 const CTR = process.env.CTR || 'mbg-ui-sandbox';
@@ -54,7 +55,7 @@ try {
   await page.waitForLoadState('networkidle');
   const later = page.locator('button:has-text("Later")');
   if (await later.count()) await later.first().click().catch(() => {});
-  await page.click('[data-page="devices"]'); await page.waitForTimeout(800);
+  await openPage(page, 'devices'); await page.waitForTimeout(800);
   await page.evaluate(id => window.app.openDeviceDetail(id), HP);
   await page.waitForSelector('#deviceWsTabs');
   check('no energy counter yet → no Energy tab', await page.locator('#deviceWsTabs [data-dtab="energy"]').count() === 0);

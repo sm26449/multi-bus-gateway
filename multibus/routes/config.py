@@ -37,12 +37,12 @@ def build(ctx) -> APIRouter:
         """422 for a default pattern that cannot name a new device."""
         if pat is None or not str(pat).strip():
             return                          # empty: the identity scope's default
-        from ..identity import fill, pattern_error
+        from ..core.identity import fill, pattern_error
         msg = pattern_error(pat, config.gateway_id)
         if not msg:
             filled = fill(str(pat).strip(), "device", config.gateway_id or "gw")
             if topic:
-                from ..topic_prefix import shape_error
+                from ..devices.topic_prefix import shape_error
                 msg = shape_error(filled)
             elif any(c in filled for c in "/\\ "):
                 msg = f"'{filled}' is not a bucket name"
@@ -56,7 +56,7 @@ def build(ctx) -> APIRouter:
         off) — same gate as the with-secrets export."""
         data = config.to_dict()
         if not _secrets_visible(request, auth_state, ctx.api_key):
-            from ..redact import redact_url
+            from ..core.redact import redact_url
             _inf = data.get("influxdb")
             if isinstance(_inf, dict) and _inf.get("url"):
                 _inf["url"] = redact_url(str(_inf["url"]))
@@ -312,19 +312,21 @@ def build(ctx) -> APIRouter:
         can warn before you lock yourself out."""
         return {
             "allowlist": config.security.allowlist,
+            "metrics_allowlist": config.security.metrics_allowlist,
             "allow_writes": config.security.allow_writes,
             "allow_nonlan_http_devices": config.security.allow_nonlan_http_devices,
             "your_ip": request.client.host if request.client else "",
         }
 
     @r.post("/api/config/security")
-    async def update_security_config(payload: Dict = Body(...)):
+    async def update_security_config(request: Request, payload: Dict = Body(...)):
         """Update the IP allowlist + the Modbus-write / non-LAN-HTTP gates."""
         import ipaddress as _ip
-        if "allowlist" in payload:
-            raw = payload.get("allowlist", [])
+
+        def _cidr_list(key):
+            raw = payload.get(key, [])
             if not isinstance(raw, list):
-                raise HTTPException(status_code=422, detail={"errors": ["allowlist must be a list"]})
+                raise HTTPException(status_code=422, detail={"errors": [f"{key} must be a list"]})
             cleaned, errors = [], []
             for entry in raw:
                 entry = str(entry).strip()
@@ -337,14 +339,34 @@ def build(ctx) -> APIRouter:
                     errors.append(f"invalid IP/CIDR: {entry}")
             if errors:
                 raise HTTPException(status_code=422, detail={"errors": errors})
-            config.security.allowlist = cleaned
+            return cleaned
+        # validate both before applying either (a 422 leaves the config untouched)
+        lists = {k: _cidr_list(k) for k in ("allowlist", "metrics_allowlist") if k in payload}
+        if "allowlist" in lists:
+            config.security.allowlist = lists["allowlist"]
+        if "metrics_allowlist" in lists:
+            config.security.metrics_allowlist = lists["metrics_allowlist"]
         if "allow_writes" in payload:
+            if flag(payload, "allow_writes") and config.lock_pending_path().exists():
+                # an import/restore asked for every write path to be locked and that lock
+                # could not be applied yet (the gateway came up with writes OFF instead):
+                # turning the master switch on would undo the only protection in place
+                raise HTTPException(status_code=409, detail={"errors": [
+                    "a forced write-lock from an import/restore is still pending — it could not "
+                    "be saved. Fix the config directory (disk space, permissions) and restart, "
+                    "or restore a snapshot, before enabling writes"]})
             config.security.allow_writes = flag(payload, "allow_writes")
+            if not config.security.allow_writes:
+                # the master switch going off silences an armed Virtual BMS at once (WK7-SAFE-1)
+                _vbm = getattr(request.app.state, "vbms_manager", None)
+                if _vbm is not None:
+                    _vbm.revoke("the master write switch was turned off")
         if "allow_nonlan_http_devices" in payload:
             config.security.allow_nonlan_http_devices = flag(payload, "allow_nonlan_http_devices")
         config.save_yaml_config()
         return {"status": "ok", "allowlist": config.security.allowlist,
                 "active": bool(config.security.allowlist),
+                "metrics_allowlist": config.security.metrics_allowlist,
                 "allow_writes": config.security.allow_writes,
                 "allow_nonlan_http_devices": config.security.allow_nonlan_http_devices}
 
@@ -354,7 +376,7 @@ def build(ctx) -> APIRouter:
         admin or presents the API key — it can carry credentials)."""
         _url = config.influxdb.url
         if _url and not _secrets_visible(request, auth_state, ctx.api_key):
-            from ..redact import redact_url
+            from ..core.redact import redact_url
             _url = redact_url(str(_url))
         return {
             "enabled": config.influxdb.enabled,
@@ -378,7 +400,7 @@ def build(ctx) -> APIRouter:
             _payload = update.model_dump()
             _cur = config.influxdb.url or ""
             if _cur and _payload.get("url"):
-                from ..redact import redact_url
+                from ..core.redact import redact_url
                 if _payload["url"] == redact_url(str(_cur)) != _cur:
                     _payload["url"] = _cur
             config.update_influxdb(**_payload)

@@ -598,6 +598,15 @@ null
 "template_notes": [
 {
 "fields": [
+"outdoor_error_code",
+"iu0_error_code",
+"outdoor_error_detail"
+],
+"level": "info",
+"text": "The error-code enums on outdoor_error_code, iu0_error_code and outdoor_error_detail decode Samsung EHS / air-to-water fault codes to text. Source: third-party EHS fault-code tables (community: dwellsee, ukheatpumpservicing), NOT the official Samsung service manual; a few codes conflict between sources (marked '[src conflict]') and the list is not DVM-S-exact. The numeric code is kept in every label (e.g. 'Low water flow / flow switch (911)') and any unmapped code shows as 'unknown (N)', so the raw number is always verifiable against the Samsung service manual for your unit. Codes without a confirmed meaning (905, 906, 918, 971, 972, 974) are intentionally left unmapped."
+},
+{
+"fields": [
 "dc_link_voltage",
 "dhw_tank_temperature",
 "eva_in_temperature",
@@ -4927,6 +4936,15 @@ null
 "model": "MIM-B19N / MIM-B19NT",
 "name": "Samsung MIM-B19N Modbus interface (DVM / EHS)",
 "notes": [
+{
+"fields": [
+"outdoor_error_code",
+"iu0_error_code",
+"outdoor_error_detail"
+],
+"level": "info",
+"text": "The error-code enums on outdoor_error_code, iu0_error_code and outdoor_error_detail decode Samsung EHS / air-to-water fault codes to text. Source: third-party EHS fault-code tables (community: dwellsee, ukheatpumpservicing), NOT the official Samsung service manual; a few codes conflict between sources (marked '[src conflict]') and the list is not DVM-S-exact. The numeric code is kept in every label (e.g. 'Low water flow / flow switch (911)') and any unmapped code shows as 'unknown (N)', so the raw number is always verifiable against the Samsung service manual for your unit. Codes without a confirmed meaning (905, 906, 918, 971, 972, 974) are intentionally left unmapped."
+},
 {
 "fields": [
 "dc_link_voltage",

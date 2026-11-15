@@ -102,9 +102,11 @@ montabil pe șină DIN la fel de bine. Fără lock-in, fără cost per cutie.
   ([rtu-serial.md §7](docs/rtu-serial.md)).
 - **CAN, doar ascultare** — SocketCAN (un adaptor USB, un HAT), semnale
   decodate din șablon cu semantica DBC (id de cadru, bit de start, lungime,
-  ordinea octeților); nu există cale de transmisie, iar indicatorul
-  listen-only al interfeței e verificat și afișat. Prima hartă: legătura
-  BMS → invertor pe protocolul Pylontech.
+  ordinea octeților); un dispozitiv CAN nu are cale de transmisie, iar
+  indicatorul listen-only al interfeței e verificat și afișat. Prima hartă:
+  legătura BMS → invertor pe protocolul Pylontech. **Setări → CAN** arată
+  modul fiecărei interfețe și îl poate comuta (`CAP_NET_ADMIN` opțional,
+  [manual §5.5](docs/MANUAL.ro.md#55-can)).
 - **BMS Seplos V2** — protocolul ASCII RS485 al pachetelor, doar citire prin
   construcție: interoghează un pachet sau ascultă pe o magistrală pe care o
   interoghează deja un pachet master (rezumatul inter-pachet al unei bănci
@@ -206,6 +208,12 @@ montabil pe șină DIN la fel de bine. Fără lock-in, fără cost per cutie.
 - **Atributele echipamentului** — ce este echipamentul (locația, limitele
   racordului la rețea, intrările PV, puterile nominale) pentru un EMS sau
   un SCADA ([ghid](docs/attributes.md)).
+- **Virtual BMS (experimental)** — mai multe pack-uri de baterii agregate
+  într-un BMS servit unui invertor prin CAN (Pylontech LV), comandabil de un
+  EMS în limitele configurate, cu armare ghidată, revenire lentă a
+  pack-urilor și creștere de la 0. Încă nevalidat pe hardware: nu-l arma pe
+  un invertor în funcțiune
+  ([manual §11e](docs/MANUAL.ro.md#11e-virtual-bms--experimental)).
 - **Nimic nu se șterge cât timp ceva îl folosește** — un dispozitiv, o
   instalație sau un șablon folosit spune ce îl folosește și oferă în loc
   Dezactivează.
@@ -291,10 +299,16 @@ publică prin MQTT e aici un dispozitiv MQTT obișnuit.
   parte e refuzată (412) și arătată, nu pierdută în tăcere.
 
 **Observabilitate & UX**
-- **`/metrics` Prometheus** (serii device/sink/vmeter), pagina **Status** cu
+- **`/metrics` Prometheus** (serii device/sink/vmeter/bus; loopback sau
+  `security.metrics_allowlist`), pagina **Status** cu
   taxonomia erorilor, **jurnal de evenimente persistat**, `/health` corect
   pentru probe de container.
-- **Alerte de infrastructură** pe MQTT + webhook ([ghid](docs/alerts-webhooks.md)).
+- **Alerte** — evenimente de dispozitiv, de ieșire, alarme de șablon,
+  sănătatea magistralelor, contoare virtuale și praguri. Pentru notificări
+  pe SMS, Telegram, e-mail sau orice alt canal ajung la
+  **[Klopot](https://klopot.dev)** ca evenimente structurate, cu un pachet
+  de configurare descărcabil; MQTT și un webhook pentru automatizările tale
+  ([ghid](docs/alerts-webhooks.md)).
 - **i18n EN+RO** — toată interfața în ambele limbi, cu pluralul și formatul
   de dată ale limbii (limbile = fișiere `ui/languages/*.json`, fără rebuild),
   **fus orar configurabil** pentru rapoartele lunare, WebSocket real-time,
@@ -393,7 +407,8 @@ Cu compose aceeași imagine e implicită: `docker-compose.yml` numește
 `ghcr.io/sm26449/multi-bus-gateway:${MBG_VERSION:-latest}`, deci
 
 ```bash
-MBG_VERSION=3.79.0 docker compose pull && docker compose up -d
+MBG_VERSION=3.101.0-rc1 docker compose pull
+MBG_VERSION=3.101.0-rc1 docker compose up -d     # sau MBG_VERSION=<versiune> în .env
 ```
 
 rulează un release fără niciun build (`docker compose build` construiește
@@ -415,8 +430,8 @@ release: [docs/releasing.md](docs/releasing.md).
 
 Sunt **incluse în stack-ul implicit** — nimic de pornit separat. La primul
 boot InfluxDB se auto-configurează (org/bucket `multibus`; schimbă
-parola/token-ul din `.env`), apoi activezi sink-ul din UI (Config →
-InfluxDB) și lipești token-ul. Grafana: `http://localhost:3000`. Nu le
+parola/token-ul din `.env`), apoi activezi sink-ul din UI (Sistem →
+Setări → InfluxDB) și lipești token-ul. Grafana: `http://localhost:3000`. Nu le
 vrei? `docker compose up -d multi-bus-gateway mosquitto` pornește doar
 nucleul.
 
@@ -450,10 +465,11 @@ de registre), `templates/` (template-uri vmeter), `virtual_meters.yaml`
 
 ## Interfața web
 
-Patru zone principale — **Dashboard** (global), **Devices** (workspace per
-dispozitiv: Overview / Edit / Registers / Calculated / Outputs / Monitor /
-History / Energy), **Virtual Meters**, **Diagnostics**, **Status** și
-**Config**. Tot ce ține de un singur dispozitiv stă în workspace-ul lui, nu
+Un singur rând de navigare — **Tablou de bord** · **Active** (Dispozitive,
+Contoare virtuale, Virtual BMS) · **Configurare** (Reguli, Șabloane) ·
+**Sistem** (Diagnostic, Setări) · **Status**. Pagina unui dispozitiv își
+grupează filele în Live, Date, Configurare și Diagnostic; tot ce îl schimbă e
+în meniul lui ⋯. Tot ce ține de un singur dispozitiv stă la dispozitiv, nu
 într-un meniu global. Tur complet, tab cu tab: [manual §4](docs/MANUAL.ro.md#4-interfața-web-filă-cu-filă).
 
 ## API
@@ -531,7 +547,7 @@ multi-bus-gateway/
 ## Folosirea unui stack MQTT / InfluxDB existent
 
 Ca să conectezi gateway-ul la brokere/baze pe care le rulezi deja (în locul
-celor incluse), setează detaliile de conexiune din UI (Config → Settings) —
+celor incluse), setează detaliile de conexiune din UI (Sistem → Setări → MQTT / InfluxDB) —
 se salvează în `config/config.yaml` și se aplică live, fără restart — și
 pornește doar serviciul gateway:
 

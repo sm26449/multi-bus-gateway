@@ -25,7 +25,7 @@ from typing import Dict
 
 from fastapi import APIRouter, Body, HTTPException
 
-from .. import expressions
+from ..core import expressions
 
 _CALC_NAME_RE = re.compile(r'^[A-Za-z_][A-Za-z0-9_\[\]]*$')
 

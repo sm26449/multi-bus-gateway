@@ -17,8 +17,7 @@
       ],
       "listen_only": true,
       "byte_order": "big",
-      "default_unit_id": 1,
-      "default_register_type": "input"
+      "default_unit_id": 1
     },
     "poll_groups": {
       "tap": {

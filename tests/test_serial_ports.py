@@ -346,8 +346,8 @@ def test_gettys_are_looked_for_only_when_asked(host):
 def test_the_bridge_ships_the_same_module():
     """The bridge image builds from serial-bridge/ alone: it carries a copy,
     kept identical, and its Dockerfile puts it beside the supervisor."""
-    assert filecmp.cmp(REPO / "multibus/serial_ports.py", REPO / "serial-bridge/serial_ports.py",
-                       shallow=False)
+    assert filecmp.cmp(REPO / "multibus/transports/serial/serial_ports.py",
+                       REPO / "serial-bridge/serial_ports.py", shallow=False)
     assert "COPY serial_ports.py /app/serial_ports.py" in (REPO / "serial-bridge/Dockerfile").read_text()
 
 

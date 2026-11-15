@@ -840,6 +840,28 @@ body.ws-stale .dashboard-table-container {
     color: var(--text-tertiary);
 }
 
+/* UX-03: last-known (stale) hero readings — de-emphasised so they are not read
+   as current. Weight + italic + muted colour, never colour alone; a clock-history
+   icon precedes them and a visually-hidden "last known" labels each value. */
+.fleet-metrics--last-known .fm-v { font-weight: 400; font-style: italic; color: var(--text-secondary); }
+.fleet-lk-icon { color: var(--text-tertiary); font-size: 11px; align-self: center; }
+
+/* UX-04: the unresolved-incidents strip above the device census. */
+.fleet-attn { border: 1px solid var(--warning, #f59e0b); border-radius: var(--radius-md, 10px);
+    background: color-mix(in srgb, var(--warning, #f59e0b) 7%, transparent); padding: 10px 12px; margin-bottom: 14px; }
+.fleet-attn-head { font-weight: 600; font-size: 12.5px; text-transform: uppercase; letter-spacing: .4px;
+    color: var(--text-secondary); margin-bottom: 6px; }
+.fleet-attn-list { display: flex; flex-direction: column; gap: 2px; }
+.fleet-attn-item { display: flex; align-items: center; gap: 8px; width: 100%; text-align: left;
+    background: transparent; border: none; border-radius: var(--radius-sm); padding: 6px 6px; cursor: pointer;
+    color: var(--text-primary); font-size: 13.5px; }
+.fleet-attn-item:hover { background: var(--bg-tertiary); }
+.fleet-attn-dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
+.fleet-attn-name { font-weight: 600; }
+.fleet-attn-what { color: var(--text-secondary); font-size: 12.5px; }
+.fleet-attn-item .bi-chevron-right { margin-left: auto; color: var(--text-tertiary); font-size: 12px; }
+.fleet-attn-more { margin-top: 4px; }
+
 .fleet-flags {
     display: flex;
     align-items: center;
@@ -998,15 +1020,22 @@ body.ws-stale .dashboard-table-container {
 }
 .dev-section tr[data-address] { cursor: pointer; }
 
+/* an installation's unit row: Open and the row's ⋯ (ADR-0032 §1), side by
+   side; on a phone stacked, so the column is one button wide */
+[data-group-units] td.unit-acts { text-align: right; white-space: nowrap; }
+[data-group-units] .unit-acts-in { display: inline-flex; gap: 4px; align-items: center; justify-content: flex-end; }
+
 /* installation unit table on a phone: values and health stay, detail goes */
 @media (max-width: 600px) {
+    [data-group-units] .unit-acts-in { flex-direction: column; gap: 2px; }
     [data-group-units] td.col-wide, .data-table th.col-wide,
     [data-group-units] .dev-chip.col-wide,
     [data-group-units] .btn.col-wide { display: none !important; }
     /* health: the dot says it (the word is in its tooltip) */
     [data-group-units] .col-wide-text { display: none; }
     [data-group] .data-table th.col-health { font-size: 0; }
-    [data-group] .data-table th, [data-group-units] td { padding-left: 6px; padding-right: 6px; }
+    /* more specific than .data-table td (registers.css, loaded later), which won before */
+    [data-group] .data-table th, [data-group] .data-table td { padding-left: 6px; padding-right: 6px; }
     [data-group-units] .sink-pill { padding: 0 4px; margin-left: 2px; }
     [data-group-units] .btn-sm { padding: 2px 6px; }
 }

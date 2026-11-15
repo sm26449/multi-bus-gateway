@@ -10,8 +10,7 @@
   "kind": "meter",
   "source_document": "Victron dbus-modbus-client carlo_gavazzi.py (EM24_Meter) + Carlo Gavazzi EM24-DIN communication protocol",
   "protocol": {
-   "byte_order": "little",
-   "default_register_type": "holding"
+   "byte_order": "little"
   },
   "categories": {},
   "registers": [

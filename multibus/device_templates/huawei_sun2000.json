@@ -18,7 +18,6 @@
       ],
       "byte_order": "big",
       "default_unit_id": 1,
-      "default_register_type": "holding",
       "max_registers_per_read": 64,
       "connect_settle_s": 3
     },

@@ -12,6 +12,7 @@ import { chromium } from 'playwright';
 import { saveDeviceEditor } from './lib/device-page.mjs';
 import { watchDialogs } from './lib/dialogs.mjs';
 import { openAdd, pickModel, answer, fill, next } from './lib/add-device.mjs';
+import { openPage } from './lib/nav.mjs';
 
 const BASE = process.env.MBG_URL || 'http://127.0.0.1:8099';
 const TPL = 'e2e_ux_tpl';
@@ -57,7 +58,7 @@ const errs = [];
 page.on('console', m => { if (m.type() === 'error' && !/status of (4\d\d|502)/.test(m.text())) errs.push(m.text()); });
 page.on('pageerror', e => errs.push(String(e)));
 async function goDevices() {
-  await page.click('[data-page="devices"]');
+  await openPage(page, 'devices');
   if (!(await page.isVisible('#devicesListView')))
     await page.click('#deviceRegistersView [data-action="closeDeviceRegisters"]');
   await page.waitForSelector('#devicesListView', { state: 'visible' });
@@ -173,8 +174,8 @@ try {
   d = await devOf(DEV.udp);
   check('"Over UDP" saves a Modbus UDP device', d.protocol === 'udp' && d.host === '192.0.2.44', JSON.stringify(d).slice(0, 160));
   await addTo('serial', 'here');
+  await answer(page, 'Role', 'poll');               // the role before the protocol (ADR-0031 §2)
   await answer(page, 'Speaks', 'modbus:ascii');
-  await answer(page, 'Role', 'poll');
   await page.evaluate(() => { const a = document.getElementById('csAddSerialAdv'); if (a) a.open = true; });
   await page.fill('#csAddSerial', '/dev/ttyE2EASC');
   await page.locator('#csAddSerial').blur();
@@ -196,7 +197,7 @@ try {
   await page.evaluate(() => window.app.closeDeviceDetail(true));
 
   // ═══ 3. Virtual Meters: a disabled "Add instance" says why ══════════════
-  await page.click('[data-page="vmeters"]');
+  await openPage(page, 'vmeters');
   await page.waitForSelector('#vmAddInstanceBtn');
   const dis = await page.isDisabled('#vmAddInstanceBtn');
   const why = await page.getAttribute('#vmAddInstanceBtn', 'title');

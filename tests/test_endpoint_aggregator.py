@@ -113,6 +113,22 @@ def test_stale_unit_drops_out():
     assert agg["units_online"] == 1 and agg["units_total"] == 2
 
 
+def test_fresh_slow_metadata_does_not_keep_a_unit_online():
+    """A-MED-4: a unit whose fast telemetry stopped is OFFLINE even if a slow
+    metadata/control register (interval 3600) is still fresh — the ONLINE verdict
+    is judged against the unit's FASTEST cadence, not a slow register's 4-hour
+    window. Before the fix the slow register kept the unit 'online' for hours."""
+    now = time.time()
+    cfg = _Cfg(["u1"])
+    reg = _Reg({"u1": {
+        1: _entry("power_active_total", 10000, ts=now - 300, interval=15),   # telemetry STOPPED (300 >> 4*15)
+        2: _entry("control_setpoint", 42, ts=now - 1800, interval=3600),     # slow, fresh within its own 4 h
+    }})
+    agg = compute_endpoint_aggregates(cfg, reg, "p", now=now)
+    assert agg["units_online"] == 0                # fastest cadence stopped → offline
+    assert agg.get("power_active_total") in (None, 0)   # stale telemetry is not aggregated
+
+
 def test_non_numeric_and_unknown_names_ignored():
     cfg = _Cfg(["u1"])
     reg = _Reg({"u1": {
@@ -826,3 +842,42 @@ def test_an_output_is_rewritten_after_the_heartbeat_too():
     _age_totals(ag, 600)
     ag._publish_all()
     assert len(_lp(inf, "my_pack")) == 2
+
+
+# ── AGG-AVG-1: a 0 V / 0 Hz unit (asleep, starting) is not averaged in ───────
+
+def test_voltage_and_frequency_average_skip_zero_units():
+    """Prod: 1,096 L1-N samples between 1 and 180 V in 7 days — one awake
+    inverter at 234 V averaged with three reporting 0 V read 58.6 V."""
+    cfg = _Cfg(["u1", "u2", "u3", "u4"])
+    reg = _Reg({
+        "u1": {1: _entry("voltage_l1_n", 234.4), 2: _entry("frequency", 50.01),
+               3: _entry("power_active_total", 300)},
+        "u2": {1: _entry("voltage_l1_n", 0), 2: _entry("frequency", 0),
+               3: _entry("power_active_total", 0)},
+        "u3": {1: _entry("voltage_l1_n", 0.0), 2: _entry("frequency", 0.0)},
+        "u4": {1: _entry("voltage_l1_n", 0), 3: _entry("power_active_total", 0)},
+    })
+    agg = compute_endpoint_aggregates(cfg, reg, "p")
+    assert agg["voltage_l1_n"] == 234.4
+    assert agg["frequency"] == 50.01
+    assert agg["power_active_total"] == 300           # sums unchanged
+
+
+def test_all_zero_voltage_emits_nothing_not_zero():
+    cfg = _Cfg(["u1", "u2"])
+    reg = _Reg({
+        "u1": {1: _entry("voltage_l1_n", 0), 2: _entry("power_active_total", 0)},
+        "u2": {1: _entry("voltage_l1_n", 0), 2: _entry("power_active_total", 0)},
+    })
+    agg = compute_endpoint_aggregates(cfg, reg, "p")
+    assert "voltage_l1_n" not in agg
+    assert agg["power_active_total"] == 0             # a sum of 0 is still 0
+
+
+def test_a_zero_temperature_is_still_averaged():
+    # 0 °C is a real temperature — the zero rule is for voltage/frequency only
+    cfg = _Cfg(["u1", "u2"])
+    reg = _Reg({"u1": {1: _entry("temperature_cabinet", 0)},
+                "u2": {1: _entry("temperature_cabinet", 10)}})
+    assert compute_endpoint_aggregates(cfg, reg, "p")["temperature_cabinet"] == 5

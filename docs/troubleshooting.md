@@ -3,7 +3,8 @@
 Symptom → check → fix, one table per area, with the exact log lines the
 gateway writes so you can `grep` for them. Start every investigation with
 `docker compose logs --since 1h multi-bus-gateway` and the **Status** page;
-`/health` and `/metrics` work without a login. Installation is covered in
+`/health` works without a login; `/metrics` too, from loopback or a peer in
+`security.metrics_allowlist` (403 otherwise). Installation is covered in
 [install.md](install.md), routine operations in [operations.md](operations.md).
 
 ## Cannot log in
@@ -121,6 +122,7 @@ Every attempt, accepted or refused, is an `AUDIT` line.
 |---|---|---|
 | A serial port shows **Not mapped** | The host has it, the container has no node for it | Add the `devices:` line shown (or the `--device` flag for `docker run`), recreate the container, **Refresh** ([rtu-serial.md §1.1](rtu-serial.md#11-the-port-list)) |
 | Test, Scan or the Check answers 409 naming a listening device | An enabled device only listens on that bus (a tap, Seplos V2 in listen mode, a listen-only template): nothing that transmits may run there | Choose **Listen-only** for the new device, or disable the listener first |
+| Every listening device on one bus shows the same CRC / resync numbers | Those counters belong to the bus: one reader hears it for every tap on it, and each device's `error_counts` repeats them | Read them once for the bus: behind a bridge in **Line health → The tapped bus**, for an installation's tap source on its source line (skipped byte runs in hex under it), or `gateway_bus_*_total` in /metrics. A device's own problems are its implausible drops and staleness |
 | Check answers 409 *busy* / 429 | One preview or scan per bus at a time; at most 4 at once | Wait and **Run again**; the check never blocks **Next — without a check** |
 | Check asks to **Open the connection anyway** | A converter or bridge port cannot say whether another program is connected to it | Tick it only when you know nothing else polls that bus (the choice is audited) |
 | Save says *This device was changed elsewhere since you opened it* (412) | Another tab or an API client saved the device meanwhile; nothing was saved | The dialog reads the stored version, keeps your edits over it and marks what both changed: review, then **Save** again |

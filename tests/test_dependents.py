@@ -270,7 +270,9 @@ def test_only_the_guarded_routes_remove_a_device_an_installation_or_a_template()
             if isinstance(node.func, ast.Attribute) and node.func.attr in removers:
                 owners.setdefault(node.func.attr, set()).add(self.stack[-1])   # the innermost
             self.generic_visit(node)
-    for f in (root / "api.py", root / "routes" / "device_templates.py"):
+    for f in (root / "api" / "__init__.py", root / "api" / "endpoints_service.py",
+              root / "api" / "device_service.py",
+              root / "routes" / "device_templates.py", root / "routes" / "components.py"):
         _Calls().visit(ast.parse(f.read_text(encoding="utf-8")))
     assert owners == {"remove_raw_device": {"_delete_device_locked"},
                       "remove_component": {"_delete_component_locked"},

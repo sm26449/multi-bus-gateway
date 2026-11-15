@@ -59,7 +59,7 @@ def build(ctx) -> APIRouter:
 
     def _would(rt, raw: Dict, rid: Optional[str]) -> Dict:
         # what a save would do, nothing stored, nothing released (?dry_run=true)
-        from ..rules import parse_rule_def, tuning_of
+        from multibus.control.rules import parse_rule_def, tuning_of
         if rid is None:
             return {"status": "valid", "would": "create"}
         prev = rt.raw.get(rid)
@@ -85,7 +85,7 @@ def build(ctx) -> APIRouter:
         """The rule examples the templates of the configured devices ship,
         made concrete for each device ({device} → its id), always shadow.
         The editor offers them as a starting point; nothing is created here."""
-        from ..device_template import rule_preset_for
+        from ..catalog.device_template import rule_preset_for
         out = []
         tr = getattr(ctx, 'template_registry', None)
         for dev_cfg, _c in (ctx.registry or []):

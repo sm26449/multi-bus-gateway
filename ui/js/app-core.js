@@ -226,6 +226,74 @@ Object.assign(JanitzaMonitor.prototype, {
         return String(d);
     },
 
+    // Guided prerequisites (ADR-0046): an action's endpoint answered 409 with
+    // {prerequisites:[{id,title,where,met:false,fix?}]}. Ask, per unmet one, to
+    // enable it now or later; "now" calls its fix endpoint. Returns true when
+    // every prerequisite is satisfied (the caller then retries the action),
+    // false when the operator chose "later" or a fix failed. Reusable across
+    // features — the same dialog everywhere.
+    async _resolvePrerequisites(prereqs) {
+        const t = (k, d, p) => this.t(k, d, p);
+        for (const p of (prereqs || [])) {
+            if (p.met) continue;
+            const name = t('prereq.' + p.id + '.title', p.title || p.id);
+            const where = t('prereq.' + p.id + '.where', p.where || '');
+            const ok = await this.confirmAction({
+                title: t('prereq.needTitle', 'Enable {name}?', { name }),
+                message: t('prereq.needMsg', '{name} is needed for this. Enable it now, or set it later in {where}.', { name, where }),
+                confirmLabel: t('prereq.now', 'Enable now'),
+                cancelLabel: t('prereq.later', 'Later'),
+            });
+            if (!ok) {
+                if (where) this.showToast('info', t('prereq.laterTitle', 'You can enable it later'), t('prereq.laterWhere', 'Find it in {where}.', { where }));
+                return false;
+            }
+            const req = this._applyPrereqFix(p);           // our OWN known endpoint, never a server URL
+            if (!req) { this.showToast('info', t('prereq.manualTitle', 'Set {name} manually', { name }), t('prereq.laterWhere', 'Find it in {where}.', { where })); return false; }
+            try {
+                const fr = await req;
+                if (!fr.ok) { this.showToast('error', t('prereq.failTitle', 'Could not enable {name}', { name }), this._errMsg(await fr.json().catch(() => ({})))); return false; }
+            } catch (e) { this.showToast('error', t('prereq.failTitle', 'Could not enable {name}', { name }), this._errMsg(e)); return false; }
+        }
+        return true;
+    },
+
+    // Apply one prerequisite's fix — ONLY through MBG's own known endpoints (never a URL the
+    // server made up), so a prerequisite can never make the UI write to an arbitrary or
+    // device-naming address. Returns the fetch promise, or null when there is no auto-fix.
+    _applyPrereqFix(p) {
+        const pr = p.params || {};
+        switch (p.id) {
+            case 'allow_writes':
+                return fetch('/api/config/security', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ allow_writes: true }) });
+            case 'allow_write_entities':
+                return fetch('/api/config/security', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ allow_write_entities: true }) });
+            case 'can_transmit':
+                return fetch(`/api/can-interfaces/${encodeURIComponent(pr.channel)}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ mode: 'transmit', up: true }) });
+            case 'can_bitrate': {
+                // devices may be READING this bus at its current rate: the gateway refuses to
+                // change it under them (409 bus_has_readers) unless told to. Ask, naming them,
+                // then repeat with force — an informed choice, never a silent override.
+                const post = body => fetch(`/api/can-interfaces/${encodeURIComponent(pr.channel)}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+                return (async () => {
+                    const r = await post({ bitrate: pr.bitrate, up: true });
+                    if (r.status !== 409) return r;
+                    const d = await r.clone().json().catch(() => ({}));
+                    if ((d.detail || {}).code !== 'bus_has_readers') return r;
+                    const ok = await this.confirmAction({
+                        title: this.t('prereq.busReadersTitle', 'Change the bitrate of {channel}?', { channel: pr.channel }),
+                        message: this.t('prereq.busReadersMsg', '{channel} is read by {readers} at {from} bit/s. Changing it to {to} bit/s stops those readings until they are set to the same rate.', { channel: pr.channel, readers: (d.detail.readers || []).join(', '), from: d.detail.bitrate, to: pr.bitrate }),
+                        confirmLabel: this.t('prereq.busReadersGo', 'Change the bitrate'),
+                        danger: true,
+                    });
+                    return ok ? post({ bitrate: pr.bitrate, up: true, force: true }) : r;
+                })();
+            }
+            default:
+                return null;
+        }
+    },
+
     // ============ Modal Helpers ============
 
     _modalFocusables(el) {
@@ -548,6 +616,43 @@ Object.assign(JanitzaMonitor.prototype, {
         return this._catWord(c) || (c.charAt(0).toUpperCase() + c.slice(1)).replace(/_/g, ' ');
     },
 
+    // UX-14: one shared presentation for the recurring non-data states (loading,
+    // empty, filtered-empty, no permission, no sample, error). Each supplies an
+    // honest reason and only an appropriate next action; `live` announces async
+    // changes via role=status without stealing focus. Delivered as one component
+    // family; callers migrate their ad-hoc empty/loading markup to it over time.
+    _stateBlock(o = {}) {
+        const live = o.live ? ' role="status" aria-live="polite"' : '';
+        const ICON = { loading: 'bi-hourglass-split', empty: 'bi-inbox', search: 'bi-search',
+            nopermission: 'bi-lock', nosample: 'bi-activity', error: 'bi-exclamation-triangle', disabled: 'bi-slash-circle' };
+        const icon = o.icon || ICON[o.kind] || ICON.empty;
+        return `<div class="state-block state-${o.kind || 'empty'}"${live}>`
+            + `<i class="bi ${icon} state-block-icon" aria-hidden="true"></i>`
+            + `<div class="state-block-text">`
+            + (o.title ? `<div class="state-block-title">${this._esc(o.title)}</div>` : '')
+            + (o.reason ? `<div class="state-block-reason">${this._esc(o.reason)}</div>` : '')
+            + `</div>`
+            + (o.actionHtml || '')
+            + `</div>`;
+    },
+
+    // UX-12: a readable form of a raw register key for display WHEN there is no
+    // author/template label — the raw key is kept copyable elsewhere. snake_case
+    // becomes words; a small set of domain acronyms (and an acronym+index token
+    // like `iu0`) stays upper-case. Never used to override an administrator's label.
+    _humanizeKey(key) {
+        if (!key) return '';
+        const ACR = new Set(['dhw', 'iu', 'ou', 'pv', 'soc', 'soh', 'dc', 'ac', 'mppt', 'rssi', 'id',
+            'hp', 'ess', 'bms', 'rpm', 'cop', 'co2', 'ph', 'tds', 'ot', 'ct', 'pf', 'thd', 'l1', 'l2', 'l3']);
+        return String(key).split('_').map((w, i) => {
+            if (!w) return w;
+            if (ACR.has(w.toLowerCase())) return w.toUpperCase();
+            const m = w.match(/^([a-z]+)(\d+)$/i);
+            if (m && ACR.has(m[1].toLowerCase())) return m[1].toUpperCase() + m[2];
+            return i === 0 ? w.charAt(0).toUpperCase() + w.slice(1) : w;
+        }).join(' ');
+    },
+
     // a count said in the language's own plural: `${key}.${category}` (one,
     // few, other… from Intl.PluralRules), else `${key}`; {n} is the count
     tn(key, n, fallback, params = {}) {
@@ -792,14 +897,38 @@ Object.assign(JanitzaMonitor.prototype, {
     },
 
     setupNavigation() {
-        document.querySelectorAll('.nav-tab').forEach(tab => {
-            tab.addEventListener('click', (e) => {
-                e.preventDefault();
-                const page = tab.dataset.page;
-                // a click on the tab means "take me to that page's start" —
-                // Devices goes back to the list even with a device open
-                this.navigateTo(page, { fromNav: true });
-            });
+        // UX-13: the top-level destinations are now real <a href="#/page"> links.
+        // The router's click handler (app-router.js) intercepts them for clean
+        // history, and a native hash change is the fallback — so no per-tab click
+        // wiring here (which would double-fire with the router). The mobile
+        // "Navigation" disclosure IS wired here.
+        this._wireNavDisclosure();
+    },
+
+    // UX-13 mobile: a disclosure button (not a menu role — W3C disclosure pattern)
+    // reveals the full destination list; Escape closes and returns focus to it,
+    // an outside click closes it, and picking a link closes it (via navigateTo).
+    _wireNavDisclosure() {
+        const btn = document.getElementById('navDisclosure');
+        const nav = document.getElementById('mainNav');
+        if (!btn || !nav || btn._wired) return;
+        btn._wired = true;
+        const open = (yes) => {
+            const show = yes === undefined ? btn.getAttribute('aria-expanded') !== 'true' : yes;
+            btn.setAttribute('aria-expanded', String(show));
+            nav.classList.toggle('nav-open', show);
+            if (show) nav.querySelector('.nav-tab')?.focus();
+        };
+        this._navClose = () => { if (btn.getAttribute('aria-expanded') === 'true') open(false); };
+        btn.addEventListener('click', () => open());
+        document.addEventListener('click', (e) => {
+            if (btn.getAttribute('aria-expanded') !== 'true') return;
+            if (!nav.contains(e.target) && !btn.contains(e.target)) open(false);
+        });
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape' && btn.getAttribute('aria-expanded') === 'true') {
+                e.preventDefault(); open(false); btn.focus();
+            }
         });
     },
 
@@ -833,15 +962,32 @@ Object.assign(JanitzaMonitor.prototype, {
             });
             return;
         }
-        // Update nav tabs (class + ARIA selected state for the tablist)
+        // Update nav links (class + aria-current for the active page; UX-13 made the
+        // top-level nav real links in a <nav>, not a tablist)
         document.querySelectorAll('.nav-tab').forEach(t => {
             t.classList.remove('active');
-            if (t.hasAttribute('role')) t.setAttribute('aria-selected', 'false');
+            t.removeAttribute('aria-current');
+            if (t.getAttribute('role') === 'tab') t.setAttribute('aria-selected', 'false');
         });
         const activeTab = document.querySelector(`.nav-tab[data-page="${page}"]`);
         if (activeTab) {
             activeTab.classList.add('active');
-            if (activeTab.hasAttribute('role')) activeTab.setAttribute('aria-selected', 'true');
+            // only a real tablist tab uses aria-selected; links (incl. the submenu's
+            // role=menuitem items) mark the current page with aria-current
+            if (activeTab.getAttribute('role') === 'tab') activeTab.setAttribute('aria-selected', 'true');
+            else activeTab.setAttribute('aria-current', 'page');
+            // a destination inside a task submenu → light up that submenu's trigger too
+            document.querySelectorAll('.nav-submenu-btn').forEach(btn => {
+                const menu = document.getElementById(btn.getAttribute('aria-controls'));
+                const holds = !!(menu && menu.contains(activeTab));
+                btn.classList.toggle('active', holds);
+                if (holds) btn.setAttribute('aria-current', 'page'); else btn.removeAttribute('aria-current');
+            });
+            // keep the mobile disclosure's current-section label in sync
+            const lbl = document.getElementById('navCurrentLabel');
+            const name = activeTab.querySelector('span')?.textContent?.trim();
+            if (lbl && name) lbl.textContent = name;
+            if (this._navClose) this._navClose();   // close the mobile menu after a pick
         }
 
         // leaving Devices: an open device page stops its log poll and sends
@@ -863,6 +1009,7 @@ Object.assign(JanitzaMonitor.prototype, {
         if (page !== 'monitor' && this._stopMonitorPoll) this._stopMonitorPoll();
         // stop the Status page auto-refresh when leaving it
         if (page !== 'status' && this._stopStatusPoll) this._stopStatusPoll();
+        if (page !== 'devices' && this._bridgesLiveStop) this._bridgesLiveStop();
         // stop the bus-monitor live poll when leaving Diagnostics
         if (page !== 'diagnostics' && this._stopDiagPoll) this._stopDiagPoll();
 
@@ -911,6 +1058,8 @@ Object.assign(JanitzaMonitor.prototype, {
             this.initEnergyPage();
         } else if (page === 'vmeters') {
             this.renderVirtualMeters();
+        } else if (page === 'vbms') {
+            this.renderVbmsPage();
         } else if (page === 'rules') {
             this.renderRulesPage();
         } else if (page === 'templates') {
@@ -919,6 +1068,13 @@ Object.assign(JanitzaMonitor.prototype, {
             this.initStatusPage();
         } else if (page === 'diagnostics') {
             this.initDiagnosticsPage();
+        } else if (page === 'dashboard') {
+            // "take me to the overview" — a Dashboard tab click never shows a stale
+            // drilled-in device. The router drives the device dimension from the URL
+            // (_fromRoute), so only a user-initiated nav resets here.
+            if (!opts._fromRoute && (this._dashMode || 'fleet') === 'device' && this.showFleetView) {
+                this.showFleetView();
+            }
         }
     },
 

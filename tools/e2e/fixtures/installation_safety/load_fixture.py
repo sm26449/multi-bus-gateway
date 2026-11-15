@@ -5,7 +5,7 @@
 
     load_fixture.py VARIANT OUTDIR [--writes] [--login PASSWORD]
 
-VARIANT is safety | plant | drive | cmdui | types | qa | endpoint | fronius (a file next to this one), merged over
+VARIANT is safety | plant | drive | cmdui | types | qa | endpoint | fronius | vbms | vbmsdev (a file next to this one), merged over
 base.yaml. OUTDIR is emptied and refilled: config.yaml and nothing else, so
 every run starts from the same state. --writes turns security.allow_writes
 on (arming a rule needs it); --login turns login on for `admin` with that
@@ -22,7 +22,7 @@ import sys
 import yaml
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-VARIANTS = ('safety', 'plant', 'drive', 'cmdui', 'types', 'qa', 'endpoint', 'fronius')
+VARIANTS = ('safety', 'plant', 'drive', 'cmdui', 'types', 'qa', 'endpoint', 'fronius', 'vbms', 'vbmsdev')
 
 
 def build(variant: str, writes: bool, password: str | None) -> dict:

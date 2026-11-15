@@ -162,6 +162,13 @@ Object.assign(JanitzaMonitor.prototype, {
         const last = lv.last;
         const tm = r.timing || {};
         const inSev = this._ruleInputsSev(r);
+        // UX-02: an armed badge is a configured MODE, not proof that protection is
+        // operating. When a rule that reads device values is armed but has no current
+        // input — it cannot run, its device is absent, or its signal is null (e.g. the
+        // source is asleep at night) — say so on the badge instead of a reassuring
+        // green "Armed". This is honest presentation, not a claim of a fault.
+        const readsDevice = r.kind === 'steps' || r.kind === 'trim' || (r.inputs && r.inputs.length);
+        const inputUnavailable = armed && (!!lv.error || inSev === 'bad' || (lv.signal == null && readsDevice));
         // on/off is known when the rule has an off value: `off`, or a condition's `else`
         const counting = r.off_value != null || (r.kind === 'condition' && r.else) || ['min_on_s', 'min_off_s', 'max_on_s', 'max_starts_per_h'].some(k => tm[k]);
         const today = u => `${this._fmtMinutes(u.run_today_min || 0)} · ${u.starts_today || 0}×`;
@@ -185,20 +192,27 @@ Object.assign(JanitzaMonitor.prototype, {
                 <h3 style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
                     <span class="status-dot" style="--dot:${this._ruleStateDot(r)}" aria-hidden="true"></span>
                     ${this._esc(r.label || r.id)} <span class="dev-chip">${this._esc(r.id)}</span>
-                    <span class="sink-pill ${armed ? 'ok' : 'warn'}">${armed ? t('rules.armed', 'Armed') : t('rules.shadow', 'Shadow')}</span>
+                    <span class="sink-pill ${armed ? (inputUnavailable ? 'warn' : 'ok') : 'warn'}"${inputUnavailable ? ` title="${this._esc(t('rules.armedNoInput.tip', 'The rule is armed, but it has no current input value right now (the source may be asleep or unreachable), so it cannot act until a reading returns.'))}"` : ''}>${armed ? (inputUnavailable ? t('rules.armedNoInput', 'Armed · input unavailable') : t('rules.armed', 'Armed')) : t('rules.shadow', 'Shadow')}</span>
                     ${r.layer || r.priority != null ? `<span class="dev-chip" title="${t('rules.layerHint', 'Several rules may drive one target: the higher priority wins it')}">${this._esc(t('rules.layer_' + (r.layer || 'schedule'), r.layer || 'schedule'))}${r.priority != null ? ` · ${r.priority}` : ''}</span>` : ''}
                     ${r.enabled ? '' : `<span class="sink-pill off">${t('devices.disabled', 'disabled')}</span>`}
                     ${lv.error ? `<span class="sink-pill bad" title="${this._esc(lv.error)}">${t('rules.cannotRun', 'cannot run')}</span>` : ''}
                     ${inSev ? `<span class="sink-pill ${inSev}" data-rule-inputs title="${this._esc((r.inputs || []).map(p => this._ruleInputText(p)).join('\n'))}">${t('rules.inputsUnknown', 'inputs unknown')}</span>` : ''}
                 </h3>
                 <div class="header-actions" style="display:flex;gap:6px;flex-wrap:wrap;">
+                    <!-- UX-07: the frequent READ-ONLY action leads and is prominent; the
+                         consequential overrides (clamp/pause/force) move into one explicit
+                         control menu; edit and delete stay secondary icons. -->
+                    <button class="btn btn-secondary btn-sm" ${this._act('toggleRuleDecisions', [r.id])}><i aria-hidden="true" class="bi bi-journal-text"></i> ${t('rules.decisions', 'Decisions')}</button>
                     <button data-admin class="btn btn-sm ${armed ? 'btn-secondary' : 'btn-primary'}" ${this._act('setRuleMode', [r.id, armed ? 'shadow' : 'armed'])} ${lv.error && !armed ? 'disabled' : ''}>
                         <i aria-hidden="true" class="bi ${armed ? 'bi-eye' : 'bi-shield-check'}"></i> ${armed ? t('rules.toShadow', 'To shadow') : t('rules.arm', 'Arm…')}</button>
                     <button data-admin class="btn btn-ghost btn-sm" ${this._act('setRuleEnabled', [r.id, !r.enabled])} title="${r.enabled ? t('rules.disableHint', 'Stop the rule: it decides nothing until enabled again') : t('rules.enableHint', 'Let the rule decide again')}"><i aria-hidden="true" class="bi ${r.enabled ? 'bi-toggle-on' : 'bi-toggle-off'}"></i> ${r.enabled ? t('rules.disable', 'Disable') : t('rules.enable', 'Enable')}</button>
-                    <button data-admin class="btn btn-ghost btn-sm" ${this._act('openRuleClamp', [r.id])} title="${t('rules.clampHint', 'A ceiling on what the rule may ask for, for a stated time')}"><i aria-hidden="true" class="bi bi-arrow-down-square"></i> ${t('rules.clamp', 'Clamp…')}</button>
-                    <button data-admin class="btn btn-ghost btn-sm" ${this._act('openRuleOverride', [r.id])} title="${t('rules.overrideHint', 'Pause the rule so you or another system can command its target')}"><i aria-hidden="true" class="bi bi-pause-circle"></i> ${t('rules.override', 'Pause…')}</button>
-                    <button data-admin class="btn btn-ghost btn-sm" ${this._act('openRuleForce', [r.id])} title="${t('rules.forceHint', 'Ask for a value for a while (run for an hour), then the rule decides again')}"><i aria-hidden="true" class="bi bi-lightning-charge"></i> ${t('rules.force', 'Force…')}</button>
-                    <button class="btn btn-ghost btn-sm" ${this._act('toggleRuleDecisions', [r.id])}><i aria-hidden="true" class="bi bi-journal-text"></i> ${t('rules.decisions', 'Decisions')}</button>
+                    ${(() => { const mid = 'ruleOv-' + String(r.id).replace(/[^\w-]/g, '_'); return `<div class="mbg-menu-wrap">
+                        <button data-admin type="button" class="btn btn-ghost btn-sm" aria-haspopup="menu" aria-expanded="false" aria-controls="${mid}" ${this._act('_menuToggle', [], { el: true })} title="${t('rules.overridesHint', 'Manual overrides: clamp, pause or force this rule')}"><i aria-hidden="true" class="bi bi-sliders"></i> ${t('rules.overrides', 'Overrides')} <i aria-hidden="true" class="bi bi-chevron-down"></i></button>
+                        <div class="mbg-menu" role="menu" id="${mid}" hidden>
+                            <button role="menuitem" data-admin type="button" ${this._act('openRuleClamp', [r.id])}><i aria-hidden="true" class="bi bi-arrow-down-square"></i> ${t('rules.clamp', 'Clamp…')}</button>
+                            <button role="menuitem" data-admin type="button" ${this._act('openRuleOverride', [r.id])}><i aria-hidden="true" class="bi bi-pause-circle"></i> ${t('rules.override', 'Pause…')}</button>
+                            <button role="menuitem" data-admin type="button" ${this._act('openRuleForce', [r.id])}><i aria-hidden="true" class="bi bi-lightning-charge"></i> ${t('rules.force', 'Force…')}</button>
+                        </div></div>`; })()}
                     <a class="btn btn-ghost btn-sm" href="/api/rules/export?ids=${encodeURIComponent(r.id)}" download title="${t('rules.exportOne', 'Export this rule (YAML)')}" aria-label="${t('rules.exportOne', 'Export this rule (YAML)')}"><i aria-hidden="true" class="bi bi-download"></i></a>
                     <button data-admin class="btn btn-ghost btn-sm" ${this._act('openRuleModal', [r.id])} title="${t('common.edit', 'Edit')}" aria-label="${t('common.edit', 'Edit')}"><i aria-hidden="true" class="bi bi-pencil"></i></button>
                     <button data-admin class="btn btn-ghost btn-sm" ${this._act('deleteRule', [r.id])} title="${t('common.delete', 'Delete')}" aria-label="${t('common.delete', 'Delete')}"><i aria-hidden="true" class="bi bi-trash"></i></button>
@@ -539,20 +553,26 @@ Object.assign(JanitzaMonitor.prototype, {
                         <div style="display:flex;gap:6px;"><input id="rlValidMin" class="input" type="number" step="any" placeholder="min" value="${raw?.signal_valid?.min ?? ''}" aria-label="${this._esc(this.t('rules.validMin', 'Lowest valid value'))}"><input id="rlValidMax" class="input" type="number" step="any" placeholder="max" value="${raw?.signal_valid?.max ?? ''}" aria-label="${this._esc(this.t('rules.validMax', 'Highest valid value'))}"><input id="rlValidStep" class="input" type="number" step="any" min="0" placeholder="${t('rules.validStep', 'max step')}" value="${raw?.signal_valid?.max_step ?? ''}" aria-label="${t('rules.validStepLabel', 'largest plausible change between two samples')}"></div>
                         <div class="field-hint">${t('rules.validHint', 'A sample outside it is ignored as sensor garbage. A change larger than the max step is held until the next sample confirms it — a one-sample artefact never reaches a step.')}</div></div>
                 </div>
-                <details class="form-group" data-admin ${(tm.boot_wait_s || tm.urgent_retries || raw?.resume_on_boot) ? 'open' : ''}>
-                    <summary class="form-label" style="cursor:pointer;">${t('rules.adv.title', 'Advanced: after a restart, urgent sends')}</summary>
+                <details class="form-group" data-admin data-rl-tuning ${this._ruleHasTuning(raw) ? 'open' : ''}>
+                    <summary class="form-label" style="cursor:pointer;">${t('rules.adv.title', 'Advanced / tuning: restart, urgent sends, step-down')}</summary>
+                    <div class="field-hint" style="margin-top:4px;">${t('rules.adv.intro', 'Opt-in keys of a steps rule. An empty box leaves the key out (the default behaviour); 0 is kept as typed and also means off.')}</div>
                     <div class="form-row" style="margin-top:8px;">
-                        <div class="form-group"><label class="form-label" for="rlBootWait">${t('rules.adv.bootWait', 'After a restart, wait for the read-back up to (s)')}</label>
-                            <input id="rlBootWait" class="input" type="number" min="0" max="600" step="1" value="${tm.boot_wait_s || ''}" placeholder="0" aria-describedby="rlBootWaitHint">
-                            <div class="field-hint" id="rlBootWaitHint">${t('rules.adv.bootWaitHint', 'Before sending "Normal" after a restart, read what the device holds first — if it holds it already, nothing is sent. A step or an urgent want never waits. 0 or empty = off.')}</div></div>
-                        <div class="form-group"><label class="form-label" for="rlUrgentRetries">${t('rules.adv.urgentRetries', 'Send an urgent want again, at most (times)')}</label>
-                            <input id="rlUrgentRetries" class="input" type="number" min="0" max="5" step="1" value="${tm.urgent_retries || ''}" placeholder="0" aria-describedby="rlUrgentRetriesHint">
-                            <div class="field-hint" id="rlUrgentRetriesHint">${t('rules.adv.urgentRetriesHint', 'An immediate step or a stale safe value that did not get through is sent again 5 s later instead of after "Min. between commands". The same want only. 0 or empty = off.')}</div></div>
+                        ${this._ruleTuneBox('rlBootWait', t('rules.adv.bootWait', 'After a restart, wait for the read-back up to (s)'), tm.boot_wait_s, { max: 600, step: 1 },
+                            t('rules.adv.bootWaitHint', 'Before sending "Normal" after a restart, read what the device holds first — if it holds it already, nothing is sent. A step or an urgent want never waits. 0 to 600; empty = off.'))}
+                        ${this._ruleTuneBox('rlUrgentRetries', t('rules.adv.urgentRetries', 'Send an urgent want again, at most (times)'), tm.urgent_retries, { max: 5, step: 1 },
+                            t('rules.adv.urgentRetriesHint', 'An immediate step or a stale safe value that did not get through is sent again 5 s later instead of after "Min. between commands". The same want only. Whole number 0 to 5; empty = off.'))}
+                    </div>
+                    <div class="form-row">
+                        ${this._ruleTuneBox('rlStepDownMargin', t('rules.adv.margin', 'Step-down margin (signal units)'), raw?.step_down_margin, { step: 'any' },
+                            `${t('rules.adv.marginHint', 'A step is released only when the signal falls this far below its threshold (e.g. 0.5 V: a 251 V step lets go under 250.5 V). Release and the dead band are unchanged.')} ${t('rules.adv.marginMax', 'At most the highest step minus "Normal again under":')} <span id="rlMarginMax">—</span>. ${t('rules.adv.emptyOff', 'Empty = off.')}`)}
+                        ${this._ruleTuneBox('rlStepDownHold', t('rules.adv.hold', 'Step-down hold (s)'), tm.step_down_hold_s, { max: 3600, step: 1 },
+                            t('rules.adv.holdHint', 'After the debounce, a step down waits until the signal has stayed under the threshold minus the margin this long; one sample back over it restarts the wait. A step up never waits. 0 to 3600; empty = off.'))}
                     </div>
                     <label class="field-hint" style="display:flex;align-items:center;gap:6px;">
-                        <input type="checkbox" id="rlResumeOnBoot" ${raw?.resume_on_boot === true ? 'checked' : ''} aria-describedby="rlResumeHint">
+                        <input type="checkbox" id="rlResumeOnBoot" ${raw?.resume_on_boot === true ? 'checked' : ''} aria-describedby="rlResumeHint rlResumeOnBootErr">
                         ${t('rules.adv.resume', 'After a restart, resume the step the device holds')}</label>
                     <div class="field-hint" id="rlResumeHint">${t('rules.adv.resumeHint', 'A device already at a step\'s value starts there, and nothing is sent; the signal moves it as usual.')}</div>
+                    <div class="field-error" id="rlResumeOnBootErr" data-rl-tune-err></div>
                 </details>
             </div>
             <div data-rl-kind="condition" ${kind === 'condition' ? '' : 'hidden'}>
@@ -648,6 +668,7 @@ Object.assign(JanitzaMonitor.prototype, {
         document.getElementById('ruleFeedback').textContent = '';
         this._ruleTargetChanged(tg.command || '');
         this._ruleWirePickers();
+        this._ruleWireTuning();
         // what the form sends untouched, its defaults included: a Save that
         // sends the same is no change (no confirmation, no request)
         this._ruleEdit.loaded = r ? this._ruleCanon(this._ruleFromForm()) : null;
@@ -682,7 +703,8 @@ Object.assign(JanitzaMonitor.prototype, {
                         on_disable: 'rlOnDisable' };
         const m = /^([a-z_]+)(?:[.[][^:\s]*)?:\s*(.*)$/s.exec(String(msg));
         if (!m) return String(msg);
-        const id = FIELD[m[1]];
+        // a tuning key is named whole (timing.boot_wait_s), not by its head
+        const id = this._RULE_TUNE_FIELDS[String(msg).split(':')[0]] || FIELD[m[1]];
         const lbl = id && document.querySelector(`#ruleModal label[for="${id}"], #ruleModal label[data-for-select="${id}"]`)?.textContent.trim();
         return lbl ? `${lbl}: ${m[2]}` : String(msg);
     },
@@ -785,12 +807,95 @@ Object.assign(JanitzaMonitor.prototype, {
         sel.innerHTML = cmds.map(c => `<option value="${this._esc(c)}" ${c === keep ? 'selected' : ''}${tg.notOffered === c ? ' data-not-offered' : ''}>${this._esc(c)}${tg.notOffered === c ? ` — ${this._esc(this.t('rules.notOfferedNow', 'not offered now'))}` : ''}</option>`).join('');
     },
 
+    // ── the opt-in tuning keys (ADR-0012) in the editor ───────────────────
+    // where each key's server refusal is said (`fields` of a 422)
+    _RULE_TUNE_FIELDS: { 'timing.boot_wait_s': 'rlBootWait', 'timing.urgent_retries': 'rlUrgentRetries',
+                         'timing.step_down_hold_s': 'rlStepDownHold', step_down_margin: 'rlStepDownMargin',
+                         resume_on_boot: 'rlResumeOnBoot' },
+
+    _ruleHasTuning(raw) {
+        const tm = (raw && typeof raw.timing === 'object' && raw.timing) || {};
+        return ['boot_wait_s', 'urgent_retries', 'step_down_hold_s'].some(k => k in tm)
+            || ['resume_on_boot', 'step_down_margin'].some(k => k in (raw || {}));
+    },
+
+    // a number box whose empty value means "key absent"; a stored 0 shows as 0
+    _ruleTuneBox(id, label, value, { max, step = 1 } = {}, hint = '') {
+        const shown = (typeof value === 'number' && Number.isFinite(value)) ? String(value) : '';
+        return `<div class="form-group"><label class="form-label" for="${id}">${label}</label>
+            <input id="${id}" class="input" type="number" min="0" ${max != null ? `max="${max}"` : ''} step="${step}" value="${this._esc(shown)}" placeholder="${this._esc(this.t('rules.adv.offPh', 'off'))}" aria-describedby="${id}Hint ${id}Err">
+            <div class="field-hint" id="${id}Hint">${hint}</div>
+            <div class="field-error" id="${id}Err" data-rl-tune-err></div></div>`;
+    },
+
+    // the largest margin the server takes: the highest step minus release_below
+    _ruleMarginBound() {
+        const box = document.getElementById('rlStepDownMargin');
+        if (!box) return;
+        const ats = [...document.querySelectorAll('#rlSteps tbody [data-st="at"]')]
+            .map(x => x.value.trim()).filter(x => x !== '').map(Number).filter(Number.isFinite);
+        const rbs = (document.getElementById('rlRelease')?.value || '').trim();
+        const rb = rbs === '' ? NaN : Number(rbs);
+        const out = document.getElementById('rlMarginMax');
+        if (ats.length && Number.isFinite(rb)) {
+            const m = String(Number(Math.max(0, Math.max(...ats) - rb).toFixed(6)));
+            box.setAttribute('max', m);
+            if (out) out.textContent = m;
+        } else {
+            box.removeAttribute('max');
+            if (out) out.textContent = '—';
+        }
+    },
+
+    _ruleWireTuning() {
+        this._ruleMarginBound();
+        const body = document.getElementById('ruleModalBody');
+        if (!body || body._rlTuneWired) return;
+        body._rlTuneWired = true;
+        const on = ev => {
+            const el = ev.target;
+            if (el?.closest?.('#rlSteps') || el?.id === 'rlRelease') this._ruleMarginBound();
+            // a refused box is cleared as soon as it is edited
+            if (el?.getAttribute?.('aria-invalid') === 'true') {
+                el.removeAttribute('aria-invalid');
+                const err = document.getElementById(`${el.id}Err`);
+                if (err) err.textContent = '';
+            }
+        };
+        body.addEventListener('input', on);
+        body.addEventListener('change', on);
+        // a step row added or removed moves the bound too
+        body.addEventListener('click', ev => {
+            if (ev.target?.closest?.('#rlSteps, [data-action="_ruleAddStep"]')) setTimeout(() => this._ruleMarginBound(), 0);
+        });
+    },
+
+    // the server's refusal of a tuning key, said under its box (null clears)
+    _ruleTuneErrors(fields) {
+        document.querySelectorAll('#ruleModal [data-rl-tune-err]').forEach(el => { el.textContent = ''; });
+        document.querySelectorAll('#ruleModal [data-rl-tuning] [aria-invalid]').forEach(el => el.removeAttribute('aria-invalid'));
+        let any = false;
+        for (const [key, msg] of Object.entries(fields || {})) {
+            const id = this._RULE_TUNE_FIELDS[key];
+            const box = id && document.getElementById(id);
+            if (!box) continue;
+            any = true;
+            box.setAttribute('aria-invalid', 'true');
+            const err = document.getElementById(`${id}Err`);
+            if (err) err.textContent = String(msg);
+        }
+        const det = any && document.querySelector('#ruleModal [data-rl-tuning]');
+        if (det) det.open = true;
+    },
+
     // the opt-in keys (ADR-0012) in words on the card, or nothing
     _ruleTuningLine(r) {
         const t = (k, d) => this.t(k, d), tm = r.timing || {}, out = [];
         if (tm.boot_wait_s) out.push(t('rules.adv.cardBootWait', 'after a restart waits up to {s} s for the read-back').replace('{s}', this._esc(tm.boot_wait_s)));
         if (r.resume_on_boot) out.push(t('rules.adv.cardResume', 'resumes the step the device holds'));
         if (tm.urgent_retries) out.push(t('rules.adv.cardRetries', 'urgent wants sent again up to {n}×').replace('{n}', this._esc(tm.urgent_retries)));
+        if (r.step_down_margin) out.push(t('rules.adv.cardMargin', 'a step lets go {m} under its threshold').replace('{m}', this._esc(r.step_down_margin)));
+        if (tm.step_down_hold_s) out.push(t('rules.adv.cardHold', 'a step down waits {s} s').replace('{s}', this._esc(tm.step_down_hold_s)));
         return out.length ? `<br>${out.join(' · ')}` : '';
     },
 
@@ -800,9 +905,9 @@ Object.assign(JanitzaMonitor.prototype, {
     _RULE_FORM_KEYS: ['label', 'kind', 'layer', 'priority', 'params', 'stale_after_s', 'on_stale', 'on_disable',
                       'off_value', 'signal', 'signal_unit', 'steps', 'release_below', 'normal', 'when', 'release',
                       'then', 'else', 'schedule', 'above', 'below', 'step', 'gain', 'min', 'max', 'start',
-                      'resume_on_boot'],
+                      'resume_on_boot', 'step_down_margin'],
     _RULE_TIMING_KEYS: ['every_s', 'debounce', 'min_interval_s', 'reassert_s', 'for_s', 'min_on_s', 'min_off_s',
-                        'max_on_s', 'max_starts_per_h', 'boot_wait_s', 'urgent_retries'],
+                        'max_on_s', 'max_starts_per_h', 'boot_wait_s', 'urgent_retries', 'step_down_hold_s'],
     // what belongs to one kind alone (signal_valid is shared by steps and trim)
     _RULE_KIND_KEYS: { steps: ['signal_valid'], trim: ['signal_valid'], schedule: [], condition: [] },
 
@@ -904,10 +1009,14 @@ Object.assign(JanitzaMonitor.prototype, {
                 out.normal = this._ruleKv(v('rlNormal'), lbl('rlNormal'), errors);
                 if (!Object.keys(out.normal).length) errors.push(t('rules.err.normal', 'Normal asks for: give a value (value=100), or tick "No opinion".'));
             }
-            // the opt-in keys (ADR-0012): written only when set
-            const bw = (v('rlBootWait') || '').trim(), ur = (v('rlUrgentRetries') || '').trim();
-            if (bw !== '' && Number(bw) !== 0) out.timing.boot_wait_s = this._ruleNum(bw, lbl('rlBootWait'), errors);
-            if (ur !== '' && Number(ur) !== 0) out.timing.urgent_retries = this._ruleNum(ur, lbl('rlUrgentRetries'), errors);
+            // the opt-in keys (ADR-0012): an empty box leaves the key out, a
+            // typed number (0 included) is written as typed; the server judges
+            // the range (tuning_errors) and the editor says it under the box
+            for (const [key, id, inTiming] of [['boot_wait_s', 'rlBootWait', true], ['urgent_retries', 'rlUrgentRetries', true],
+                                               ['step_down_hold_s', 'rlStepDownHold', true], ['step_down_margin', 'rlStepDownMargin', false]]) {
+                const s = (v(id) || '').trim();
+                if (s !== '') (inTiming ? out.timing : out)[key] = this._ruleNum(s, lbl(id), errors);
+            }
             if (document.getElementById('rlResumeOnBoot')?.checked) out.resume_on_boot = true;
             const vmin = v('rlValidMin'), vmax = v('rlValidMax'), vstep = v('rlValidStep');
             if (vmin !== '' || vmax !== '' || vstep !== '') out.signal_valid = {
@@ -975,6 +1084,7 @@ Object.assign(JanitzaMonitor.prototype, {
         const body = this._ruleFromForm();
         if (!body.id) { fb.textContent = this.t('rules.needId', 'Rule ID is required.'); return; }
         if (this._ruleFormErrors.length) { fb.textContent = this._ruleFormErrors.join(' · '); return; }
+        this._ruleTuneErrors(null);
         const prev = this._ruleEdit?.id ? (this._rules || []).find(x => x.id === this._ruleEdit.id) : null;
         const canon = o => this._ruleCanon(o);
         // nothing changed: the stored rule, or what the untouched form sent
@@ -1000,6 +1110,7 @@ Object.assign(JanitzaMonitor.prototype, {
             else d = await this._ruleOp('/api/rules', body);
         } catch (e) {
             this._ruleFeedbackErrors(Array.isArray(e.detail?.errors) ? e.detail.errors : [e.message]);
+            this._ruleTuneErrors(e.detail?.fields);
             return;
         }
         if (prev) this._toastReleasing(prev, d.releasing, d.release_warning);

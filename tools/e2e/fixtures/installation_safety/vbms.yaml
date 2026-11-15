@@ -1,0 +1,15 @@
+# vbms_arm_e2e: one Virtual BMS instance (ADR-0037) so the arm/disarm UI has a card to act on.
+# Disarmed by default; the fixture container has no can0, so arming lands on the honest
+# "Armed · not transmitting" state (the transmitter cannot open) — which is exactly a state the
+# UI must show correctly.
+virtual_bms:
+  - id: deye-vbms
+    profile: pylontech_can_inverter
+    channel: can0
+    packs: [seplos-adr1, seplos-adr2]
+    bounds:
+      charge_current_limit: [0, 80]
+      discharge_current_limit: [0, 180]
+    floor:
+      charge_current_limit: 20
+      discharge_current_limit: 40

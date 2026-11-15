@@ -32,7 +32,7 @@ def build(ctx) -> APIRouter:
         """`{enabled, port, host, encryption: required|optional|off,
         allow_anonymous, update_s, public_url}` — saved, then the server restarts with
         them (OPC UA clients reconnect)."""
-        from ..config import OPCUA_ENCRYPTION
+        from ..core.config import OPCUA_ENCRYPTION
         o = ctx.config.opcua
         errs = []
         port = payload.get('port', o.port)

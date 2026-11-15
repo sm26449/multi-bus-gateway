@@ -11,6 +11,7 @@ LABEL org.opencontainers.image.licenses="AGPL-3.0-or-later"
 # window; Dependabot's digest bumps keep this layer close to a no-op.
 RUN apt-get update \
     && apt-get dist-upgrade -y --no-install-recommends \
+    && apt-get install -y --no-install-recommends iproute2 \
     && apt-get clean && rm -rf /var/lib/apt/lists/*
 
 # Dedicated non-root user. The entrypoint starts as root ONLY to chown the

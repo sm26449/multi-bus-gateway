@@ -14,6 +14,7 @@
  */
 import { chromium } from 'playwright';
 import { openDeviceTab, editorSection, closeDeviceEditor } from './lib/device-page.mjs';
+import { openPage } from './lib/nav.mjs';
 
 const BASE = process.env.MBG_URL || 'http://127.0.0.1:18094';
 const METER = 'fronius-meter-u240';                 // a unit's id: <installation>-u<unit>
@@ -46,7 +47,7 @@ try {
   await page.goto(BASE + '/');
   await page.waitForLoadState('networkidle');
   await dismissOnboarding();
-  await page.click('[data-page="devices"]');
+  await openPage(page, 'devices');
   await page.waitForSelector('#devicesList .device-row');
   await dismissOnboarding();
   await page.screenshot({ path: SHOT('f1-01-devices') });

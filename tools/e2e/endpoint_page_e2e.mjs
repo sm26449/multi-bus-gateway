@@ -18,6 +18,7 @@
  */
 import { chromium } from 'playwright';
 import { openDeviceTab, saveDeviceEditor } from './lib/device-page.mjs';
+import { openPage } from './lib/nav.mjs';
 
 const BASE = process.env.MBG_URL || 'http://127.0.0.1:18089';
 const ENDPOINT = process.env.ENDPOINT || 'sunfield';
@@ -42,7 +43,7 @@ try {
   await page.waitForLoadState('networkidle');
   const later = page.locator('button:has-text("Later")');
   if (await later.count()) await later.first().click().catch(() => {});
-  await page.click('[data-page="devices"]');
+  await openPage(page, 'devices');
   await page.waitForTimeout(1200);
 
   // ---- 1. the endpoint row is a way INTO the endpoint, not only into its units ---
@@ -62,9 +63,16 @@ try {
         (await page.locator('[data-group-totals]').innerText()).toLowerCase().includes('nothing is fresh'));
 
   // ---- 3b. what the wire costs, measured — under "How it is read" ----------
-  await page.evaluate(() => document.querySelectorAll('details[data-group-details]').forEach(d => d.open = true));
-  const busLine = (await page.locator('#plBus').count()) ? await page.locator('#plBus').innerText() : '';
-  const busApi = (await (await fetch(API)).json()).bus;
+  // the page redraws its groups every 5 s: a first measurement that lands
+  // between the page's read and this one is waited for, not raced (E2E-398-F3)
+  let busLine = '', busApi = {};
+  for (let i = 0; i < 5; i++) {
+    busApi = (await (await fetch(API)).json()).bus || {};
+    await page.evaluate(() => document.querySelectorAll('details[data-group-details]').forEach(d => d.open = true));
+    busLine = (await page.locator('#plBus').count()) ? await page.locator('#plBus').innerText() : '';
+    if (!busApi.samples || busLine) break;
+    await page.waitForTimeout(2000);
+  }
   // since 3.67 (a1024b1) the line is shown once something was measured —
   // never a "nothing measured yet" placeholder above the fold
   check('the access point states what it costs, once measured',

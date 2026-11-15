@@ -5,7 +5,7 @@
   "name": "Janitza UMG 512-PRO",
   "vendor": "Janitza electronics GmbH",
   "model": "UMG 512-PRO",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "author": "multi-bus-gateway built-in",
   "description": "Full Modbus register map of the Janitza UMG 512-PRO power quality analyzer, generated from the vendor Modbus address list. Curated defaults included for the common electrical measurements.",
   "kind": "meter",
@@ -16,10 +16,6 @@
     "rtu"
    ],
    "default_unit_id": 1,
-   "functions": [
-    3,
-    4
-   ],
    "byte_order": "big",
    "max_registers_per_read": 125
   },
@@ -33884,7 +33880,8 @@
     "data_type": "float",
     "access": "RD/WR",
     "category": "energy_active",
-    "description": "Apparent energy L1"
+    "description": "Apparent energy L1",
+    "monotonic": true
    },
    {
     "address": 6466,
@@ -33894,7 +33891,8 @@
     "data_type": "float",
     "access": "RD/WR",
     "category": "energy_active",
-    "description": "Apparent energy L2"
+    "description": "Apparent energy L2",
+    "monotonic": true
    },
    {
     "address": 6468,
@@ -33904,7 +33902,8 @@
     "data_type": "float",
     "access": "RD/WR",
     "category": "energy_active",
-    "description": "Apparent energy L3"
+    "description": "Apparent energy L3",
+    "monotonic": true
    },
    {
     "address": 6470,
@@ -33914,7 +33913,8 @@
     "data_type": "float",
     "access": "RD/WR",
     "category": "energy_active",
-    "description": "Apparent energy L4"
+    "description": "Apparent energy L4",
+    "monotonic": true
    },
    {
     "address": 6472,
@@ -33947,7 +33947,8 @@
       "wide": false,
       "dashboard_order": 103
      }
-    }
+    },
+    "monotonic": true
    },
    {
     "address": 6474,
@@ -33957,117 +33958,118 @@
     "data_type": "float",
     "access": "RD/WR",
     "category": "energy_active",
-    "description": "Apparent energy L1..L4"
+    "description": "Apparent energy L1..L4",
+    "monotonic": true
    },
    {
     "address": 6476,
     "name": "_WH[0]",
-    "label": "Real energy L1",
+    "label": "Real energy L1, net (signed: falls when energy flows back)",
     "unit": "Wh",
     "data_type": "float",
     "access": "RD/WR",
     "category": "energy_active",
-    "description": "Real energy L1"
+    "description": "Real energy L1, net (signed: falls when energy flows back)"
    },
    {
     "address": 6478,
     "name": "_WH[1]",
-    "label": "Real energy L2",
+    "label": "Real energy L2, net (signed: falls when energy flows back)",
     "unit": "Wh",
     "data_type": "float",
     "access": "RD/WR",
     "category": "energy_active",
-    "description": "Real energy L2"
+    "description": "Real energy L2, net (signed: falls when energy flows back)"
    },
    {
     "address": 6480,
     "name": "_WH[2]",
-    "label": "Real energy L3",
+    "label": "Real energy L3, net (signed: falls when energy flows back)",
     "unit": "Wh",
     "data_type": "float",
     "access": "RD/WR",
     "category": "energy_active",
-    "description": "Real energy L3"
+    "description": "Real energy L3, net (signed: falls when energy flows back)"
    },
    {
     "address": 6482,
     "name": "_WH[3]",
-    "label": "Real energy L4",
+    "label": "Real energy L4, net (signed: falls when energy flows back)",
     "unit": "Wh",
     "data_type": "float",
     "access": "RD/WR",
     "category": "energy_active",
-    "description": "Real energy L4"
+    "description": "Real energy L4, net (signed: falls when energy flows back)"
    },
    {
     "address": 6484,
     "name": "_WH[4]",
-    "label": "Real energy L1..L3",
+    "label": "Real energy L1..L3, net (signed: falls when energy flows back)",
     "unit": "Wh",
     "data_type": "float",
     "access": "RD/WR",
     "category": "energy_active",
-    "description": "Real energy L1..L3"
+    "description": "Real energy L1..L3, net (signed: falls when energy flows back)"
    },
    {
     "address": 6486,
     "name": "_WH[5]",
-    "label": "Real energy L1..L4",
+    "label": "Real energy L1..L4, net (signed: falls when energy flows back)",
     "unit": "Wh",
     "data_type": "float",
     "access": "RD/WR",
     "category": "energy_active",
-    "description": "Real energy L1..L4"
+    "description": "Real energy L1..L4, net (signed: falls when energy flows back)"
    },
    {
     "address": 6488,
     "name": "_QH[0]",
-    "label": "Reaktive energy L1",
+    "label": "Reaktive energy L1, net (signed: falls when energy flows back)",
     "unit": "varh",
     "data_type": "float",
     "access": "RD/WR",
     "category": "energy_reactive",
-    "description": "Reaktive energy L1"
+    "description": "Reaktive energy L1, net (signed: falls when energy flows back)"
    },
    {
     "address": 6490,
     "name": "_QH[1]",
-    "label": "Reaktive energy L2",
+    "label": "Reaktive energy L2, net (signed: falls when energy flows back)",
     "unit": "varh",
     "data_type": "float",
     "access": "RD/WR",
     "category": "energy_reactive",
-    "description": "Reaktive energy L2"
+    "description": "Reaktive energy L2, net (signed: falls when energy flows back)"
    },
    {
     "address": 6492,
     "name": "_QH[2]",
-    "label": "Reaktive energy L3",
+    "label": "Reaktive energy L3, net (signed: falls when energy flows back)",
     "unit": "varh",
     "data_type": "float",
     "access": "RD/WR",
     "category": "energy_reactive",
-    "description": "Reaktive energy L3"
+    "description": "Reaktive energy L3, net (signed: falls when energy flows back)"
    },
    {
     "address": 6494,
     "name": "_QH[3]",
-    "label": "Reaktive energy L4",
+    "label": "Reaktive energy L4, net (signed: falls when energy flows back)",
     "unit": "varh",
     "data_type": "float",
     "access": "RD/WR",
     "category": "energy_reactive",
-    "description": "Reaktive energy L4"
+    "description": "Reaktive energy L4, net (signed: falls when energy flows back)"
    },
    {
     "address": 6496,
     "name": "_QH[4]",
-    "label": "Reaktive energy L1..L3",
+    "label": "Reaktive energy L1..L3, net (signed: falls when energy flows back)",
     "unit": "varh",
     "data_type": "float",
     "access": "RD/WR",
     "category": "energy_reactive",
-    "description": "Reaktive energy L1..L3",
+    "description": "Reaktive energy L1..L3, net (signed: falls when energy flows back)",
     "poll_group": "slow",
     "defaults": {
      "mqtt": {
@@ -34095,12 +34097,12 @@
    {
     "address": 6498,
     "name": "_QH[5]",
-    "label": "Reaktive energy L1..L4",
+    "label": "Reaktive energy L1..L4, net (signed: falls when energy flows back)",
     "unit": "varh",
     "data_type": "float",
     "access": "RD/WR",
     "category": "energy_reactive",
-    "description": "Reaktive energy L1..L4"
+    "description": "Reaktive energy L1..L4, net (signed: falls when energy flows back)"
    },
    {
     "address": 6500,
@@ -34134,7 +34136,8 @@
       "wide": false,
       "dashboard_order": 104
      }
-    }
+    },
+    "monotonic": true
    },
    {
     "address": 6502,
@@ -34168,7 +34171,8 @@
       "wide": false,
       "dashboard_order": 104
      }
-    }
+    },
+    "monotonic": true
    },
    {
     "address": 6504,
@@ -34202,7 +34206,8 @@
       "wide": false,
       "dashboard_order": 104
      }
-    }
+    },
+    "monotonic": true
    },
    {
     "address": 6506,
@@ -34212,7 +34217,8 @@
     "data_type": "float",
     "access": "RD/WR",
     "category": "energy_active",
-    "description": "Real energy L4, consumed"
+    "description": "Real energy L4, consumed",
+    "monotonic": true
    },
    {
     "address": 6508,
@@ -34246,7 +34252,8 @@
       "wide": false,
       "dashboard_order": 104
      }
-    }
+    },
+    "monotonic": true
    },
    {
     "address": 6510,
@@ -34256,7 +34263,8 @@
     "data_type": "float",
     "access": "RD/WR",
     "category": "energy_active",
-    "description": "Real energy L1..L4, consumed"
+    "description": "Real energy L1..L4, consumed",
+    "monotonic": true
    },
    {
     "address": 6512,
@@ -34290,7 +34298,8 @@
       "wide": false,
       "dashboard_order": 105
      }
-    }
+    },
+    "monotonic": true
    },
    {
     "address": 6514,
@@ -34324,7 +34333,8 @@
       "wide": false,
       "dashboard_order": 105
      }
-    }
+    },
+    "monotonic": true
    },
    {
     "address": 6516,
@@ -34358,7 +34368,8 @@
       "wide": false,
       "dashboard_order": 105
      }
-    }
+    },
+    "monotonic": true
    },
    {
     "address": 6518,
@@ -34368,7 +34379,8 @@
     "data_type": "float",
     "access": "RD/WR",
     "category": "energy_active",
-    "description": "Real energy L4, delivered"
+    "description": "Real energy L4, delivered",
+    "monotonic": true
    },
    {
     "address": 6520,
@@ -34402,7 +34414,8 @@
       "wide": false,
       "dashboard_order": 105
      }
-    }
+    },
+    "monotonic": true
    },
    {
     "address": 6522,
@@ -34412,7 +34425,8 @@
     "data_type": "float",
     "access": "RD/WR",
     "category": "energy_active",
-    "description": "Real energy L1..L4, delivered"
+    "description": "Real energy L1..L4, delivered",
+    "monotonic": true
    },
    {
     "address": 6524,
@@ -34422,7 +34436,8 @@
     "data_type": "float",
     "access": "RD/WR",
     "category": "energy_active",
-    "description": "Real energy L1, consumed, rate 1"
+    "description": "Real energy L1, consumed, rate 1",
+    "monotonic": true
    },
    {
     "address": 6526,
@@ -34432,7 +34447,8 @@
     "data_type": "float",
     "access": "RD/WR",
     "category": "energy_active",
-    "description": "Real energy L2, consumed, rate 1"
+    "description": "Real energy L2, consumed, rate 1",
+    "monotonic": true
    },
    {
     "address": 6528,
@@ -34442,7 +34458,8 @@
     "data_type": "float",
     "access": "RD/WR",
     "category": "energy_active",
-    "description": "Real energy L3, consumed, rate 1"
+    "description": "Real energy L3, consumed, rate 1",
+    "monotonic": true
    },
    {
     "address": 6530,
@@ -34452,7 +34469,8 @@
     "data_type": "float",
     "access": "RD/WR",
     "category": "energy_active",
-    "description": "Real energy L4, consumed, rate 1"
+    "description": "Real energy L4, consumed, rate 1",
+    "monotonic": true
    },
    {
     "address": 6532,
@@ -34462,7 +34480,8 @@
     "data_type": "float",
     "access": "RD/WR",
     "category": "energy_active",
-    "description": "Real energy L1..L3, consumed, rate 1"
+    "description": "Real energy L1..L3, consumed, rate 1",
+    "monotonic": true
    },
    {
     "address": 6534,
@@ -34472,7 +34491,8 @@
     "data_type": "float",
     "access": "RD/WR",
     "category": "energy_active",
-    "description": "Real energy L1..L4, consumed, rate 1"
+    "description": "Real energy L1..L4, consumed, rate 1",
+    "monotonic": true
    },
    {
     "address": 6536,
@@ -34482,7 +34502,8 @@
     "data_type": "float",
     "access": "RD/WR",
     "category": "energy_active",
-    "description": "Real energy L1, consumed, rate 2"
+    "description": "Real energy L1, consumed, rate 2",
+    "monotonic": true
    },
    {
     "address": 6538,
@@ -34492,7 +34513,8 @@
     "data_type": "float",
     "access": "RD/WR",
     "category": "energy_active",
-    "description": "Real energy L3, consumed, rate 2"
+    "description": "Real energy L3, consumed, rate 2",
+    "monotonic": true
    },
    {
     "address": 6540,
@@ -34502,7 +34524,8 @@
     "data_type": "float",
     "access": "RD/WR",
     "category": "energy_active",
-    "description": "Real energy L3, consumed, rate 2"
+    "description": "Real energy L3, consumed, rate 2",
+    "monotonic": true
    },
    {
     "address": 6542,
@@ -34512,7 +34535,8 @@
     "data_type": "float",
     "access": "RD/WR",
     "category": "energy_active",
-    "description": "Real energy L4, consumed, rate 2"
+    "description": "Real energy L4, consumed, rate 2",
+    "monotonic": true
    },
    {
     "address": 6544,
@@ -34522,7 +34546,8 @@
     "data_type": "float",
     "access": "RD/WR",
     "category": "energy_active",
-    "description": "Real energy L1..L3, consumed, rate 2"
+    "description": "Real energy L1..L3, consumed, rate 2",
+    "monotonic": true
    },
    {
     "address": 6546,
@@ -34532,7 +34557,8 @@
     "data_type": "float",
     "access": "RD/WR",
     "category": "energy_active",
-    "description": "Real energy L1..L4, consumed, rate 2"
+    "description": "Real energy L1..L4, consumed, rate 2",
+    "monotonic": true
    },
    {
     "address": 6548,
@@ -34542,7 +34568,8 @@
     "data_type": "float",
     "access": "RD/WR",
     "category": "energy_active",
-    "description": "Real energy L1, delivered, rate 1"
+    "description": "Real energy L1, delivered, rate 1",
+    "monotonic": true
    },
    {
     "address": 6550,
@@ -34552,7 +34579,8 @@
     "data_type": "float",
     "access": "RD/WR",
     "category": "energy_active",
-    "description": "Real energy L2, delivered, rate 1"
+    "description": "Real energy L2, delivered, rate 1",
+    "monotonic": true
    },
    {
     "address": 6552,
@@ -34562,7 +34590,8 @@
     "data_type": "float",
     "access": "RD/WR",
     "category": "energy_active",
-    "description": "Real energy L3, delivered, rate 1"
+    "description": "Real energy L3, delivered, rate 1",
+    "monotonic": true
    },
    {
     "address": 6554,
@@ -34572,7 +34601,8 @@
     "data_type": "float",
     "access": "RD/WR",
     "category": "energy_active",
-    "description": "Real energy L4, delivered, rate 1"
+    "description": "Real energy L4, delivered, rate 1",
+    "monotonic": true
    },
    {
     "address": 6556,
@@ -34582,7 +34612,8 @@
     "data_type": "float",
     "access": "RD/WR",
     "category": "energy_active",
-    "description": "Real energy L1..L3, delivered, rate 1"
+    "description": "Real energy L1..L3, delivered, rate 1",
+    "monotonic": true
    },
    {
     "address": 6558,
@@ -34592,7 +34623,8 @@
     "data_type": "float",
     "access": "RD/WR",
     "category": "energy_active",
-    "description": "Real energy L1..L4, delivered, rate 1"
+    "description": "Real energy L1..L4, delivered, rate 1",
+    "monotonic": true
    },
    {
     "address": 6560,
@@ -34602,7 +34634,8 @@
     "data_type": "float",
     "access": "RD/WR",
     "category": "energy_active",
-    "description": "Real energy L1, delivered, rate 2"
+    "description": "Real energy L1, delivered, rate 2",
+    "monotonic": true
    },
    {
     "address": 6562,
@@ -34612,7 +34645,8 @@
     "data_type": "float",
     "access": "RD/WR",
     "category": "energy_active",
-    "description": "Real energy L2, delivered, rate 2"
+    "description": "Real energy L2, delivered, rate 2",
+    "monotonic": true
    },
    {
     "address": 6564,
@@ -34622,7 +34656,8 @@
     "data_type": "float",
     "access": "RD/WR",
     "category": "energy_active",
-    "description": "Real energy L3, delivered, rate 2"
+    "description": "Real energy L3, delivered, rate 2",
+    "monotonic": true
    },
    {
     "address": 6566,
@@ -34632,7 +34667,8 @@
     "data_type": "float",
     "access": "RD/WR",
     "category": "energy_active",
-    "description": "Real energy L4, delivered, rate 2"
+    "description": "Real energy L4, delivered, rate 2",
+    "monotonic": true
    },
    {
     "address": 6568,
@@ -34642,7 +34678,8 @@
     "data_type": "float",
     "access": "RD/WR",
     "category": "energy_active",
-    "description": "Real energy L1..L3, delivered, rate 2"
+    "description": "Real energy L1..L3, delivered, rate 2",
+    "monotonic": true
    },
    {
     "address": 6570,
@@ -34652,7 +34689,8 @@
     "data_type": "float",
     "access": "RD/WR",
     "category": "energy_active",
-    "description": "Real energy L1..L4, delivered, rate 2"
+    "description": "Real energy L1..L4, delivered, rate 2",
+    "monotonic": true
    },
    {
     "address": 6572,
@@ -34662,7 +34700,8 @@
     "data_type": "float",
     "access": "RD/WR",
     "category": "config_other",
-    "description": "Reactive energy L1, inductive"
+    "description": "Reactive energy L1, inductive",
+    "monotonic": true
    },
    {
     "address": 6574,
@@ -34672,7 +34711,8 @@
     "data_type": "float",
     "access": "RD/WR",
     "category": "config_other",
-    "description": "Reactive energy L2, inductive"
+    "description": "Reactive energy L2, inductive",
+    "monotonic": true
    },
    {
     "address": 6576,
@@ -34682,7 +34722,8 @@
     "data_type": "float",
     "access": "RD/WR",
     "category": "config_other",
-    "description": "Reactive energy L3, inductive"
+    "description": "Reactive energy L3, inductive",
+    "monotonic": true
    },
    {
     "address": 6578,
@@ -34692,7 +34733,8 @@
     "data_type": "float",
     "access": "RD/WR",
     "category": "config_other",
-    "description": "Reactive energy L4, inductive"
+    "description": "Reactive energy L4, inductive",
+    "monotonic": true
    },
    {
     "address": 6580,
@@ -34702,7 +34744,8 @@
     "data_type": "float",
     "access": "RD/WR",
     "category": "config_other",
-    "description": "Reactive energy L1..L3, inductive"
+    "description": "Reactive energy L1..L3, inductive",
+    "monotonic": true
    },
    {
     "address": 6582,
@@ -34712,7 +34755,8 @@
     "data_type": "float",
     "access": "RD/WR",
     "category": "config_other",
-    "description": "Reactive energy L1..L4, inductive"
+    "description": "Reactive energy L1..L4, inductive",
+    "monotonic": true
    },
    {
     "address": 6584,
@@ -34722,7 +34766,8 @@
     "data_type": "float",
     "access": "RD/WR",
     "category": "config_other",
-    "description": "Reactive energy L1, capacitive"
+    "description": "Reactive energy L1, capacitive",
+    "monotonic": true
    },
    {
     "address": 6586,
@@ -34732,7 +34777,8 @@
     "data_type": "float",
     "access": "RD/WR",
     "category": "config_other",
-    "description": "Reactive energy L2, capacitive"
+    "description": "Reactive energy L2, capacitive",
+    "monotonic": true
    },
    {
     "address": 6588,
@@ -34742,7 +34788,8 @@
     "data_type": "float",
     "access": "RD/WR",
     "category": "config_other",
-    "description": "Reactive energy L3, capacitive"
+    "description": "Reactive energy L3, capacitive",
+    "monotonic": true
    },
    {
     "address": 6590,
@@ -34752,7 +34799,8 @@
     "data_type": "float",
     "access": "RD/WR",
     "category": "config_other",
-    "description": "Reactive energy L4, capacitive"
+    "description": "Reactive energy L4, capacitive",
+    "monotonic": true
    },
    {
     "address": 6592,
@@ -34762,7 +34810,8 @@
     "data_type": "float",
     "access": "RD/WR",
     "category": "config_other",
-    "description": "Reactive energy L1..L3, capacitive"
+    "description": "Reactive energy L1..L3, capacitive",
+    "monotonic": true
    },
    {
     "address": 6594,
@@ -34772,7 +34821,8 @@
     "data_type": "float",
     "access": "RD/WR",
     "category": "config_other",
-    "description": "Reactive energy L1..L4, capacitive"
+    "description": "Reactive energy L1..L4, capacitive",
+    "monotonic": true
    },
    {
     "address": 6596,
@@ -34782,7 +34832,8 @@
     "data_type": "float",
     "access": "RD/WR",
     "category": "config_other",
-    "description": "Reactive energy L1, inductive, rate 1"
+    "description": "Reactive energy L1, inductive, rate 1",
+    "monotonic": true
    },
    {
     "address": 6598,
@@ -34792,7 +34843,8 @@
     "data_type": "float",
     "access": "RD/WR",
     "category": "config_other",
-    "description": "Reactive energy L2, inductive, rate 1"
+    "description": "Reactive energy L2, inductive, rate 1",
+    "monotonic": true
    },
    {
     "address": 6600,
@@ -34802,7 +34854,8 @@
     "data_type": "float",
     "access": "RD/WR",
     "category": "config_other",
-    "description": "Reactive energy L3, inductive, rate 1"
+    "description": "Reactive energy L3, inductive, rate 1",
+    "monotonic": true
    },
    {
     "address": 6602,
@@ -34812,7 +34865,8 @@
     "data_type": "float",
     "access": "RD/WR",
     "category": "config_other",
-    "description": "Reactive energy L4, inductive, rate 1"
+    "description": "Reactive energy L4, inductive, rate 1",
+    "monotonic": true
    },
    {
     "address": 6604,
@@ -34822,7 +34876,8 @@
     "data_type": "float",
     "access": "RD/WR",
     "category": "config_other",
-    "description": "Reactive energy L1..L3, inductive, rate 1"
+    "description": "Reactive energy L1..L3, inductive, rate 1",
+    "monotonic": true
    },
    {
     "address": 6606,
@@ -34832,7 +34887,8 @@
     "data_type": "float",
     "access": "RD/WR",
     "category": "config_other",
-    "description": "Reactive energy L1..L4, inductive, rate 1"
+    "description": "Reactive energy L1..L4, inductive, rate 1",
+    "monotonic": true
    },
    {
     "address": 6608,
@@ -34842,7 +34898,8 @@
     "data_type": "float",
     "access": "RD/WR",
     "category": "config_other",
-    "description": "Reactive energy L1, inductive, rate 2"
+    "description": "Reactive energy L1, inductive, rate 2",
+    "monotonic": true
    },
    {
     "address": 6610,
@@ -34852,7 +34909,8 @@
     "data_type": "float",
     "access": "RD/WR",
     "category": "config_other",
-    "description": "Reactive energy L2, inductive, rate 2"
+    "description": "Reactive energy L2, inductive, rate 2",
+    "monotonic": true
    },
    {
     "address": 6612,
@@ -34862,7 +34920,8 @@
     "data_type": "float",
     "access": "RD/WR",
     "category": "config_other",
-    "description": "Reactive energy L3, inductive, rate 2"
+    "description": "Reactive energy L3, inductive, rate 2",
+    "monotonic": true
    },
    {
     "address": 6614,
@@ -34872,7 +34931,8 @@
     "data_type": "float",
     "access": "RD/WR",
     "category": "config_other",
-    "description": "Reactive energy L4, inductive, rate 2"
+    "description": "Reactive energy L4, inductive, rate 2",
+    "monotonic": true
    },
    {
     "address": 6616,
@@ -34882,7 +34942,8 @@
     "data_type": "float",
     "access": "RD/WR",
     "category": "config_other",
-    "description": "Reactive energy L1..L3, inductive, rate 2"
+    "description": "Reactive energy L1..L3, inductive, rate 2",
+    "monotonic": true
    },
    {
     "address": 6618,
@@ -34892,7 +34953,8 @@
     "data_type": "float",
     "access": "RD/WR",
     "category": "config_other",
-    "description": "Reactive energy L1..L4, inductive, rate 2"
+    "description": "Reactive energy L1..L4, inductive, rate 2",
+    "monotonic": true
    },
    {
     "address": 6620,
@@ -36452,7 +36514,8 @@
     "data_type": "float",
     "access": "RD/WR",
     "category": "energy_active",
-    "description": "Real energy L1, consumed, rate 3"
+    "description": "Real energy L1, consumed, rate 3",
+    "monotonic": true
    },
    {
     "address": 11762,
@@ -36462,7 +36525,8 @@
     "data_type": "float",
     "access": "RD/WR",
     "category": "energy_active",
-    "description": "Real energy L2, consumed, rate 3"
+    "description": "Real energy L2, consumed, rate 3",
+    "monotonic": true
    },
    {
     "address": 11764,
@@ -36472,7 +36536,8 @@
     "data_type": "float",
     "access": "RD/WR",
     "category": "energy_active",
-    "description": "Real energy L3, consumed, rate 3"
+    "description": "Real energy L3, consumed, rate 3",
+    "monotonic": true
    },
    {
     "address": 11766,
@@ -36482,7 +36547,8 @@
     "data_type": "float",
     "access": "RD/WR",
     "category": "energy_active",
-    "description": "Real energy L4, consumed, rate 3"
+    "description": "Real energy L4, consumed, rate 3",
+    "monotonic": true
    },
    {
     "address": 11768,
@@ -36492,7 +36558,8 @@
     "data_type": "float",
     "access": "RD/WR",
     "category": "energy_active",
-    "description": "Real energy L1..L3, consumed, rate 3"
+    "description": "Real energy L1..L3, consumed, rate 3",
+    "monotonic": true
    },
    {
     "address": 11770,
@@ -36502,7 +36569,8 @@
     "data_type": "float",
     "access": "RD/WR",
     "category": "energy_active",
-    "description": "Real energy L1..L4, consumed, rate 3"
+    "description": "Real energy L1..L4, consumed, rate 3",
+    "monotonic": true
    },
    {
     "address": 11772,
@@ -36512,7 +36580,8 @@
     "data_type": "float",
     "access": "RD/WR",
     "category": "energy_active",
-    "description": "Real energy L1, consumed, rate 4"
+    "description": "Real energy L1, consumed, rate 4",
+    "monotonic": true
    },
    {
     "address": 11774,
@@ -36522,7 +36591,8 @@
     "data_type": "float",
     "access": "RD/WR",
     "category": "energy_active",
-    "description": "Real energy L2, consumed, rate 4"
+    "description": "Real energy L2, consumed, rate 4",
+    "monotonic": true
    },
    {
     "address": 11776,
@@ -36532,7 +36602,8 @@
     "data_type": "float",
     "access": "RD/WR",
     "category": "energy_active",
-    "description": "Real energy L3, consumed, rate 4"
+    "description": "Real energy L3, consumed, rate 4",
+    "monotonic": true
    },
    {
     "address": 11778,
@@ -36542,7 +36613,8 @@
     "data_type": "float",
     "access": "RD/WR",
     "category": "energy_active",
-    "description": "Real energy L4, consumed, rate 4"
+    "description": "Real energy L4, consumed, rate 4",
+    "monotonic": true
    },
    {
     "address": 11780,
@@ -36552,7 +36624,8 @@
     "data_type": "float",
     "access": "RD/WR",
     "category": "energy_active",
-    "description": "Real energy L1..L3, consumed, rate 4"
+    "description": "Real energy L1..L3, consumed, rate 4",
+    "monotonic": true
    },
    {
     "address": 11782,
@@ -36562,7 +36635,8 @@
     "data_type": "float",
     "access": "RD/WR",
     "category": "energy_active",
-    "description": "Real energy L1..L4, consumed, rate 4"
+    "description": "Real energy L1..L4, consumed, rate 4",
+    "monotonic": true
    },
    {
     "address": 11784,
@@ -36572,7 +36646,8 @@
     "data_type": "float",
     "access": "RD/WR",
     "category": "energy_active",
-    "description": "Real energy L1, delivered, rate 3"
+    "description": "Real energy L1, delivered, rate 3",
+    "monotonic": true
    },
    {
     "address": 11786,
@@ -36582,7 +36657,8 @@
     "data_type": "float",
     "access": "RD/WR",
     "category": "energy_active",
-    "description": "Real energy L2, delivered, rate 3"
+    "description": "Real energy L2, delivered, rate 3",
+    "monotonic": true
    },
    {
     "address": 11788,
@@ -36592,7 +36668,8 @@
     "data_type": "float",
     "access": "RD/WR",
     "category": "energy_active",
-    "description": "Real energy L3, delivered, rate 3"
+    "description": "Real energy L3, delivered, rate 3",
+    "monotonic": true
    },
    {
     "address": 11790,
@@ -36602,7 +36679,8 @@
     "data_type": "float",
     "access": "RD/WR",
     "category": "energy_active",
-    "description": "Real energy L4, delivered, rate 3"
+    "description": "Real energy L4, delivered, rate 3",
+    "monotonic": true
    },
    {
     "address": 11792,
@@ -36612,7 +36690,8 @@
     "data_type": "float",
     "access": "RD/WR",
     "category": "energy_active",
-    "description": "Real energy L1..L3, delivered, rate 3"
+    "description": "Real energy L1..L3, delivered, rate 3",
+    "monotonic": true
    },
    {
     "address": 11794,
@@ -36622,7 +36701,8 @@
     "data_type": "float",
     "access": "RD/WR",
     "category": "energy_active",
-    "description": "Real energy L1..L4, delivered, rate 3"
+    "description": "Real energy L1..L4, delivered, rate 3",
+    "monotonic": true
    },
    {
     "address": 11796,
@@ -36632,7 +36712,8 @@
     "data_type": "float",
     "access": "RD/WR",
     "category": "energy_active",
-    "description": "Real energy L1, delivered, rate 4"
+    "description": "Real energy L1, delivered, rate 4",
+    "monotonic": true
    },
    {
     "address": 11798,
@@ -36642,7 +36723,8 @@
     "data_type": "float",
     "access": "RD/WR",
     "category": "energy_active",
-    "description": "Real energy L2, delivered, rate 4"
+    "description": "Real energy L2, delivered, rate 4",
+    "monotonic": true
    },
    {
     "address": 11800,
@@ -36652,7 +36734,8 @@
     "data_type": "float",
     "access": "RD/WR",
     "category": "energy_active",
-    "description": "Real energy L3, delivered, rate 4"
+    "description": "Real energy L3, delivered, rate 4",
+    "monotonic": true
    },
    {
     "address": 11802,
@@ -36662,7 +36745,8 @@
     "data_type": "float",
     "access": "RD/WR",
     "category": "energy_active",
-    "description": "Real energy L4, delivered, rate 4"
+    "description": "Real energy L4, delivered, rate 4",
+    "monotonic": true
    },
    {
     "address": 11804,
@@ -36672,7 +36756,8 @@
     "data_type": "float",
     "access": "RD/WR",
     "category": "energy_active",
-    "description": "Real energy L1..L3, delivered, rate 4"
+    "description": "Real energy L1..L3, delivered, rate 4",
+    "monotonic": true
    },
    {
     "address": 11806,
@@ -36682,7 +36767,8 @@
     "data_type": "float",
     "access": "RD/WR",
     "category": "energy_active",
-    "description": "Real energy L1..L4, delivered, rate 4"
+    "description": "Real energy L1..L4, delivered, rate 4",
+    "monotonic": true
    },
    {
     "address": 11808,
@@ -36692,7 +36778,8 @@
     "data_type": "float",
     "access": "RD/WR",
     "category": "config_other",
-    "description": "Reactive energy L1, inductive, rate 3"
+    "description": "Reactive energy L1, inductive, rate 3",
+    "monotonic": true
    },
    {
     "address": 11810,
@@ -36702,7 +36789,8 @@
     "data_type": "float",
     "access": "RD/WR",
     "category": "config_other",
-    "description": "Reactive energy L2, inductive, rate 3"
+    "description": "Reactive energy L2, inductive, rate 3",
+    "monotonic": true
    },
    {
     "address": 11812,
@@ -36712,7 +36800,8 @@
     "data_type": "float",
     "access": "RD/WR",
     "category": "config_other",
-    "description": "Reactive energy L3, inductive, rate 3"
+    "description": "Reactive energy L3, inductive, rate 3",
+    "monotonic": true
    },
    {
     "address": 11814,
@@ -36722,7 +36811,8 @@
     "data_type": "float",
     "access": "RD/WR",
     "category": "config_other",
-    "description": "Reactive energy L4, inductive, rate 3"
+    "description": "Reactive energy L4, inductive, rate 3",
+    "monotonic": true
    },
    {
     "address": 11816,
@@ -36732,7 +36822,8 @@
     "data_type": "float",
     "access": "RD/WR",
     "category": "config_other",
-    "description": "Reactive energy L1..L3, inductive, rate 3"
+    "description": "Reactive energy L1..L3, inductive, rate 3",
+    "monotonic": true
    },
    {
     "address": 11818,
@@ -36742,7 +36833,8 @@
     "data_type": "float",
     "access": "RD/WR",
     "category": "config_other",
-    "description": "Reactive energy L1..L4, inductive, rate 3"
+    "description": "Reactive energy L1..L4, inductive, rate 3",
+    "monotonic": true
    },
    {
     "address": 11820,
@@ -36752,7 +36844,8 @@
     "data_type": "float",
     "access": "RD/WR",
     "category": "config_other",
-    "description": "Reactive energy L1, inductive, rate 4"
+    "description": "Reactive energy L1, inductive, rate 4",
+    "monotonic": true
    },
    {
     "address": 11822,
@@ -36762,7 +36855,8 @@
     "data_type": "float",
     "access": "RD/WR",
     "category": "config_other",
-    "description": "Reactive energy L2, inductive, rate 4"
+    "description": "Reactive energy L2, inductive, rate 4",
+    "monotonic": true
    },
    {
     "address": 11824,
@@ -36772,7 +36866,8 @@
     "data_type": "float",
     "access": "RD/WR",
     "category": "config_other",
-    "description": "Reactive energy L3, inductive, rate 4"
+    "description": "Reactive energy L3, inductive, rate 4",
+    "monotonic": true
    },
    {
     "address": 11826,
@@ -36782,7 +36877,8 @@
     "data_type": "float",
     "access": "RD/WR",
     "category": "config_other",
-    "description": "Reactive energy L4, inductive, rate 4"
+    "description": "Reactive energy L4, inductive, rate 4",
+    "monotonic": true
    },
    {
     "address": 11828,
@@ -36792,7 +36888,8 @@
     "data_type": "float",
     "access": "RD/WR",
     "category": "config_other",
-    "description": "Reactive energy L1..L3, inductive, rate 4"
+    "description": "Reactive energy L1..L3, inductive, rate 4",
+    "monotonic": true
    },
    {
     "address": 11830,
@@ -36802,7 +36899,8 @@
     "data_type": "float",
     "access": "RD/WR",
     "category": "config_other",
-    "description": "Reactive energy L1..L4, inductive, rate 4"
+    "description": "Reactive energy L1..L4, inductive, rate 4",
+    "monotonic": true
    },
    {
     "address": 11832,
@@ -42024,42 +42122,42 @@
    {
     "address": 19054,
     "name": "_G_WH[0]",
-    "label": "Real energy L1",
+    "label": "Real energy L1, net (signed: falls when energy flows back)",
     "unit": "Wh",
     "data_type": "float",
     "access": "RD",
     "category": "energy_active",
-    "description": "Real energy L1"
+    "description": "Real energy L1, net (signed: falls when energy flows back)"
    },
    {
     "address": 19056,
     "name": "_G_WH[1]",
-    "label": "Real energy L2",
+    "label": "Real energy L2, net (signed: falls when energy flows back)",
     "unit": "Wh",
     "data_type": "float",
     "access": "RD",
     "category": "energy_active",
-    "description": "Real energy L2"
+    "description": "Real energy L2, net (signed: falls when energy flows back)"
    },
    {
     "address": 19058,
     "name": "_G_WH[2]",
-    "label": "Real energy L3",
+    "label": "Real energy L3, net (signed: falls when energy flows back)",
     "unit": "Wh",
     "data_type": "float",
     "access": "RD",
     "category": "energy_active",
-    "description": "Real energy L3"
+    "description": "Real energy L3, net (signed: falls when energy flows back)"
    },
    {
     "address": 19060,
     "name": "_G_WH_SUML13",
-    "label": "Real energy L1..L3",
+    "label": "Real energy L1..L3, net (signed: falls when energy flows back)",
     "unit": "Wh",
     "data_type": "float",
     "access": "RD",
     "category": "energy_active",
-    "description": "Real energy L1..L3",
+    "description": "Real energy L1..L3, net (signed: falls when energy flows back)",
     "poll_group": "slow",
     "defaults": {
      "mqtt": {
@@ -42092,7 +42190,8 @@
     "data_type": "float",
     "access": "RD",
     "category": "energy_active",
-    "description": "Real energy L1, consumed"
+    "description": "Real energy L1, consumed",
+    "monotonic": true
    },
    {
     "address": 19064,
@@ -42102,7 +42201,8 @@
     "data_type": "float",
     "access": "RD",
     "category": "energy_active",
-    "description": "Real energy L2, consumed"
+    "description": "Real energy L2, consumed",
+    "monotonic": true
    },
    {
     "address": 19066,
@@ -42112,7 +42212,8 @@
     "data_type": "float",
     "access": "RD",
     "category": "energy_active",
-    "description": "Real energy L3, consumed"
+    "description": "Real energy L3, consumed",
+    "monotonic": true
    },
    {
     "address": 19068,
@@ -42122,7 +42223,8 @@
     "data_type": "float",
     "access": "RD",
     "category": "energy_active",
-    "description": "Real energy L1..L3, consumed, rate 1"
+    "description": "Real energy L1..L3, consumed, rate 1",
+    "monotonic": true
    },
    {
     "address": 19070,
@@ -42132,7 +42234,8 @@
     "data_type": "float",
     "access": "RD",
     "category": "energy_active",
-    "description": "Real energy L1, delivered"
+    "description": "Real energy L1, delivered",
+    "monotonic": true
    },
    {
     "address": 19072,
@@ -42142,7 +42245,8 @@
     "data_type": "float",
     "access": "RD",
     "category": "energy_active",
-    "description": "Real energy L2, delivered"
+    "description": "Real energy L2, delivered",
+    "monotonic": true
    },
    {
     "address": 19074,
@@ -42152,7 +42256,8 @@
     "data_type": "float",
     "access": "RD",
     "category": "energy_active",
-    "description": "Real energy L3, delivered"
+    "description": "Real energy L3, delivered",
+    "monotonic": true
    },
    {
     "address": 19076,
@@ -42162,7 +42267,8 @@
     "data_type": "float",
     "access": "RD",
     "category": "energy_active",
-    "description": "Real energy L1..L3, delivered"
+    "description": "Real energy L1..L3, delivered",
+    "monotonic": true
    },
    {
     "address": 19078,
@@ -42172,7 +42278,8 @@
     "data_type": "float",
     "access": "RD",
     "category": "energy_active",
-    "description": "Apparent energy L1"
+    "description": "Apparent energy L1",
+    "monotonic": true
    },
    {
     "address": 19080,
@@ -42182,7 +42289,8 @@
     "data_type": "float",
     "access": "RD",
     "category": "energy_active",
-    "description": "Apparent energy L2"
+    "description": "Apparent energy L2",
+    "monotonic": true
    },
    {
     "address": 19082,
@@ -42192,7 +42300,8 @@
     "data_type": "float",
     "access": "RD",
     "category": "energy_active",
-    "description": "Apparent energy L3"
+    "description": "Apparent energy L3",
+    "monotonic": true
    },
    {
     "address": 19084,
@@ -42202,47 +42311,48 @@
     "data_type": "float",
     "access": "RD",
     "category": "energy_active",
-    "description": "Apparent energy L1..L3"
+    "description": "Apparent energy L1..L3",
+    "monotonic": true
    },
    {
     "address": 19086,
     "name": "_G_QH[0]",
-    "label": "Reaktive energy L1 (fundamental comp.)",
+    "label": "Reaktive energy L1 (fundamental comp.), net (signed: falls when energy flows back)",
     "unit": "varh",
     "data_type": "float",
     "access": "RD",
     "category": "energy_reactive",
-    "description": "Reaktive energy L1 (fundamental comp.)"
+    "description": "Reaktive energy L1 (fundamental comp.), net (signed: falls when energy flows back)"
    },
    {
     "address": 19088,
     "name": "_G_QH[1]",
-    "label": "Reaktive energy L2 (fundamental comp.)",
+    "label": "Reaktive energy L2 (fundamental comp.), net (signed: falls when energy flows back)",
     "unit": "varh",
     "data_type": "float",
     "access": "RD",
     "category": "energy_reactive",
-    "description": "Reaktive energy L2 (fundamental comp.)"
+    "description": "Reaktive energy L2 (fundamental comp.), net (signed: falls when energy flows back)"
    },
    {
     "address": 19090,
     "name": "_G_QH[2]",
-    "label": "Reaktive energy L3 (fundamental comp.)",
+    "label": "Reaktive energy L3 (fundamental comp.), net (signed: falls when energy flows back)",
     "unit": "varh",
     "data_type": "float",
     "access": "RD",
     "category": "energy_reactive",
-    "description": "Reaktive energy L3 (fundamental comp.)"
+    "description": "Reaktive energy L3 (fundamental comp.), net (signed: falls when energy flows back)"
    },
    {
     "address": 19092,
     "name": "_G_QH_SUML13",
-    "label": "Reaktive energy L1..L3 (fundamental comp.)",
+    "label": "Reaktive energy L1..L3 (fundamental comp.), net (signed: falls when energy flows back)",
     "unit": "varh",
     "data_type": "float",
     "access": "RD",
     "category": "energy_reactive",
-    "description": "Reaktive energy L1..L3 (fundamental comp.)"
+    "description": "Reaktive energy L1..L3 (fundamental comp.), net (signed: falls when energy flows back)"
    },
    {
     "address": 19094,
@@ -42252,7 +42362,8 @@
     "data_type": "float",
     "access": "RD",
     "category": "config_other",
-    "description": "Reactive energy, inductive, L1 (fundamental comp.)"
+    "description": "Reactive energy, inductive, L1 (fundamental comp.)",
+    "monotonic": true
    },
    {
     "address": 19096,
@@ -42262,7 +42373,8 @@
     "data_type": "float",
     "access": "RD",
     "category": "config_other",
-    "description": "Reactive energy, inductive, L2 (fundamental comp.)"
+    "description": "Reactive energy, inductive, L2 (fundamental comp.)",
+    "monotonic": true
    },
    {
     "address": 19098,
@@ -42272,7 +42384,8 @@
     "data_type": "float",
     "access": "RD",
     "category": "config_other",
-    "description": "Reactive energy, inductive, L3 (fundamental comp.)"
+    "description": "Reactive energy, inductive, L3 (fundamental comp.)",
+    "monotonic": true
    },
    {
     "address": 19100,
@@ -42306,7 +42419,8 @@
       "wide": false,
       "dashboard_order": 101
      }
-    }
+    },
+    "monotonic": true
    },
    {
     "address": 19102,
@@ -42316,7 +42430,8 @@
     "data_type": "float",
     "access": "RD",
     "category": "config_other",
-    "description": "Reactive energy, capacitive, L1 (fundamental comp.)"
+    "description": "Reactive energy, capacitive, L1 (fundamental comp.)",
+    "monotonic": true
    },
    {
     "address": 19104,
@@ -42326,7 +42441,8 @@
     "data_type": "float",
     "access": "RD",
     "category": "config_other",
-    "description": "Reactive energy, capacitive, L2 (fundamental comp.)"
+    "description": "Reactive energy, capacitive, L2 (fundamental comp.)",
+    "monotonic": true
    },
    {
     "address": 19106,
@@ -42336,7 +42452,8 @@
     "data_type": "float",
     "access": "RD",
     "category": "config_other",
-    "description": "Reactive energy, capacitive, L3 (fundamental comp.)"
+    "description": "Reactive energy, capacitive, L3 (fundamental comp.)",
+    "monotonic": true
    },
    {
     "address": 19108,
@@ -42370,7 +42487,8 @@
       "wide": false,
       "dashboard_order": 102
      }
-    }
+    },
+    "monotonic": true
    },
    {
     "address": 19110,

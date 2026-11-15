@@ -14,6 +14,7 @@ import { chromium } from 'playwright';
 import { execFileSync } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { openPage } from './lib/nav.mjs';
 
 const BASE = process.env.MBG_URL || 'http://127.0.0.1:8099';
 const CTR = process.env.CTR || 'mbg-ui-sandbox';
@@ -89,7 +90,7 @@ try {
   await page.waitForLoadState('networkidle');
   const later = page.locator('button:has-text("Later")');
   if (await later.count()) await later.first().click().catch(() => {});
-  await page.click('[data-page="templates"]');
+  await openPage(page, 'templates');
   await page.click(`[data-tm-edit="${TPL}"]`);
   await page.waitForSelector('#devTplModal.active');
   await page.click('#tplAdv > summary');

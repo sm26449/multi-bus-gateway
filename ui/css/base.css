@@ -167,18 +167,32 @@ body {
 
 /* Navigation Tabs — take the middle, scroll if the row gets tight instead of
    squeezing the brand/status into wrapping */
-.nav-tabs {
+/* UX-13: the navigation stays on ONE row, between the brand and the utilities.
+   Rules/Templates/Virtual Meters fold into a "More" submenu so the ~6 top-level
+   destinations and their full labels fit (RO/EN) without a second row. */
+.nav-group {
     display: flex;
-    gap: 2px;
+    align-items: center;
     flex: 1 1 auto;
     min-width: 0;
-    /* center when there's room; fall back to left-aligned (no clipped tabs)
-       when the row is tight, instead of clipping both ends */
-    justify-content: safe center;
-    overflow-x: auto;
-    scrollbar-width: none;   /* Firefox */
+    justify-content: center;
 }
-.nav-tabs::-webkit-scrollbar { display: none; }
+
+.nav-tabs {
+    display: flex;
+    flex-wrap: nowrap;       /* single row; the submenu keeps the count low enough to fit */
+    gap: 2px;
+    align-items: center;
+    min-width: 0;
+    justify-content: center;
+}
+
+/* the "More" submenu trigger looks like a tab; its dropdown reuses .mbg-menu */
+.nav-submenu-wrap { display: inline-flex; }
+.nav-submenu.mbg-menu { min-width: 190px; }
+.nav-submenu .nav-tab { width: 100%; }
+.nav-submenu .nav-tab.active,
+.nav-submenu .nav-tab[aria-current="page"] { background: var(--accent); color: white; }
 
 .nav-tab {
     display: flex;
@@ -193,15 +207,37 @@ body {
     font-size: 13px;
     font-weight: 500;
     cursor: pointer;
+    text-decoration: none;   /* the tabs are <a> links now */
     transition: all 0.2s;
 }
+
+/* the mobile "Navigation" disclosure — shown only on phones (media query below) */
+.nav-disclosure {
+    display: none;
+    align-items: center;
+    gap: 8px;
+    min-height: 44px;
+    padding: 8px 12px;
+    background: transparent;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    color: var(--text-primary);
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+    width: 100%;
+}
+.nav-disclosure .nav-current { flex: 1; text-align: left; }
+.nav-disclosure .nav-disclosure-caret { transition: transform 0.2s; }
+.nav-disclosure[aria-expanded="true"] .nav-disclosure-caret { transform: rotate(180deg); }
 
 .nav-tab:hover {
     background: var(--bg-tertiary);
     color: var(--text-primary);
 }
 
-.nav-tab.active {
+.nav-tab.active,
+.nav-tab[aria-current="page"] {
     background: var(--accent);
     color: white;
 }
@@ -1082,6 +1118,16 @@ input[type="time"].input {
 .empty-state.compact { padding: 28px 20px; }
 .empty-state.compact > i { font-size: 32px; margin-bottom: 10px; display: block; }
 .empty-state.compact p { max-width: 640px; margin: 0 auto 14px; line-height: 1.5; }
+
+/* UX-14: one shared non-data state block (loading / empty / no sample / no
+   permission / error). Honest title + reason + an optional single action. */
+.state-block { display: flex; flex-direction: column; align-items: center; text-align: center;
+    gap: 8px; padding: 32px 20px; color: var(--text-tertiary); background: var(--bg-secondary);
+    border: 1px dashed var(--border); border-radius: var(--radius); }
+.state-block-icon { font-size: 28px; color: var(--text-tertiary); }
+.state-block-title { font-weight: 600; color: var(--text-secondary); font-size: 14px; }
+.state-block-reason { font-size: 13px; max-width: 520px; line-height: 1.5; }
+.state-block.state-error .state-block-icon { color: var(--danger-text, #f85149); }
 .empty-state.compact p:last-child { margin-bottom: 0; }
 
 .empty-state > i {
@@ -1171,13 +1217,10 @@ input[type="time"].input {
         border-radius: 0;
     }
 
-    .nav-tab span {
-        display: none;
-    }
-
-    .nav-tab {
-        padding: 8px 12px;
-    }
+    /* UX-13: the navigation has its own row now, so the destination labels stay
+       VISIBLE on tablets (they no longer compete with the utilities for width);
+       the row wraps if it must, never clipping a destination. */
+    .nav-tab { padding: 8px 10px; }
 }
 
 @media (max-width: 768px) {
@@ -1198,20 +1241,37 @@ input[type="time"].input {
     .lang-select { height: 30px; }
     .theme-toggle { width: 30px; height: 30px; }
 
-    /* Own full row under the titlebar. The base rule's `flex: 1` sets
-       flex-basis: 0, which BEATS `width: 100%` on the main axis — the nav
-       was collapsing onto row 2 with the tabs clipped off-screen. */
-    .nav-tabs {
-        order: 3;
-        flex: 1 1 100%;
-        min-width: 0;
-        justify-content: space-around;
-        overflow-x: auto;
-        -webkit-overflow-scrolling: touch;
+    /* UX-13 phone: the WHOLE list (the "More" submenu flattened in) folds behind a
+       "Navigation" disclosure, so the current section is named and the rest are one
+       tap away. The titlebar wraps so the disclosure gets its own line under the brand. */
+    .nav-group { position: relative; flex: 1 1 100%; order: 3; justify-content: flex-start; }
+    .nav-disclosure { display: inline-flex; }
+    .nav-group .nav-tabs {
+        display: none;         /* collapsed; the disclosure reveals it */
+        position: absolute;
+        top: 100%;
+        left: 0;
+        right: 0;
+        z-index: 60;
+        flex-direction: column;
+        flex-wrap: nowrap;
+        gap: 2px;
+        background: var(--bg-secondary, var(--bg-tertiary));
+        border: 1px solid var(--border);
+        box-shadow: var(--shadow-md, 0 8px 24px rgba(0, 0, 0, 0.2));
+        padding: 6px;
+        max-height: 70vh;
+        overflow-y: auto;
     }
+    .nav-group .nav-tabs.nav-open { display: flex; }
+    /* flatten the "More" submenu into the single list on a phone */
+    .nav-submenu-wrap { display: contents; }
+    .nav-submenu-btn { display: none; }
+    .nav-group .nav-tabs.nav-open .nav-submenu.mbg-menu { display: contents; }
 
     .nav-tab {
-        min-height: 40px;      /* touch target */
+        min-height: 44px;      /* touch target */
+        justify-content: flex-start;
         flex: none;
     }
 

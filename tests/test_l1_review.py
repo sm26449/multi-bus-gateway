@@ -193,9 +193,8 @@ devices:
   - id: inv1
     name: Inverter
     template: eastron_sdm630
-    enabled: false
     connection: {protocol: tcp, host: 192.0.2.80, unit_id: 1}
-""")
+""")   # enabled: a disabled device announces nothing (HA-DISC-2)
     pub = MQTTPublisher(cfg.mqtt, [])
     pub.connected = True
     sent = []

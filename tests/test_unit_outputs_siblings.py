@@ -120,3 +120,19 @@ def test_a_pq_interval_of_seconds_is_taken(tmp_path):
     _cfg, client = make_app(tmp_path, extra_yaml=PQ_SETUP)
     r = client.post("/api/pq/config?device=jz", json={"enabled": False, "poll_s": 600})
     assert r.status_code == 200, r.text
+
+
+@needs_tc
+def test_pq_archive_pacing_keys_validated_and_kept_across_a_form_save(tmp_path):
+    """PQ-STALL-1: the pacing keys are numbers >= 0; a save without them (the UI
+    form carries only enabled/poll_s/...) keeps the values already set."""
+    _cfg, client = make_app(tmp_path, extra_yaml=PQ_SETUP)
+    r = client.post("/api/pq/config?device=jz", json={"enabled": False, "archive_gap_s": "x"})
+    assert r.status_code == 422 and "archive_gap_s" in r.text
+    r = client.post("/api/pq/config?device=jz", json={"enabled": False, "archive_gap_s": 2,
+                                                       "archive_settle_s": 90})
+    assert r.status_code == 200, r.text
+    r = client.post("/api/pq/config?device=jz", json={"enabled": False, "poll_s": 60})
+    assert r.status_code == 200, r.text
+    assert r.json()["pq_recorder"]["archive_gap_s"] == 2
+    assert r.json()["pq_recorder"]["archive_settle_s"] == 90

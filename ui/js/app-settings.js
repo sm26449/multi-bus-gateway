@@ -470,6 +470,11 @@ Object.assign(JanitzaMonitor.prototype, {
             v('cfgAlertBridgeLine').value = bt.line_errors_per_min ?? 10;
             v('cfgAlertBridgeSilent').value = bt.silent_s ?? 120;
             v('cfgAlertBridgeReconnects').value = bt.reconnects_per_10min ?? 6;
+            const ad = a.alertd || {};
+            v('cfgAlertdEnabled').checked = ad.enabled === true;
+            v('cfgAlertdUrl').value = ad.url || '';
+            v('cfgAlertdKey').value = ad.api_key || '';       // masked (••••••) when a key is stored
+            v('cfgAlertdSource').value = ad.source || '';
             const out = document.getElementById('alertTestResult'); if (out) out.innerHTML = '';
         } catch (e) { console.error('alerts load failed:', e); }
     },
@@ -503,6 +508,12 @@ Object.assign(JanitzaMonitor.prototype, {
                     line_errors_per_min: parseFloat(v('cfgAlertBridgeLine').value) || 10,
                     silent_s: parseFloat(v('cfgAlertBridgeSilent').value) || 120,
                     reconnects_per_10min: parseFloat(v('cfgAlertBridgeReconnects').value) || 6,
+                },
+                alertd: {
+                    enabled: v('cfgAlertdEnabled').checked,
+                    url: v('cfgAlertdUrl').value.trim(),
+                    api_key: v('cfgAlertdKey').value,        // masked value round-trips unchanged
+                    source: v('cfgAlertdSource').value.trim(),
                 },
             };
             const r = await fetch('/api/config/alerts', {
@@ -575,7 +586,73 @@ Object.assign(JanitzaMonitor.prototype, {
             this.securityTab(this._secTab || this._stLoad('mbg-security-tab', 'network'), false);
         }
         if (name === 'opcua') this.loadOpcUa();
+        if (name === 'can') this.loadCanInterfaces();
         if (name === 'plant') this._loadAttributes('site', '', document.getElementById('plantAttrHost'));
+    },
+
+    // ── CAN interfaces (ADR-0046 L3): see each port's mode, switch it ──
+    async loadCanInterfaces() {
+        const el = document.getElementById('cfgCanContent');
+        if (!el) return;
+        const rb = document.getElementById('cfgCanRefresh');
+        if (rb && !rb._wired) { rb._wired = true; rb.addEventListener('click', () => this.loadCanInterfaces()); }
+        let data;
+        try { data = await (await fetch('/api/can-interfaces')).json(); }
+        catch (e) { el.innerHTML = `<p style="color:var(--danger,#c0392b);">${this._esc(this._errMsg(e))}</p>`; return; }
+        const itfs = data.interfaces || [];
+        if (!itfs.length) {
+            el.innerHTML = this._emptyState({ icon: 'bi-diagram-2', title: this.t('can.none', 'No CAN interfaces on this host'),
+                body: data.error || this.t('can.noneBody', 'This gateway has no CAN interface.') });
+            return;
+        }
+        el.innerHTML = itfs.map(i => this._canRowHtml(i)).join('');
+    },
+
+    _canRowHtml(i) {
+        const t = (k, d) => this.t(k, d);
+        const lo = i.listen_only === true;
+        const mode = lo ? t('can.listenOnly', 'Listen-only') : t('can.transmit', 'Transmit');
+        const pill = lo ? 'warn' : 'ok';
+        const dot = lo ? 'var(--warning,#b7791f)' : 'var(--success,#2e7d32)';
+        const readers = (i.devices || []).length
+            ? (i.devices || []).map(d => `<span class="dev-chip">${this._esc(d)}</span>`).join(' ')
+            : `<span class="field-hint">${this._esc(t('can.noReaders', 'none'))}</span>`;
+        return `
+        <div class="settings-card" data-can="${this._esc(i.name)}">
+            <div class="settings-card-header" style="flex-wrap:wrap;gap:8px;">
+                <h3 style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+                    <span class="status-dot" style="--dot:${dot}" aria-hidden="true"></span>
+                    <code>${this._esc(i.name)}</code>
+                    <span class="sink-pill ${pill}">${this._esc(mode)}</span>
+                    ${i.up === false ? `<span class="sink-pill off">${this._esc(t('can.down', 'down'))}</span>` : ''}
+                </h3>
+                <div class="header-actions">
+                    ${lo
+                        ? `<button data-admin class="btn btn-primary btn-sm" ${this._act('switchCanMode', [i.name, 'transmit'])}><i aria-hidden="true" class="bi bi-broadcast"></i> ${this._esc(t('can.toTransmit', 'Switch to Transmit'))}</button>`
+                        : `<button data-admin class="btn btn-secondary btn-sm" ${this._act('switchCanMode', [i.name, 'listen_only'])}><i aria-hidden="true" class="bi bi-ear"></i> ${this._esc(t('can.toListen', 'Switch to Listen-only'))}</button>`}
+                </div>
+            </div>
+            <div class="settings-card-body">
+                <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:6px;"><span class="field-hint" style="min-width:110px;">${this._esc(t('can.bitrate', 'Bitrate'))}</span> <code>${i.bitrate ? i.bitrate + ' bit/s' : '—'}</code>${i.state ? ` · <span class="field-hint">${this._esc(i.state)}</span>` : ''}</div>
+                <div style="display:flex;gap:8px;flex-wrap:wrap;"><span class="field-hint" style="min-width:110px;">${this._esc(t('can.readers', 'Reads here'))}</span> ${readers}</div>
+            </div>
+        </div>`;
+    },
+
+    async switchCanMode(name, mode) {
+        const t = (k, d, p) => this.t(k, d, p);
+        if (mode === 'transmit' && !await this.confirmAction({
+            title: t('can.toTransmitTitle', 'Switch {name} to Transmit?', { name }),
+            message: t('can.toTransmitMsg', 'The interface will be able to send on the bus. A Virtual BMS armed on it will then transmit to the inverter.'),
+            confirmLabel: t('can.toTransmit', 'Switch to Transmit'), danger: true,
+        })) return;
+        try {
+            const r = await fetch(`/api/can-interfaces/${encodeURIComponent(name)}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ mode }) });
+            const d = await r.json().catch(() => ({}));
+            if (!r.ok) { this.showToast('error', t('can.switchFail', 'Could not switch {name}', { name }), d.detail?.errors ? d.detail.errors.join(' ') : this._errMsg(d)); return; }
+            this.showToast('success', t('can.switched', '{name} switched', { name }), '');
+            this.loadCanInterfaces();
+        } catch (e) { this.showToast('error', t('can.switchFail', 'Could not switch {name}', { name }), this._errMsg(e)); }
     },
 
     // ── OPC UA server ──
@@ -703,8 +780,37 @@ Object.assign(JanitzaMonitor.prototype, {
         }];
     },
 
+    // The settings section -> the key it reports under in POST /api/config/apply's
+    // `results` map. Save & Apply is only wired for mqtt and influx.
+    _applyResultKey: { mqtt: 'mqtt', influx: 'influxdb' },
+
+    // Decide the honest outcome of a Save & Apply from the apply response alone
+    // (UX-01). Pure + DOM-free so it is unit-testable. Returns one of:
+    //   'applied'      — saved AND the relevant service (re)connected
+    //   'not_applied'  — saved, but apply failed (HTTP error) or the enabled
+    //                    service did not (re)connect; keep the error, offer retry
+    // `enabled` is this section's own enabled flag: a DISABLED service reporting
+    // false is NOT a failure (it was asked to stop), so we never require its result.
+    _applyOutcome(section, enabled, applyOk, applyData) {
+        if (!applyOk) {
+            const msg = (typeof applyData?.detail === 'string' && applyData.detail)
+                || (applyData?.message) || '';
+            return { state: 'not_applied', reason: msg };
+        }
+        if (enabled) {
+            const key = this._applyResultKey[section] || section;
+            const svc = applyData?.results ? applyData.results[key] : undefined;
+            if (svc === false) return { state: 'not_applied', reason: 'service' };
+        }
+        return { state: 'applied' };
+    },
+
     // Explicit per-section Save & Apply: persist that section to config.yaml then
     // reconnect the service, with inline feedback (clearer than the silent autosave).
+    // Feedback is HONEST (UX-01): a save that succeeds but whose apply fails — an
+    // apply HTTP error, or the enabled service failing to reconnect — never shows
+    // full success. fetch does not reject on an HTTP error status, so the apply
+    // response must be inspected, not awaited-and-ignored.
     async saveAndApply(section, btn) {
         const [url, body] = this._gatherSettings(section);
         const fb = document.getElementById(section + 'SaveFeedback');
@@ -712,17 +818,36 @@ Object.assign(JanitzaMonitor.prototype, {
         if (btn) { btn.disabled = true; btn.innerHTML = '<i aria-hidden="true" class="bi bi-arrow-repeat spin"></i>'; }
         if (fb) { fb.textContent = ''; fb.className = 'save-feedback'; }
         try {
+            // 1. Save the section. A refused field says why (422 detail.fields/errors).
             const r = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
             if (!r.ok) {
-                // a refused field says why (POST /api/config/modbus: 422 with detail.fields / detail.errors)
                 const d = await r.json().catch(() => ({}));
-                throw new Error(Object.values(d.detail?.fields || {})[0] || (d.detail?.errors || [])[0]
-                    || (typeof d.detail === 'string' ? d.detail : '') || ('HTTP ' + r.status));
+                const why = Object.values(d.detail?.fields || {})[0] || (d.detail?.errors || [])[0]
+                    || (typeof d.detail === 'string' ? d.detail : '') || ('HTTP ' + r.status);
+                if (fb) { fb.textContent = `${this.t('settings.saveFailed', 'Save failed')}${why ? `: ${why}` : ''}`; fb.className = 'save-feedback err'; }
+                return;   // nothing was persisted — not a saved-but-not-applied state
             }
-            await fetch('/api/config/apply', { method: 'POST' });
-            if (fb) { fb.textContent = '✓ ' + this.t('settings.saved', 'Saved & applied'); fb.className = 'save-feedback ok'; setTimeout(() => { if (fb.classList.contains('ok')) fb.textContent = ''; }, 4000); }
-            // Refresh connection state after the reconnect.
-            await this.loadStatus();
+            // 2. Apply, and inspect the outcome instead of assuming success.
+            let applyOk = false, applyData = {};
+            try {
+                const ar = await fetch('/api/config/apply', { method: 'POST' });
+                applyOk = ar.ok;
+                applyData = await ar.json().catch(() => ({}));
+            } catch (netErr) {
+                applyOk = false;   // apply unreachable (network) — saved, not applied
+            }
+            const outcome = this._applyOutcome(section, body.enabled !== false, applyOk, applyData);
+            await this.loadStatus();   // reflect the real connection state either way
+            if (outcome.state === 'applied') {
+                if (fb) { fb.textContent = '✓ ' + this.t('settings.saved', 'Saved & applied'); fb.className = 'save-feedback ok'; setTimeout(() => { if (fb.classList.contains('ok')) fb.textContent = ''; }, 4000); }
+            } else {
+                // Saved to config.yaml, but the running service was NOT updated. Keep
+                // the message visible (no auto-fade) — the re-enabled button is the retry.
+                const tail = outcome.reason === 'service'
+                    ? this.t('settings.applyServiceFailed', 'the service did not reconnect — check the settings and apply again')
+                    : (outcome.reason || this.t('settings.applyFailedGeneric', 'the running service was not updated'));
+                if (fb) { fb.textContent = `⚠ ${this.t('settings.savedNotApplied', 'Saved, but not applied')}: ${tail}`; fb.className = 'save-feedback warn'; }
+            }
         } catch (e) {
             if (fb) { fb.textContent = `${this.t('settings.saveFailed', 'Save failed')}${e.message ? `: ${e.message}` : ''}`; fb.className = 'save-feedback err'; }
         } finally {
@@ -955,18 +1080,29 @@ Object.assign(JanitzaMonitor.prototype, {
             const file = input.files[0];
             input.value = '';
             if (!file) return;
-            if (!await this.confirmAction({
+            const bytes = await file.arrayBuffer();
+            let unlock = null;
+            try {
+                const dr = await fetch('/api/config/import?dry_run=true', {
+                    method: 'POST', headers: { 'Content-Type': 'application/zip' }, body: bytes });
+                if (dr.ok) unlock = (await dr.json()).would_unlock;
+            } catch (e) { /* the real call will surface a bundle problem */ }
+            const ans = await this.askValues({
                 title: this.t('backup.importTitle', 'Restore backup'),
                 message: this.t('backup.importConfirm',
                     'It overwrites the current devices, measurement selections, templates and virtual meters, then reloads.'),
+                details: this._f20DisclosureText(unlock, false),
+                fields: [this._f20LockField()],
                 confirmLabel: this.t('backup.restoreGo', 'Restore'), danger: true, typed: file.name,
-            })) return;
+            });
+            if (!ans) return;
+            const lock = ans.lock !== 'keep';
             const fb = document.getElementById('backupFeedback');
             if (fb) { fb.textContent = this.t('backup.restoring', 'Restoring…'); fb.className = 'save-feedback'; }
             try {
-                const r = await fetch('/api/config/import', {
+                const r = await fetch(`/api/config/import?lock_writes=${lock}`, {
                     method: 'POST', headers: { 'Content-Type': 'application/zip' },
-                    body: await file.arrayBuffer(),
+                    body: bytes,
                 });
                 const res = await r.json();
                 if (!r.ok) throw new Error((res.detail?.errors || ['import failed']).join('; '));
@@ -1053,22 +1189,57 @@ Object.assign(JanitzaMonitor.prototype, {
         }
     },
 
+    // F20 (ADR-0041 L2): a plain-language line of what a bundle would re-enable, for
+    // the restore/import confirm dialog. Zero → reassuring; else the counts + the note
+    // that locking also suspends the safety/OV rules.
+    _f20DisclosureText(u, isRestore) {
+        const t = (k, d, p) => this.t(k, d, p);
+        if (!u) return '';
+        if (u.nothing) return '✓ ' + t('f20.nothing', 'Nothing is unlocked — every write path stays locked.');
+        const parts = [];
+        if (u.devices) parts.push(this.tn('f20.nDevices', u.devices, '{n} device(s)'));
+        if (u.components) parts.push(this.tn('f20.nComponents', u.components, '{n} component(s)'));
+        if (u.units) parts.push(this.tn('f20.nUnits', u.units, '{n} installation unit(s)'));
+        if (u.bindings) parts.push(this.tn('f20.nBindings', u.bindings, '{n} enabled command(s)'));
+        if (isRestore && u.rules) parts.push(this.tn('f20.nRules', u.rules, '{n} armed rule(s)'));
+        return t('f20.wouldUnlock', 'This would re-enable writes on: {list}.', { list: parts.join(', ') })
+            + ' ' + t('f20.ovNote', 'Locking writes also SUSPENDS the safety / over-voltage rules until you unlock them (the GX failsafe still backstops). Keep writes locked unless you mean to resume control now.');
+    },
+
+    // the pre-selected safe option: lock all writes after a restore/import
+    _f20LockField() {
+        return { name: 'lock', kind: 'select', required: true, initial: 'lock',
+            label: this.t('f20.afterLabel', 'After it is applied'),
+            options: [{ value: 'lock', label: this.t('f20.lockOn', 'Lock all writes (recommended)') },
+                      { value: 'keep', label: this.t('f20.lockOff', "Keep the backup's own write states") }] };
+    },
+
     async restoreSnapshot(id) {
-        if (!await this.confirmAction({
+        let unlock = null;
+        try {
+            const dr = await fetch(`/api/config/snapshots/${encodeURIComponent(id)}/restore?dry_run=true`, { method: 'POST' });
+            if (dr.ok) unlock = (await dr.json()).would_unlock;
+        } catch (e) { /* the real call will surface a bundle problem */ }
+        const ans = await this.askValues({
             title: this.t('snap.restoreTitle', 'Roll back to snapshot {id}', { id }),
             message: this.t('snap.restoreConfirm',
                 'Devices, measurements, templates, virtual meters and settings all revert to that moment. The current state is snapshotted first, so you can roll forward again.'),
+            details: this._f20DisclosureText(unlock, true),
+            fields: [this._f20LockField()],
             confirmLabel: this.t('snap.restoreGo', 'Roll back'), danger: true, typed: id,
-        })) return;
+        });
+        if (!ans) return;
+        const lock = ans.lock !== 'keep';
         const fb = document.getElementById('snapFeedback');
         if (fb) fb.textContent = this.t('snap.restoring', 'Restoring…');
         try {
-            const r = await fetch(`/api/config/snapshots/${encodeURIComponent(id)}/restore`, { method: 'POST' });
+            const r = await fetch(`/api/config/snapshots/${encodeURIComponent(id)}/restore?lock_writes=${lock}`, { method: 'POST' });
             const data = await r.json();
             if (!r.ok) throw new Error((data.detail?.errors || [data.detail || r.statusText]).join('; '));
             if (fb) fb.textContent = '';
             this.showToast('success', this.t('snap.title', 'Snapshots & Rollback'),
-                           this.t('snap.restored', 'Configuration rolled back. Reloading…'));
+                           lock ? this.t('snap.restoredLocked', 'Rolled back — writes are LOCKED. Reloading…')
+                                : this.t('snap.restored', 'Configuration rolled back. Reloading…'));
             setTimeout(() => window.location.reload(), 1200);
         } catch (e) {
             if (fb) fb.textContent = '';

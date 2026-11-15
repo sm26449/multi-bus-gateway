@@ -10,3 +10,7 @@ ruff==0.7.4            # lint gate (ruff.toml) — EXACT pin: newer ruff ships
                        # different default rules (first floating CI run got
                        # 1136 errors vs 0 locally). Dependabot proposes bumps;
                        # upgrade deliberately, rules re-reviewed each time.
+import-linter==2.15    # layer gate (.importlinter, ADR-0034) — EXACT pin, like
+                       # ruff: a minor bump can change how contracts evaluate.
+                       # Pulls grimp (static import graph). Rebuild mbg-test
+                       # after changing this line.

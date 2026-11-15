@@ -1,0 +1,15 @@
+# vbms_create_e2e (ADR-0045 L3): two battery devices to aggregate and NO pre-configured Virtual
+# BMS, so the create-from-scratch flow (with real vcan ports, MBG_FX_VCAN=1) has source packs to
+# pick. The devices point at a refusing loopback — nothing ever connects; they exist only so
+# GET /api/vbms/sources lists them.
+devices:
+  - id: bat-a
+    name: Battery A
+    template: huawei_luna2000
+    enabled: true
+    connection: {protocol: tcp, host: 127.0.0.1, port: 9, unit_id: 1, timeout: 1}
+  - id: bat-b
+    name: Battery B
+    template: huawei_luna2000
+    enabled: true
+    connection: {protocol: tcp, host: 127.0.0.1, port: 9, unit_id: 2, timeout: 1}

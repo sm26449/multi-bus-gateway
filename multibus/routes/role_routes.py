@@ -81,9 +81,9 @@ def build(ctx) -> APIRouter:
         heard — on a standby, that is its partner talking) and those it polls
         (how many of their devices answer — whether this gateway still has its
         buses)."""
-        from ..device_registry import client_is_live
-        from ..device_runtime import TAPPABLE
-        from ..rtu_tap import bus_activity
+        from ..devices.device_registry import client_is_live
+        from ..devices.device_runtime import TAPPABLE
+        from multibus.transports.modbus.rtu_tap import bus_activity
         polled: Dict[str, Dict[str, int]] = {}
         if _role().active:
             for dev_cfg, client in ctx.registry.pairs():
@@ -102,7 +102,7 @@ def build(ctx) -> APIRouter:
         """The polled devices' values (only those read after `since`, a wall
         time, when given), every rule's state and channel's protection, the
         write leases with their time left and the running sequences."""
-        from ..state_mirror import export_values
+        from ..lifecycle.state_mirror import export_values
         app = ctx.app
         rules = getattr(app.state, 'rules_runtime', None)
         seqs = getattr(app.state, 'sequences', None)
@@ -118,7 +118,7 @@ def build(ctx) -> APIRouter:
     def put_mirror(request: Request, payload: Dict = Body(...)):
         """A standby takes its partner's state. Refused on an active gateway:
         it is the one the state comes from."""
-        from ..state_mirror import import_values
+        from ..lifecycle.state_mirror import import_values
         _authenticated_only()
         if _role().active:
             raise HTTPException(status_code=409, detail={"errors": [
@@ -157,7 +157,7 @@ def build(ctx) -> APIRouter:
         """This gateway's configuration bundle (secrets included) and its hash —
         what the hash is, not when it was zipped, so an unchanged
         configuration hashes the same."""
-        from ..config_mirror import bundle_hash, with_opcua_identity
+        from ..lifecycle.config_mirror import bundle_hash, with_opcua_identity
         _may_read_secrets(request)
         data = ctx.app.state.snapshot_store.build_bundle_bytes()
         if ctx.config.opcua.public_url:
@@ -175,10 +175,10 @@ def build(ctx) -> APIRouter:
         `keep_local` ones added to them; a snapshot of its own comes first,
         and the gateway restarts to run it. The same configuration twice:
         nothing."""
-        from ..config_mirror import (DEFAULT_KEEP_LOCAL, bundle_hash, check_paths, keep_local, replace_config_yaml,
+        from ..lifecycle.config_mirror import (DEFAULT_KEEP_LOCAL, bundle_hash, check_paths, keep_local, replace_config_yaml,
                                      write_opcua_identity)
-        from ..device_template import USER_DIR
-        from ..snapshots import validate_bundle, write_bundle_files
+        from ..catalog.device_template import USER_DIR
+        from ..lifecycle.snapshots import validate_bundle, write_bundle_files
         import yaml
         _authenticated_only()
         if _role().active:
@@ -200,13 +200,20 @@ def build(ctx) -> APIRouter:
             raise HTTPException(status_code=422, detail={"errors": ["bundle: its hash does not match (damaged?)"]})
         if _mirror_mark().get('hash') == their_hash:
             return {'status': 'same', 'hash': their_hash}
-        verrs = validate_bundle(zf, allow_nonlan=ctx.config.security.allow_nonlan_http_devices)
+        # the id namespace is judged on the MERGED result below, not on the partner's alone:
+        # what keep_local keeps may remove (or make) a collision (review L4)
+        verrs = validate_bundle(zf, allow_nonlan=ctx.config.security.allow_nonlan_http_devices,
+                                namespace="off")
         if verrs:
             raise HTTPException(status_code=422, detail={"errors": verrs})
         cfg_dir = ctx.config.config_path.parent
         theirs = yaml.safe_load(zf.read('config.yaml')) or {}
         mine = yaml.safe_load((cfg_dir / 'config.yaml').read_text()) or {}
         merged, kept = keep_local(theirs, mine, list(DEFAULT_KEEP_LOCAL) + [k for k in keep if k not in DEFAULT_KEEP_LOCAL])
+        from multibus.outputs.vbms_registry import namespace_errors
+        nerrs = namespace_errors(merged)          # what is kept local is judged with theirs (R2D-NAMESPACE-1)
+        if nerrs:
+            raise HTTPException(status_code=422, detail={"errors": nerrs})
         data = replace_config_yaml(data, yaml.safe_dump(merged, sort_keys=False, allow_unicode=True))
         try:
             ctx.app.state.snapshot_store.create("pre-partner-config", user=_who(request),

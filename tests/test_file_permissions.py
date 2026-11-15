@@ -50,6 +50,9 @@ def test_write_leases_file_is_0600(tmp_path):
 def test_audit_entries_are_mirrored_to_the_process_log(tmp_path, caplog):
     import logging
     from multibus.audit import AuditLog
-    with caplog.at_level(logging.INFO, logger="multibus.audit"):
+    # LOG-CMD-1: the mirror is DEBUG now — the audit file is the record and
+    # holds ≥ 7 days since AUD-RET-1; an INFO line per command flooded the log
+    with caplog.at_level(logging.DEBUG, logger="multibus.core.audit"):
         AuditLog(str(tmp_path / "audit.jsonl")).append(user="u", ip="1.2.3.4", action="write", status="ok")
-    assert any("AUDIT" in r.getMessage() and '"action": "write"' in r.getMessage() for r in caplog.records)
+    assert any("AUDIT" in r.getMessage() and '"action": "write"' in r.getMessage()
+               and r.levelno == logging.DEBUG for r in caplog.records)

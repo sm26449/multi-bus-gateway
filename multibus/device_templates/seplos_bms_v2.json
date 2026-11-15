@@ -15,8 +15,7 @@
         "seplos_v2-tcp"
       ],
       "byte_order": "big",
-      "default_unit_id": 0,
-      "default_register_type": "input"
+      "default_unit_id": 0
     },
     "poll_groups": {
       "realtime": {
@@ -78,7 +77,7 @@
       "unit_label_plural": "Battery packs",
       "icon": "battery-half",
       "glance": [
-        "power",
+        "battery_power",
         "soc",
         "pack_voltage",
         "max_cell_temp",
@@ -86,7 +85,7 @@
       ],
       "hero": [
         "soc",
-        "power",
+        "battery_power",
         "status"
       ],
       "headline": [
@@ -173,7 +172,7 @@
       },
       {
         "address": 48,
-        "name": "current",
+        "name": "battery_current",
         "label": "Current (+ charging)",
         "unit": "A",
         "data_type": "int16",
@@ -2652,11 +2651,11 @@
     ],
     "calculated": [
       {
-        "name": "power",
-        "label": "Power (− charging)",
+        "name": "battery_power",
+        "label": "Power (+ charging)",
         "unit": "W",
         "decimals": 0,
-        "expr": "0 - current * pack_voltage",
+        "expr": "battery_current * pack_voltage",
         "aggregates": {
           "pack_total_power": "sum"
         },

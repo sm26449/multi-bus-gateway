@@ -13,6 +13,7 @@
 //   CHROMIUM_PATH=… MBG_URL=http://127.0.0.1:8097 OUT=<dir> node tools/e2e/dialogs_e2e.mjs
 import { chromium } from 'playwright';
 import { watchDialogs, openDialog } from './lib/dialogs.mjs';
+import { ruleOverride } from './lib/rules.mjs';
 
 const BASE = process.env.MBG_URL || 'http://127.0.0.1:8097';
 const OUT = process.env.OUT || '';
@@ -108,7 +109,7 @@ try {
   check('red dialog: Enter on Cancel cancels', !(await isOpen(page)) && (await api('/api/rules')).rules.some(r => r.id === 'ov-u1'));
 
   // ── a number that is not one, a decimal comma, a refusal ──
-  await page.locator('[data-rule="ov-u1"] [data-action="openRuleClamp"]').click();
+  await ruleOverride(page, 'ov-u1', 'clamp');
   await page.waitForSelector('#appDialog.active');
   await page.fill('#appDialogF0', 'abc');
   await page.keyboard.press('Enter');
@@ -129,7 +130,7 @@ try {
   sent.length = 0;
 
   // ── the API key, asked from inside a dialog's request ──
-  await page.locator('[data-rule="ov-u1"] [data-action="openRuleOverride"]').click();
+  await ruleOverride(page, 'ov-u1', 'pause');
   await page.waitForSelector('#appDialog.active');
   await page.fill('#appDialogF0', '30');
   await page.click('#appDialogOk');

@@ -13,6 +13,7 @@
 //   CHROMIUM_PATH=… MBG_URL=http://127.0.0.1:8099 node attributes_use_e2e.mjs
 import { chromium } from 'playwright';
 import { openDeviceTab, openDeviceEditor } from './lib/device-page.mjs';
+import { openPage } from './lib/nav.mjs';
 
 const BASE = process.env.MBG_URL || 'http://127.0.0.1:8099';
 const DEV = 'umg512';
@@ -90,7 +91,7 @@ try {
   check('the calculated field saves', savedCalc);
 
   // a rule on the sun and an attribute
-  await page.click('[data-page="rules"]');
+  await openPage(page, 'rules');
   await page.waitForSelector('#rulesAddBtn');
   await page.click('#rulesAddBtn');
   await page.waitForSelector('#ruleModal.active #rlKind');

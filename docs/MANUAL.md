@@ -32,7 +32,8 @@ Companion documents:
 11b. [ESP nodes — a separate service](#11b-esp-nodes--a-separate-service)
 11c. [Power Quality — the PQ event recorder (Janitza)](#11c-power-quality--the-pq-event-recorder-janitza)
 11d. [OPC UA server — for SCADA and HMI panels](#11d-opc-ua-server--for-scada-and-hmi-panels)
-12. [Alerts & webhooks](#12-alerts--webhooks)
+11e. [Virtual BMS — experimental](#11e-virtual-bms--experimental)
+12. [Alerts & notifications](#12-alerts--notifications)
 13. [Diagnostics](#13-diagnostics)
 14. [Modbus writes & dead-man leases](#14-modbus-writes--dead-man-leases)
 14b. [Commands — named writes from the template](#14b-commands--named-writes-from-the-template)
@@ -149,7 +150,17 @@ each pipeline connects — click one for details.
 
 ## 4. The Web UI, tab by tab
 
-Open `http://<host>:8080`. The top navigation:
+Open `http://<host>:8080`. The top navigation is one row:
+
+**Dashboard** · **Assets ▾** (Devices, Virtual Meters, Virtual BMS
+*Experimental*) · **Configuration ▾** (Rules, Templates) · **System ▾**
+(Diagnostics, Settings) · **Status**.
+
+A group opens a small menu; its button is lit while one of its pages is
+open. On a phone the row folds into one **Navigation** button (Esc closes
+it). Each page has its own address (`#/devices`, `#/rules`, `#/config`…), so
+Back, Forward, a reload and a bookmark land on the same view; a device's
+dashboard view is `#/dashboard/<device>`. The pages:
 
 - **Dashboard** — a **site strip** (one card per installation with its live
   aggregate power and units online, plus devices pinned to the overview via
@@ -165,7 +176,7 @@ Open `http://<host>:8080`. The top navigation:
   next to *All devices* for quick lateral jumps. Default widget colors follow
   the phase convention configured under Settings → General. A single-device
   install skips the overview and opens straight on the device view.
-- **Devices** — every southbound source with its live health, grouped by
+- **Assets → Devices** — every southbound source with its live health, grouped by
   installation. Find one with the search box (`/` jumps to it) and the
   filters: *type* (meter, inverter, battery, heat pump… and your own types,
   §5c), *label*, *state*, *protocol*. **Add Device** (§5.2), **Add
@@ -329,25 +340,38 @@ Open `http://<host>:8080`. The top navigation:
   from ⋯ (**Unlock writes…** / **Lock writes**); the **PQ event recorder** is
   with the outputs, staged and saved with the same **Save** (its interval:
   seconds, at least 30), its events on the *Power Quality* tab.
-- **Rules** — the declarative controller: one card per rule with its state,
-  want → actual, decisions, Arm / To shadow (see §14c).
-- **Templates** — the catalog behind your devices: **device maps** (how a
-  real device is read) and **meter emulations** (the virtual-meter templates
-  of §11) — bundled, uploaded, imported from CSV/YAML, edited — and
-  **Device types** (§5c).
-- **Status** — pipeline health, error taxonomy, events, alerts, resource
-  footprint (see §17).
-- **Settings** — the gateway's own settings, one tab each: *MQTT*,
+- **Assets → Virtual Meters** — serve the live values as standard Modbus
+  meters (see §11).
+- **Assets → Virtual BMS** *(Experimental)* — aggregate battery packs into one
+  logical BMS served to an inverter over CAN (see §11e). Not yet validated
+  on hardware: do not arm one on an inverter in service.
+- **Configuration → Rules** — the declarative controller: one card per rule
+  with its state, want → actual, decisions, Arm / To shadow (see §14c).
+- **Configuration → Templates** — the catalog behind your devices, in four
+  tabs: **Device maps** (how a real device is read), **Meter emulations**
+  (the virtual-meter templates of §11) — bundled, uploaded, imported from
+  CSV/YAML, edited — **Canonical fields** and **Device types** (§5c).
+  *Canonical fields* is the gateway's dictionary of standard names (§6.1):
+  each name with its unit, category (its InfluxDB measurement), MQTT topic
+  leaf and description, searchable and filtered by category. An
+  administrator adds **your own field** for a quantity the dictionary does
+  not cover (`<quantity>_<where>`, lower-case, e.g. `pool_chlorine`); it is
+  then canonical everywhere and travels with a template you export. Once a
+  device reads a field, its category and topic stay as they are (they hold
+  history); its unit and description can still change.
+- **System → Diagnostics** — the commissioning toolbox: bus monitor,
+  register probe, discovery, SunSpec scan (see §13).
+- **System → Settings** — the gateway's own settings, one tab each: *MQTT*,
   *InfluxDB* (with the heartbeat, §9), *OPC UA* (§11d), *Modbus* (the **Read
-  preview budget**, §5.2), *Backup & Restore* (snapshots, rollback, export —
-  §15), *Security* (login, roles, passkeys, HTTPS, Modbus writes — §16),
-  *Alerts* (§12), *General* (timezone, colors, and the **Gateway identity**,
-  §8), *Site* (its location, its attributes and the privacy choices — §5c)
-  and, when a companion service is set up, *Modules*.
-- **Virtual Meters** — serve the live values as standard Modbus meters
-  (see §11).
-- **Diagnostics** — the commissioning toolbox: bus monitor, register probe,
-  discovery, SunSpec scan (see §13).
+  preview budget**, §5.2), *CAN* (each CAN interface's mode, §5.5),
+  *Backup & Restore* (snapshots, rollback, export — §15), *Security* (login,
+  roles, passkeys, HTTPS, Modbus writes — §16), *Alerts* (§12), *General*
+  (timezone, colors, and the **Gateway identity**, §8), *Site* (its
+  location, its attributes and the privacy choices — §5c) and, when a
+  companion service is set up, *Modules*.
+- **Status** — the gateway's verdict, a summary per area, what needs
+  attention, and tabs for devices, installations, outputs, automation, the
+  gateway process and events (see §17).
 
 When the gateway is updated while a page is open, a bar says so: **Reload**
 loads the new version, **Later** hides the bar until the next update. The
@@ -697,40 +721,81 @@ API: `GET /api/meter-roles` (the roles and settings), `PUT
 sign?}], options?}`; `[]` removes every link. The earlier `PUT
 /api/devices/{id}/energy-meter` still sets a single consumption meter.
 
-### 5.5 CAN, listen-only
+### 5.5 CAN
 
 The gateway reads a CAN bus by **listening**: frames arrive, the template's
 signal rows decode them, and the values go to MQTT, InfluxDB, Home
-Assistant, the UI and the rules like any other device's. It never transmits:
-the CAN driver has no transmit path, and a CAN device cannot be written. The
-bundled map is `pylontech_can_inverter`, the Pylontech-protocol link between
-a battery's BMS and its inverter (Seplos 0x370/0x371 frames included).
+Assistant, the UI and the rules like any other device's. A CAN **device**
+never transmits: its driver has no transmit path, and it cannot be
+written. The bundled map is `pylontech_can_inverter`, the Pylontech-protocol
+link between a battery's BMS and its inverter (Seplos 0x370/0x371 frames
+included).
+
+The one thing in the gateway that transmits on CAN is a **Virtual BMS**
+(§11e, experimental), and only while it is armed, on a port in *Transmit*
+mode. Listen-only stays the default and the safe stance for every port
+that only reads.
 
 **What you need.** A CAN interface the gateway process can see — `can0` from
 a USB adapter (gs_usb / candleLight) or a HAT (MCP2515), or `vcan0` for
-tests — set up **by the host**, listen-only, at the bus's bitrate:
+tests — up, at the bus's bitrate, and listen-only for a bus you only read.
+Set it up on the host:
 
 ```sh
 ip link set can0 down && ip link set can0 type can bitrate 500000 listen-only on && ip link set can0 up
 ```
 
 `listen-only on` makes the controller itself silent (no ACK, no error
-frames). The gateway never sets it; it reads the flag from the kernel each
-time it opens the interface and shows it (*listen-only* / *not listen-only*,
-with a warning). Check it on the host with `ip -details link show can0`.
+frames). The gateway reads the flag from the kernel each time it opens the
+interface and shows it (*listen-only* / *not listen-only*, with a warning).
+Check it on the host with `ip -details link show can0`.
 
 > **Docker.** In Docker, a container sees the host's CAN interfaces only with host
 > networking (Compose: `network_mode: host`; `docker run --network host`). No
 > capability is needed to read. Host networking means the container's ports are
 > the host's ports: published `ports:` are ignored, and the UI, the virtual
 > meters, :502 and OPC UA bind directly on the host — check for port clashes.
-> The container stays on the host network for everything else too. Listen-only
-> is set on the host (`ip link … listen-only on`).
+> The container stays on the host network for everything else too.
+
+**Settings → CAN** lists the host's CAN interfaces: each one's mode
+(*Transmit* / *listen-only*), up/down, bitrate and the devices that read
+it, with **Switch to Transmit** / **Switch to Listen-only** (it asks first).
+The same change is `POST /api/can-interfaces/{name}` (`mode`, `bitrate`,
+`up`; [API.md](API.md)). The gateway only changes an interface when you
+ask, and:
+
+- it needs the `CAP_NET_ADMIN` capability, which the container does **not**
+  have by default. Grant it on purpose, both parts together:
+
+  ```yaml
+  services:
+    multi-bus-gateway:
+      network_mode: host            # to see can0 at all
+      cap_add: [NET_ADMIN]          # lets the process run `ip link set can0 …`
+      environment:
+        MBG_CAN_NET_ADMIN: "1"      # keep that one capability after the drop to the app user
+  ```
+
+  `MBG_CAN_NET_ADMIN=1` makes the entrypoint keep `CAP_NET_ADMIN` (and only
+  that) as an ambient capability when it drops root; without it, or
+  without `cap_add`, a switch answers *MBG cannot change CAN interfaces —
+  it needs CAP_NET_ADMIN* and you set the interface on the host as above.
+  `NET_ADMIN` with host networking lets the process change any of the
+  host's network interfaces: grant it only where a Virtual BMS needs it.
+- switching **to Transmit** needs `security.allow_writes` (a hardware
+  write); switching to listen-only or down is never refused for that;
+- a port that carries an armed Virtual BMS is refused (disarm it first);
+- a new bitrate on a bus that devices read is refused unless confirmed
+  (`force: true`): those devices would stop hearing it.
+
+Any change takes the link down and up again (`ip` can only change the mode
+and bitrate while it is down), so the readers on that bus miss a moment.
 
 **Adding it.** Add Device → **CAN** port: the host's interfaces are listed
 with up/down, bitrate and listen-only. **Listen-only is a hard gate**: an
 interface that is down or can transmit cannot be picked, and the step shows
-the exact command above to run on the host, then **Refresh**. The fields:
+the exact command above to run on the host (or switch it under
+Settings → CAN), then **Refresh**. The fields:
 *Carrier* (SocketCAN; the serial-bridge carrier is listed, not yet
 selectable), *Interface* (default `can0`), *Bitrate* (shown only — set by the
 host; 10000–1000000, default 500000), *Stale after (s)* (1–3600; quiet this
@@ -1651,17 +1716,119 @@ Clients log in with the gateway's accounts. Encryption is required unless
 you choose otherwise. The guide, with UaExpert, Weintek and Ignition, is
 [opcua.md](opcua.md).
 
-## 12. Alerts & webhooks
+## 11e. Virtual BMS — experimental
 
-Three alert families over one delivery path (MQTT + webhook):
+> **Experimental.** The Virtual BMS is not yet validated on hardware. Do
+> not arm it on an inverter in service: a wrong limit can stop or harm a
+> battery. Pack alarm and protection flags are not forwarded to the
+> inverter yet.
+
+A Virtual BMS aggregates one or more battery packs the gateway already
+reads (each a device of kind *battery*, not itself a bank aggregate) into
+one logical BMS and speaks a battery CAN protocol to an inverter. The
+bundled profile is `pylontech_can_inverter` (Pylontech low-voltage CAN,
+500 kbit/s). It is the only part of the gateway that transmits on CAN.
+
+**Assets → Virtual BMS** lists the instances. **Add Virtual BMS** asks:
+*Id* (a slug), *Name*, *Protocol profile*, *CAN interface* (only ports no
+other Virtual BMS publishes on; a port that devices read is shared and
+marked *also used by*; a listen-only port can be saved but will not
+transmit), *Source packs*, *Charge limit (A)* and *Discharge limit (A)* (the
+ceilings an EMS may command), *Charge voltage (V)* and *Discharge voltage
+(V)*, *Manufacturer*, *Inverter it feeds* (optional: a device id; the
+preview then compares what is sent with what that inverter reports
+receiving) and *Send optional detail frames* (off sends only the frames the
+inverter needs: limits, SOC, V/I/T, enables). A save is refused when the
+port's bitrate differs from the profile's, when a pack reads the CAN bus
+the instance transmits on, or when another device on that bus already reads
+a BMS on the profile's frame ids. An armed instance cannot be edited or
+deleted: disarm it first.
+
+A new or changed instance is always **disarmed**: nothing is sent and the
+inverter sees no BMS. *Show aggregation* (`GET /api/vbms/{id}/preview`)
+shows, before and after arming, each field's value, the packs it comes
+from, the control fields and the frames that would be sent.
+
+**What is sent.** Measured values come from the packs: mean voltage, summed
+current, capacity-weighted SOC, cell and temperature extremes. The control
+fields — charge/discharge current limit, charge/discharge voltage limit,
+charge/discharge enable — are each the latest EMS command (clamped to the
+configured `bounds`) or, with no command younger than `command_max_age_s`
+(60 s), the configured `floor`. The UI form sets the current-limit and
+enable floors to 0, so with no EMS the inverter is told it may neither
+charge nor discharge. An EMS commands over MQTT on
+`mbg/devices/<id>/cmd/<field>` (the base follows `mqtt.default_topic_pattern`;
+a retained message is ignored), and the instance publishes what it sends on
+`mbg/devices/<id>/<field>`, armed or not. A field without finite `bounds`
+cannot be commanded.
+
+**Arming.** **Arm…** (it asks first) needs, in this order of checks:
+
+1. `security.allow_writes` on (arming is a hardware write);
+2. the CAN port **out of listen-only and up**;
+3. the port at the profile's **bitrate**.
+
+Each unmet one answers with a guided dialog — *Enable it now* or *Later*
+with where to find it (Settings → Security, Settings → CAN). Switching a
+port from the gateway needs `CAP_NET_ADMIN` (§5.5). Arming is also refused
+on a standby gateway and while a configuration import or restore runs.
+**Disarm** is never refused: the transmitter closes and the inverter falls
+to its own BMS-loss state. If writes are switched off or the gateway turns
+standby while armed, it disarms itself and stays silent until armed again;
+an import or restore disarms every instance.
+
+**When packs go missing.** Only *admitted* packs count:
+
+- a pack drops out the moment it stops reporting a SOC and a voltage;
+- a pack that dropped comes back only after `recovery.return_after_s`
+  (60 s) of reporting without a break; a pack first seen within that time
+  after the instance started is admitted at once;
+- a pack that dropped `recovery.flap_drops` times (3) within
+  `recovery.flap_window_s` (600 s) is **held out** until an operator clears
+  it (`POST /api/vbms/{id}/packs/{pack}/clear`); it then returns through
+  the same delay. Drops and holds survive a restart (`vbms_admission.json`
+  beside the config);
+- the current limits are capped to what the admitted packs can carry: from
+  each pack's own limit when known (`pack_limits`, or a per-pack `ccl`/`dcl`
+  through `field_map`: `min(n × min Lᵢ × share_factor, Σ Lᵢ)`), otherwise the
+  bank limit × admitted / configured packs;
+- with fewer than `min_packs` admitted packs (default all but one) both
+  limits and both enables are sent as 0 for `fallback.hold_s` (5 s), then
+  nothing is sent until enough packs are back (*Armed · sending zero
+  limits*, then *Armed · silent*);
+- after every start, re-arm or return from such a failure the current
+  limits **ramp up from 0** at `recovery.slew_a_per_s` (2 A/s); a decrease
+  is immediate.
+
+The configuration keys and their ranges: [config-reference.md](config-reference.md#virtual_bms--virtual-bms-instances-experimental);
+the endpoints: [API.md](API.md#virtual-bms-experimental).
+
+## 12. Alerts & notifications
+
+The gateway **produces** alert events; it does not send SMS, chat or e-mail
+itself. For notifications on any channel — SMS, Telegram, e-mail and
+whatever else you route to — connect it to **[Klopot](https://klopot.dev)**,
+a notification service: the gateway sends each event to Klopot as a
+structured event, and Klopot routes it by type and severity, throttles,
+retries and escalates. The MQTT topic and the generic webhook stay
+available for your own automation.
+
+The alert families:
 
 - **Infrastructure health** — a device or sink goes down, read latency stays
-  high, the InfluxDB buffer backs up.
+  high, the InfluxDB buffer backs up, InfluxDB rejects the token or drops
+  points.
 - **Device alarms** — the alarm fields a device's template declares (an
   error code, a fault word, a calculated flag such as "discharge over
   100 °C") fire when they turn active and stay so for their `for_s`, again
   on a new value, and once more when they clear (`signals.alarm`, on by
   default).
+- **Serial bus health** — line errors, a silent bus or repeated reconnects
+  on a bus behind one of our serial bridges (`signals.bridge`, off by
+  default; limits per bus).
+- **Virtual meters** — a virtual meter not serving its consumers, serving
+  held values, or no longer polled by its consumer (`signals.vmeter`, on by
+  default; limits in `alerts.vmeter`, or per meter in `virtual_meters.yaml`).
 - **Value thresholds** — the per-register warning/danger limits from §6
   become alert events through a built-in hysteresis engine (**off by
   default**, `signals.threshold`): five bands, fires only on band
@@ -1669,32 +1836,60 @@ Three alert families over one delivery path (MQTT + webhook):
   `threshold_deadband_pct`, default 2 %), suppressed on stale data so a comms
   loss can't fire a phantom crossing.
 
+**Klopot (recommended).** Settings → Alerts, with alerting enabled →
+*Send to the Klopot notification service*: the fire URL (in the bundled network typically
+`http://klopot:5090/v1/fire`), its API key (stored masked) and a *Source*
+name (default `multi-bus-gateway`). Applied live. Each **event** (a device
+or sink down/up, an InfluxDB auth or drop, a template alarm, a bus-health
+or virtual-meter alert, a configuration or gateway event) is posted once as
+`{type, context, source}` — `type` such as `mbg_device`, `mbg_device_alarm`,
+`mbg_bridge`, `mbg_vmeter`; `context` with the severity, message, key, host,
+time and, where there is one, the device, field and value. The gateway does
+not retry: Klopot's outbox owns delivery once it accepted the event, and a
+failed post is written to the event log. **Conditions** (latency, buffer
+backlog, value thresholds) are not posted: they stay on MQTT for Klopot
+rules to evaluate. **Download Klopot config pack** (`GET
+/api/alerts/alertd-pack`, a YAML file with no secrets) gives Klopot a
+template and a route for each event type; import it into Klopot once. The
+Status page's *Outputs* tab shows the destination and the last delivery.
+In `config.yaml` this is the `alerts.alertd` block — the Klopot integration;
+the key keeps its older name for compatibility.
+
+**MQTT and webhook (custom integrations).** Every alert is also published
+on `<topic_prefix>/alert` and, when `webhook_url` is set, POSTed as JSON to
+it — for your own automation (Node-RED, Home Assistant, a script).
+
 Configure under Settings → Alerts or the `alerts:` block:
 
 ```yaml
 alerts:
   enabled: true
   mqtt: true                                   # publish to <topic_prefix>/alert
-  webhook_url: "https://ntfy.example/gateway"  # empty = webhook off
-  webhook_headers: { "X-API-Key": "secret" }
-  webhook_body: { "message": "[{severity}] {source}: {message}" }
+  alertd:                                      # the Klopot integration
+    enabled: true
+    url: "http://klopot:5090/v1/fire"
+    api_key: "…"
+    source: "multi-bus-gateway"
+  webhook_url: ""                              # optional: your own receiver; empty = off
   min_interval_s: 300
   latency_ms: 1000
   buffer_points: 1000
   signals: { device: true, sink: true, latency: true, buffer: true,
-             threshold: true, alarm: true }    # threshold defaults to false, alarm to true
+             threshold: true, alarm: true,     # threshold defaults to false
+             bridge: true, vmeter: true }      # bridge defaults to false
+  vmeter: { not_serving_s: 30, held_s: 20, consumer_idle_s: 120 }
+  bridge: { line_errors_per_min: 10, silent_s: 120, reconnects_per_10min: 6 }
   threshold_deadband_pct: 2.0
   threshold_alert_on_start: true
 ```
 
 Alerts are rate-limited per key (`min_interval_s`), mirrored to the event
-log and the Status page. The gateway *detects and delivers*; deduplication,
-routing and channel fan-out (Telegram/SMS/e-mail) belong in your webhook
-receiver / notification system. The **Test** button (or
-`POST /api/alerts/test`) fires a synthetic alert through the real channels —
-it requires login or an API key and is cooldown-throttled, because it drives
-real outbound traffic. Webhook delivery is best-effort (no retry) and
-refuses redirects. Payload shape and the threshold engine in detail:
+log and the Status page. The **Test** button (or `POST /api/alerts/test`)
+fires a synthetic alert through every enabled channel (MQTT, webhook,
+Klopot) and reports each result — it requires login or an API key and is
+cooldown-throttled, because it drives real outbound traffic. Webhook
+delivery is best-effort (no retry); neither the webhook nor the Klopot post
+follows a redirect. Payloads and the threshold engine in detail:
 [alerts-webhooks.md](alerts-webhooks.md).
 
 ---
@@ -1738,6 +1933,43 @@ on the bus.
   stateless: a debug read never advances the monotonic filter). If the two
   differ unexpectedly, the register's scale/decode declaration is where to
   look.
+
+**Bridge diagnostics (Assets → Devices).** Each serial bridge has a card on
+the Devices page: its state, each bus with its busy meter, a **line-health
+chip** and, for a tapped bus, the frames heard. While the list is shown the
+cards are refreshed every 5 s in place (an open menu, the focus and the
+filter stay); the polling stops when you leave the page or hide the tab.
+
+The chip opens **Line health · bus :<port>**, from the gateway asking the
+bridge every 30 s (the first numbers take about a minute):
+
+- a **verdict** with one line of advice — *line healthy*, *RS-485 wiring,
+  termination or baud*, *a slave does not answer*, *device off or
+  disconnected*, *network between the gateway and the bridge*, *bridge
+  host too busy*, *line errors, reads still fine*, *bridge not answering*;
+  an adapter that does not count line errors lowers the confidence and
+  says so;
+- **The line** — the kernel counters on the bridge (frame, parity, UART and
+  buffer overruns, breaks), total and per minute;
+- **Connection and activity** — the client connected, connects in the last
+  10 min, how long the bus has been silent, the last byte each way;
+- **What the gateway saw on this bus (last 5 min)** — answered reads,
+  timeouts, connection errors, exceptions and CRC errors. A Seplos V2 bus
+  counts too: its checksum and frame errors as CRC errors, its timeouts and
+  I/O errors, its error replies as exceptions; in listen mode the bus's bad
+  frames are counted once for the bus;
+- **The tapped bus** (a bus the gateway only listens on) — the shared
+  reader's counters counted **once**, not once per listening device: valid
+  frames, frames with no partner, exception responses, bytes skipped to
+  realign, responses with no matching request, pairs across skipped bytes,
+  the last skipped byte runs (in hex), then each listening device's own
+  windows, values, implausible values dropped and the age of its last
+  value;
+- **Recent events on the bridge.**
+
+The same alarms can reach you as the *Serial bus health* alert signal
+(§12). Behind an installation's tap source, the source line carries the same
+bus counters; `/metrics` has them as `gateway_bus_*_total`.
 
 ---
 
@@ -2084,7 +2316,7 @@ relaxes a limit).
 
 1. The target must offer an **enabled command** (§14b.1); only such targets
    are listed.
-2. **Rules** page → **Add rule**. Kind first: *Steps* (thresholds → value),
+2. **Configuration → Rules** → **Add rule**. Kind first: *Steps* (thresholds → value),
    *Condition* (true / false) or *Trim* (nudge up / down until the signal
    sits in a band). Target: a unit, or a whole group (the
    command fans out per unit). Signal: an expression over live values
@@ -2095,6 +2327,13 @@ relaxes a limit).
    range and *max step*, the stale and disable policies and the timing
    fields — each with its default and a one-line hint. **Preview now**
    shows what the rule would see and want this second, nothing kept.
+   A *Steps* rule also has an **Advanced / tuning** section with five
+   opt-in keys: `resume_on_boot`, `step_down_margin`,
+   `timing.boot_wait_s`, `timing.urgent_retries` and
+   `timing.step_down_hold_s` (the margin shows its live upper bound). An
+   empty box leaves the key out; a typed 0 is kept; a value out of range is
+   refused under its box. What each does and its range:
+   [rules.md §3.1](rules.md#31-over-voltage-protection-on-one-inverter-steps).
 3. **Save.** A new rule is saved in **shadow**: it evaluates, decides, logs
    and publishes — and writes nothing. Watch its card: state in words,
    signal, **want → actual** per unit with the actual's age, the last
@@ -2317,6 +2556,28 @@ Settings → **Backup & Restore**.
   Secret values are masked.
 - **Rollback** — restore replaces the bundle verbatim, after taking a
   `pre-restore` snapshot, so a rollback is itself reversible.
+- **A restore or an import locks writes by default.** Before it applies,
+  the dialog says what the bundle would re-enable — devices, components and
+  installation units with writes unlocked, enabled command bindings on them
+  and, for a snapshot restore, armed rules — and offers **Lock all writes
+  (recommended)**, the default, or **Keep the backup's own write states**.
+  With the lock, every write path is locked as the configuration loads,
+  before any device is re-bound or started, so nothing the bundle armed can
+  write until you unlock it deliberately. Locking writes also **suspends
+  the rules that write** (an over-voltage rule included) until you unlock;
+  keep that in mind on a site that relies on one. In the API:
+  `dry_run=true` (only the disclosure, `would_unlock`) and `lock_writes`
+  (default `true`; the answer carries `write_locked_forced`). Every armed
+  Virtual BMS is disarmed by an import or a restore.
+- **Devices after an import or a restore** — devices the bundle adds are
+  started and devices it removes are stopped, without a restart (unless
+  `apply=false`, which only stops removed ones). A device whose connection
+  the bundle moved (another host, port, bus, broker or CAN channel) keeps
+  its old connection and **refuses writes until the gateway is
+  restarted**. A change of the primary device (`primary_device`) needs a
+  restart too. The answer's `restart_required` is `true` whenever the
+  configuration holds any device other than the primary — a conservative
+  flag; a restart is needed only for the two cases above.
 - **Last-known-good (LKG) boot seatbelt** — after ~5 minutes of healthy
   uptime the bundle is marked LKG. If `config.yaml` fails to parse at boot
   (bad manual edit, torn write), the gateway restores LKG automatically and
@@ -2373,8 +2634,10 @@ Keep an exported ZIP somewhere else too.
    exported ZIP (a with-secrets export restores passkeys and device
    credentials too; a sanitized one asks you to re-enter secrets).
 3. The import applies config, devices, register selections, virtual meters
-   and calculated presets in one shot. With **more than one device**, the
-   response may set `restart_required` — restart the container
+   and calculated presets in one shot, with every write path **locked**
+   (the default): unlock each device deliberately once it reads right. A
+   device the backup moved to another connection keeps refusing writes
+   until a restart — when in doubt, restart the container
    (`docker compose restart multi-bus-gateway`) so every poller starts from
    the restored definitions.
 4. Re-check: `/health` shows the meters, Status shows every device polling,
@@ -2471,8 +2734,9 @@ Requirements and pitfalls:
 ### 16.4 IP allowlist
 
 `security.allowlist` — one IP/CIDR per line (e.g. `192.168.1.0/24`); empty
-= open. Loopback is always allowed; it also guards `/ws`, `/health` and
-`/metrics`. The card shows *your current IP* so you don't lock yourself
+= open. Loopback is always allowed; it also guards `/ws` and `/health`.
+`/metrics` has its own rule (§17): a scraper outside loopback must be in
+`security.metrics_allowlist` (or admitted by a set `allowlist`). The card shows *your current IP* so you don't lock yourself
 out. **Docker note:** behind the default bridge network, clients often
 appear as the docker gateway IP — check "your current IP" and allowlist
 what you actually see, or use host/macvlan networking for true per-client
@@ -2499,7 +2763,8 @@ browser: exports, env listings and logs redact tokens and password hashes.
 
 ### 16.6 Audit trail
 
-Append-only JSONL under `config/audit.jsonl` (1 MB × 5 files rotation):
+Append-only JSONL under `config/audit.jsonl` (2 MB per file, the current
+file + 5 rotated):
 logins (including failures and lockouts), passkey events, **every Modbus
 write**, config exports/imports, snapshot restores — with user, IP, action,
 target, status; secret values in payloads are redacted before they are
@@ -2510,18 +2775,39 @@ written. View/filter it on the Status page (admin), or export CSV via
 
 ## 17. Observability: Status, /metrics, events
 
-- **Status page** — per-device health (connected, poll rate, error
-  taxonomy, staleness age, latency), sink stats (published/skipped/failed,
-  buffer counters), WebSocket clients, process resources (CPU, RSS,
-  threads, FDs), recent events and alerts.
+- **Status page** — top to bottom:
+  - the **verdict**: *all working*, or the count of errors and warnings,
+    with the version, the uptime and the gateway's role (a standby says
+    that the active gateway polls);
+  - **summary cards** — *Devices* and *Installations* (online / total,
+    asleep), *Outputs* (connected / enabled), *Automation* (rules) and
+    *Gateway* (CPU), each marked ✖ or ▲ when it holds a problem; a card
+    opens its tab;
+  - **Needs attention** — one line per problem, worst first, each a link
+    to where it is; *Show all N issues* when there are more;
+  - tabs: **Devices** (per-device health — connected, poll rate, error
+    taxonomy, staleness, latency — with search and *All / Problems /
+    Disabled*), **Installations**, **Outputs** (MQTT, InfluxDB, the alert
+    channels with **Test**, the Klopot destination and its last delivery,
+    where data goes), **Automation** (rules, sequences, command lanes),
+    **Gateway** (CPU, memory, threads, file descriptors, connections, buses)
+    and **Events** (the event log, searchable, by source and severity).
+  Values that stopped updating are marked as such; a failed refresh says
+  so in words and keeps polling.
 - **`/metrics`** — Prometheus text format, no login required (a scraper
-  can't log in), still behind the IP allowlist; counters and health only,
-  never config. Series: `gateway_device_up/poll_rate/reads_total/
+  can't log in); counters and health only, never config. **Who may read
+  it:** loopback always; a peer inside `security.metrics_allowlist`; and,
+  when `security.allowlist` is set, the peers it admits. With both lists
+  empty only loopback gets an answer — any other scraper gets **403**. Add
+  the scraper's IP or subnet to `security.metrics_allowlist` in
+  `config.yaml` (or `POST /api/config/security`; the Security tab does not
+  show it yet); that list opens `/metrics` only, not the UI or the API. Series: `gateway_device_up/poll_rate/reads_total/
   errors_total/read_latency_ms/staleness_seconds/health`,
   `gateway_mqtt_connected/published_total`,
   `gateway_influx_connected/written_total/buffer_points/dropped_total`,
   `gateway_vmeter_up/requests_total/request_rate/errors_total/connections/
-  quality`. Scrape example:
+  quality`, and a listen-only bus's counters once per bus as
+  `gateway_bus_*_total`. Scrape example:
 
   ```yaml
   scrape_configs:

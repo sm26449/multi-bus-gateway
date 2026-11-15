@@ -23,7 +23,7 @@ import pytest
 from tests.test_devices_api import make_app, needs_tc
 
 ROOT = Path(__file__).resolve().parent.parent
-SUMMARY = ROOT / "multibus" / "device_summary.py"
+SUMMARY = ROOT / "multibus" / "devices" / "device_summary.py"
 LANG = {k: json.loads((ROOT / "ui" / "languages" / f"{k}.json").read_text(encoding="utf-8")) for k in ("en", "ro")}
 PH = re.compile(r"\{(\w+)\}")
 

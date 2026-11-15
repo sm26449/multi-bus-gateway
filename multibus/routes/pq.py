@@ -23,8 +23,9 @@ from typing import Dict
 
 from fastapi import APIRouter, Body, HTTPException, Query
 
-from ..pq_recorder import (WAVEFORM_CHANNELS, device_base_url,
-                           fetch_waveform_live, template_supports_pq)
+from ..vendors.pq_recorder import (ARCHIVE_PACING_KEYS, WAVEFORM_CHANNELS,
+                                   _pacing_number, device_base_url,
+                                   fetch_waveform_live, template_supports_pq)
 
 
 def build(ctx) -> APIRouter:
@@ -155,6 +156,19 @@ def build(ctx) -> APIRouter:
         cfg = {k: payload[k] for k in
                ("enabled", "poll_s", "archive_waveforms", "base_url", "bucket")
                if k in payload}
+        # the waveform-archive pacing keys (PQ-STALL-1): numbers >= 0; kept
+        # from the current block when the body leaves them out (the UI form
+        # does not carry them, and a save must not drop a hand-set value)
+        _cur = dict(getattr(dev, "pq_recorder", {}) or {})
+        for k in ARCHIVE_PACING_KEYS:
+            if k in payload:
+                if _pacing_number(payload[k]) is None:
+                    raise HTTPException(status_code=422, detail={
+                        "errors": [f"{k}: a number, 0 or more"],
+                        "fields": {k: "a number, 0 or more"}})
+                cfg[k] = payload[k]
+            elif k in _cur:
+                cfg[k] = _cur[k]
         # the interval: a number of seconds, at least 30 (the recorder's own
         # floor) — a word, a boolean or a blank is refused, never stored
         # (review of L3.11b, m5)

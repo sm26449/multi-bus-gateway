@@ -80,7 +80,7 @@ Object.assign(JanitzaMonitor.prototype, {
         const CS = window.ConnStepModel;
         const form = this._cfForm(host, px, M, opts);
         form.cs = { axes: { port: null, reach: null, protocol: null, framing: null, udp: false, mode: null },
-                    role: null, touched: { unit: false, line: false }, busId: null, announce: '' };
+                    role: null, roleUser: false, touched: { unit: false, line: false }, busId: null, announce: '' };
         form.inputs = () => this._csInputs(form);
         form.html = () => this._csHtml(form);
         form.fieldId = path => this._csFieldId(form, path);
@@ -118,6 +118,7 @@ Object.assign(JanitzaMonitor.prototype, {
         const tpl = this._csTpl(form);
         if (form.cs.axes.protocol === 'seplos_v2' && (st.tplId || null) !== ((tpl && tpl.id) || null)) {
             form.cs.role = null;
+            form.cs.roleUser = false;
             form.M.bus_mode = '';
         }
     },
@@ -207,7 +208,11 @@ Object.assign(JanitzaMonitor.prototype, {
         const d = this._csData();
         const ax = Object.assign({}, form.cs.axes);
         if (ax.port === 'ethernet') ax.udp = ax.reach === 'address' && !!form.M.udp;
-        const bus = ax.port ? CS.busFor(form.M, d.buses, (this._serialPorts || {}).ports) : null;
+        // the bus is known before the protocol (the role, asked first, is
+        // judged by its claims): M read as the Modbus cell of its port and reach
+        const onBus = ax.protocol || !ax.port || !ax.reach ? form.M
+            : CS.applyAxes(form.M, { port: ax.port, reach: ax.reach, protocol: 'modbus', framing: ax.port === 'ethernet' ? 'mbap' : 'rtu', udp: false, mode: 'poll' });
+        const bus = ax.port ? CS.busFor(onBus, d.buses, (this._serialPorts || {}).ports) : null;
         const origBus = form.opts.context === 'edit' ? CS.busFor(form.orig, d.buses, (this._serialPorts || {}).ports) : null;
         const tpl = this._csTpl(form);
         const brRec = form.M.bridge ? (this._bridges || []).find(b => b.id === form.M.bridge) : null;
@@ -259,9 +264,14 @@ Object.assign(JanitzaMonitor.prototype, {
         if (ax.port && (ax.reach || ['http', 'mqtt'].includes(ax.port)) && !ax.protocol) {
             const okP = CS.protocolOptions(ctx(), t).filter(o => o.state === 'ok');
             const tpl = this._csTpl(form);
+            const ascii = CS.asciiOnly(tpl);
             const want = okP.find(o => tpl && tpl.speaks && (o.value === tpl.speaks || o.value.startsWith(`${tpl.speaks}:`))
-                && (!o.value.endsWith(':ascii') || (tpl.transports || []).every(x => /ascii/.test(x))));
-            const pick = want || (okP.length === 1 ? okP[0] : null);
+                && (o.value.endsWith(':ascii') ? ascii : !(ascii && o.value.startsWith('modbus:'))));
+            // a protocol the role alone leaves is asked, never taken for the
+            // user: only one that is the only one whatever the role
+            const any = CS.protocolOptions(Object.assign(ctx(), { role: null }), t).filter(o => o.state === 'ok');
+            const lone = any.length === 1 && okP.some(o => o.value === any[0].value) ? any[0] : null;
+            const pick = want || lone;
             if (pick) this._csSetProtocol(form, pick.value);
         }
         // the role a port has with no question asked: the matrix says it (a
@@ -272,10 +282,25 @@ Object.assign(JanitzaMonitor.prototype, {
         if (ax.port === 'http') ax.mode = 'poll';
         // a role the matrix alone decides (Modbus TCP is asked, never heard) is
         // that role; a serial bus's is asked or pre-filled from its claims
-        if (ax.port === 'ethernet' && ax.protocol && !form.cs.role) {
+        if (ax.port === 'ethernet' && ax.reach && !form.cs.role) {
             const open = CS.roleOptions(ctx(), t).filter(o => o.state === 'ok');
             if (open.length === 1) form.cs.role = open[0].value;
         }
+        this._csSyncM(form);
+    },
+
+    // the role filters the protocol (2c before 2d): one the role now set —
+    // answered, pre-filled by the bus, or the model's — cannot take is asked
+    // again (or is the one left); never saved as a cell other than shown
+    _csFitProtocol(form) {
+        const CS = window.ConnStepModel;
+        const ax = form.cs.axes;
+        const key = ax.protocol ? CS.protocolKey(ax) : null;
+        if (key) {
+            const okP = CS.protocolOptions(this._csCtx(form), (k, d, p) => this.t(k, d, p));
+            if (okP.some(p => p.value === key && p.state === 'off')) { ax.protocol = null; ax.framing = null; }
+        }
+        if (!ax.protocol) this._csDefaults(form);
         this._csSyncM(form);
     },
 
@@ -351,7 +376,7 @@ Object.assign(JanitzaMonitor.prototype, {
         form.cs.busId = busId;
         if (form.opts.context !== 'edit' && !form.cs.role && st.opts.prefill) {
             form.cs.role = st.opts.prefill.value;
-            this._csSyncM(form);
+            this._csFitProtocol(form);
         }
         // the line: a bus with devices gives its own (locked); a new device on
         // an empty bus takes the template's, else 9600 8N1, until typed over
@@ -389,24 +414,32 @@ Object.assign(JanitzaMonitor.prototype, {
         if (name === 'PortKind') {
             form.cs.axes = { port: v, reach: null, protocol: null, framing: null, udp: false, mode: null };
             form.cs.role = form.opts.context === 'edit' && v === form.origAxes.port ? form.origAxes.mode : null;
+            form.cs.roleUser = false;
             this._csDefaults(form);
             this._csAfterBus(form, true);
         } else if (name === 'Reach') {
             ax.reach = v;
             // the protocol stays where the new reach offers it, else it is asked again
-            const okP = CS.protocolOptions(this._csCtx(form), (k, d, p) => this.t(k, d, p));
+            const okP = CS.protocolOptions(Object.assign(this._csCtx(form), { role: null }), (k, d, p) => this.t(k, d, p));
             const key = ax.protocol ? CS.protocolKey(ax) : null;
             if (key && okP.some(p => p.value === key && p.state === 'ok')) this._csSetProtocol(form, key);
             else { ax.protocol = null; ax.framing = null; this._csDefaults(form); }
             this._csAfterBus(form, true);
         } else if (name === 'Speaks') {
             this._csSetProtocol(form, v);
-            if (ax.protocol === 'seplos_v2' || seplosBefore) form.cs.role = null;      // Seplos: always asked (M7)
+            // Seplos: its role is never one the gateway chose (M7) — a role
+            // pre-filled before the protocol is asked again; one the user gave
+            // is theirs
+            if ((ax.protocol === 'seplos_v2' || seplosBefore) && !form.cs.roleUser) form.cs.role = null;
             this._csSyncM(form);
             this._csAfterBus(form, false);
         } else if (name === 'Role') {
+            // 2c before 2d (ADR-0031 §2): the role filters the protocols — one
+            // it cannot take is asked again (or is the one left)
             form.cs.role = v;
-            this._csSyncM(form);
+            form.cs.roleUser = true;
+            this._csFitProtocol(form);
+            this._csSettle(form);
         }
         this._cfRender(form, `${px}${name}-${this._csSafe(v)}`);
         form.opts.onChange?.(form);
@@ -479,7 +512,9 @@ Object.assign(JanitzaMonitor.prototype, {
             } else if (form.opts.context !== 'edit') {
                 form.cs.role = CS.roleAfterBusChange(ax, form.cs.role, st.opts);
             }
-            this._csSyncM(form);
+            form.cs.roleUser = false;
+            if (form.cs.role) this._csFitProtocol(form);
+            else this._csSyncM(form);
         }
         this._csSettle(form);
     },
@@ -620,6 +655,7 @@ Object.assign(JanitzaMonitor.prototype, {
         const e = {};
         if (!ax.port) e['connection.port_kind'] = t('cs.err.port', 'Choose the port it is plugged into.');
         else if (!['http', 'mqtt'].includes(ax.port) && !ax.reach) e['connection.reach'] = t('cs.err.reach', 'Say where the bus is.');
+        else if (ax.port === 'serial' && !ax.protocol && !form.cs.role) e['connection.role'] = t('cs.err.role', 'Choose the role on the bus: Master (the gateway polls) or Listen-only (another master polls).');
         else if (ax.port === 'serial' && !ax.protocol) e['connection.protocol'] = t('cs.err.protocol', 'Choose the protocol the bus speaks.');
         else {
             Object.assign(e, CS.errors(this._csCtx(form), t));
@@ -665,8 +701,8 @@ Object.assign(JanitzaMonitor.prototype, {
             ${this._csPortHtml(form, st)}
             ${ax.port && !['http', 'mqtt'].includes(ax.port) ? this._csReachHtml(form, st) : ''}
             ${busPart}
-            ${ax.port === 'serial' && ax.reach ? this._csSpeaksHtml(form, st) : ''}
-            ${ax.port && ax.reach && ax.protocol && st.opts.roles.length && ax.port !== 'can' ? this._csRoleHtml(form, st) : ''}
+            ${ax.port && ax.reach && st.opts.roles.length && ax.port !== 'can' ? this._csRoleHtml(form, st) : ''}
+            ${ax.port === 'serial' && ax.reach && (form.cs.role || ax.protocol) ? this._csSpeaksHtml(form, st) : ''}
             ${showLine ? this._csLineHtml(form, st) : ''}
             ${showAddr ? this._csAddrHtml(form, st) : ''}
             ${ax.port === 'can' ? this._csCanHtml(form, st) : ''}
@@ -679,7 +715,7 @@ Object.assign(JanitzaMonitor.prototype, {
 
     // a question: a radiogroup whose every option is shown; one that cannot
     // be taken is aria-disabled (focusable), its reason listed under the group
-    _csRadios(form, name, legend, list, cur, label, extra = '') {
+    _csRadios(form, name, legend, list, cur, label, extra = '', describedBy = '') {
         const { px } = form;
         const why = list.filter(o => o.state !== 'ok');
         const rows = list.map(o => {
@@ -691,7 +727,7 @@ Object.assign(JanitzaMonitor.prototype, {
                 ${this._act('_csPick', [px, name], { el: true, on: 'change' })}><span class="s"></span> ${this._esc(label(o.value))}</label>`;
         }).join('');
         return `<fieldset class="cf-fieldset cs-q" id="${px}${name}Q"><legend class="wiz-eyebrow">${this._esc(legend)}</legend>
-            <div class="seg cs-seg" role="radiogroup" aria-label="${this._esc(legend)}">${rows}</div>
+            <div class="seg cs-seg" role="radiogroup" aria-label="${this._esc(legend)}"${describedBy ? ` aria-describedby="${this._esc(describedBy)}"` : ''}>${rows}</div>
             ${why.length ? `<ul class="cs-why">${why.map(o => `<li class="field-hint" id="${px}${name}-${this._csSafe(o.value)}-why"><b>${this._esc(label(o.value))}</b> — ${this._esc(o.reason)}</li>`).join('')}</ul>` : ''}
             ${extra}</fieldset>`;
     },
@@ -817,11 +853,13 @@ Object.assign(JanitzaMonitor.prototype, {
         const t = (k, d) => this.t(k, d);
         const CS = window.ConnStepModel;
         const ax = st.ctx.axes;
-        const label = v => ({ 'modbus:rtu': 'Modbus RTU', 'modbus:ascii': 'Modbus ASCII', modbus: 'Modbus', seplos_v2: t('cf.svSeg', 'Seplos V2 BMS') })[v] || v;
+        const label = v => this._csProtoLabel(v, form.cs.role);
         const cur = ax.protocol === 'modbus' ? CS.protocolKey(ax) : ax.protocol;
         const list = st.opts.protocols;
         const okList = list.filter(o => o.state === 'ok');
-        if (okList.length === 1 && cur === okList[0].value && st.ctx.tpl) {
+        const lock = (st.ctx.locks || []).find(l => l.field === 'connection.protocol');
+        const fixed = list.every(o => o.state === 'ok' || o.code === 'tpl_speaks' || (lock && o.code === lock.code));
+        if (okList.length === 1 && cur === okList[0].value && st.ctx.tpl && fixed) {
             const bf = ax.reach === 'bridge' && ax.protocol === 'modbus' ? ` (${(ax.framing || 'rtu').toUpperCase()}, ${t('cs.speaks.bridgeFraming', 'as the bridge frames it')})` : '';
             return `<p class="cs-fact" id="${form.px}SpeaksQ"><input type="radio" class="sr-only" id="${form.px}Speaks-${this._csSafe(cur)}" name="${form.px}Speaks" value="${this._esc(cur)}" checked tabindex="-1" aria-hidden="true" aria-label="${this._esc(label(cur))}">
                 <b>${this._esc(t('cs.q.protocol', 'Protocol'))}:</b> ${this._esc(label(cur))}${this._esc(bf)}</p>`;
@@ -829,7 +867,18 @@ Object.assign(JanitzaMonitor.prototype, {
         return this._csRadios(form, 'Speaks', t('cs.q.protocol', 'Protocol'), list, cur, label);
     },
 
-    // 2c the role on the bus
+    // a protocol key in words; as Listen-only, what listening on it is
+    _csProtoLabel(v, role) {
+        const t = (k, d) => this.t(k, d);
+        if (role === 'listen') {
+            const l = { 'modbus:rtu': t('cs.speaks.rtuTap', 'Modbus RTU (tap)'), modbus: t('cs.speaks.rtuTap', 'Modbus RTU (tap)'),
+                        seplos_v2: t('cs.speaks.seplosListen', 'Seplos V2 (listening)') }[v];
+            if (l) return l;
+        }
+        return ({ 'modbus:rtu': 'Modbus RTU', 'modbus:ascii': 'Modbus ASCII', modbus: 'Modbus', seplos_v2: t('cf.svSeg', 'Seplos V2 BMS') })[v] || v;
+    },
+
+    // 2c the role on the bus — asked before the protocol (ADR-0031 §2)
     _csRoleHtml(form, st) {
         const t = (k, d, p) => this.t(k, d, p);
         const label = v => (v === 'poll' ? t('cs.role.master', 'Master — the gateway polls')
@@ -847,8 +896,31 @@ Object.assign(JanitzaMonitor.prototype, {
                 : t('cs.role.ask', 'Nobody claims this bus yet: say whether the gateway polls it or another master does (an inverter often polls its own meter).');
         }
         const hint = st.opts.hint ? `<p class="field-hint cs-hint"><i aria-hidden="true" class="bi bi-info-circle"></i> ${this._esc(st.opts.hint)}</p>` : '';
-        const extra = `${note ? `<p class="field-hint cs-role-note" id="${form.px}RoleNote"><i aria-hidden="true" class="bi ${form.cs.role === 'listen' ? 'bi-ear' : 'bi-signpost'}"></i> ${this._esc(note)}</p>` : ''}${hint}`;
-        return this._csRadios(form, 'Role', t('cs.q.role', 'Role on the bus'), st.opts.roles, form.cs.role, label, extra);
+        // what each answer means, and (on a serial bus, where the protocol is
+        // a question next) what it does to the protocols offered — the ones
+        // that can listen here, from the matrix
+        let filters = '';
+        if (ax.port === 'serial') {
+            const CS = window.ConnStepModel;
+            const tt = (k, d, p) => this.t(k, d, p);
+            const all = CS.protocolOptions(Object.assign({}, st.ctx, { role: null }), tt);
+            const open = all.filter(o => o.state === 'ok');
+            const lock = (st.ctx.locks || []).find(l => l.field === 'connection.protocol');
+            const asked = open.length > 1 || !st.ctx.tpl || !all.every(o => o.state === 'ok' || o.code === 'tpl_speaks' || (lock && o.code === lock.code));
+            const hear = CS.protocolOptions(Object.assign({}, st.ctx, { role: 'listen' }), tt).filter(o => o.state === 'ok')
+                .map(o => this._csProtoLabel(o.value, 'listen'));
+            if (asked && open.length > 1) {
+                filters = hear.length ? t('cs.role.filtersList', 'The protocol is asked next and follows this answer: here Listen-only offers {list}.', { list: hear.join(', ') })
+                    : t('cs.role.filtersNone', 'The protocol is asked next and follows this answer: no protocol can listen here.');
+            }
+        }
+        const means = `<ul class="cs-means field-hint" id="${form.px}RoleMeans">
+            <li><b>${this._esc(t('cs.role.masterShort', 'Master'))}</b> — ${this._esc(t('cs.role.meansMaster', 'the gateway sends the requests on this bus and waits for the answers; no other master may be on it.'))}</li>
+            <li><b>${this._esc(t('cs.role.listenShort', 'Listen-only'))}</b> — ${this._esc(t('cs.role.meansListen', 'another master (an inverter, a BMS master pack) polls; the gateway decodes the frames it hears and never transmits.'))}</li>
+            ${filters ? `<li>${this._esc(filters)}</li>` : ''}</ul>`;
+        const extra = `${means}${note ? `<p class="field-hint cs-role-note" id="${form.px}RoleNote"><i aria-hidden="true" class="bi ${form.cs.role === 'listen' ? 'bi-ear' : 'bi-signpost'}"></i> ${this._esc(note)}</p>` : ''}${hint}`;
+        return this._csRadios(form, 'Role', t('cs.q.role', 'Role on the bus'), st.opts.roles, form.cs.role, label, extra,
+            `${form.px}RoleMeans${note ? ` ${form.px}RoleNote` : ''}`);
     },
 
     // 2e the line

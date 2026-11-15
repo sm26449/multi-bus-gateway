@@ -521,7 +521,10 @@ Object.assign(JanitzaMonitor.prototype, {
                 ${s.latency_ms != null ? ` · ${s.latency_ms} ms` : ''}
                 ${s.wire ? `<div style="font-size:11.5px;color:${(s.wire.crc_errors || s.wire.orphan_frames || s.wire.open_error) ? 'var(--warning-text)' : 'var(--text-secondary)'};"
                     title="${t('endpoints.wireHint', 'The bus as the tap hears it: valid frames, CRC errors, frames with no partner, bytes skipped to realign. On a healthy bus CRC errors and orphans stay at 0.')}">
-                    ${s.wire.open_error ? this._esc(s.wire.open_error) : `${t('endpoints.wireFrames', 'frames')} ${s.wire.frames ?? '—'} · CRC ${s.wire.crc_errors ?? 0} · ${t('endpoints.wireOrphans', 'orphans')} ${s.wire.orphan_frames ?? 0} · resync ${s.wire.resync_dropped_bytes ?? 0} B`}</div>` : ''}
+                    ${s.wire.open_error ? this._esc(s.wire.open_error) : `${t('endpoints.wireFrames', 'frames')} ${s.wire.frames ?? '—'} · CRC ${s.wire.crc_errors ?? 0} · ${t('endpoints.wireOrphans', 'orphans')} ${s.wire.orphan_frames ?? 0} · resync ${s.wire.resync_dropped_bytes ?? 0} B${s.wire.unpaired_responses != null ? ` · ${t('endpoints.wireUnpaired', 'unpaired')} ${s.wire.unpaired_responses} · ${t('endpoints.wireAcrossJunk', 'paired across junk')} ${s.wire.paired_across_junk ?? 0}` : ''}`}</div>
+                ${(s.wire.junk_samples || []).length && this._junkSamplesHtml ? `<details class="ep-wire-junk" style="white-space:normal;font-size:11.5px;">
+                    <summary>${this._esc(this.tn('endpoints.wireJunk', s.wire.junk_samples.length, '{n} skipped byte runs'))}</summary>
+                    ${this._junkSamplesHtml(s.wire.junk_samples)}</details>` : ''}` : ''}
               </td>
               <td style="padding:8px 10px 8px 0;font-variant-numeric:tabular-nums;white-space:nowrap;"
                   title="${t('endpoints.srcOwnsHint', 'How many fields this source supplies right now. Zero means an earlier source already supplies everything it offers.')}">
@@ -1309,11 +1312,11 @@ Object.assign(JanitzaMonitor.prototype, {
                 <td style="white-space:nowrap;" title="${this._esc(this.t('status.word.' + (u.health || 'idle'), u.health || 'idle'))}"><span class="status-dot" style="--dot:${hc[u.health] || hc.idle}" aria-hidden="true"></span> <span class="col-wide-text">${this._esc(this.t('status.word.' + (u.health || 'idle'), u.health || 'idle'))}</span>${this._unitAlarmPill(u.alarms)}</td>
                 <td class="col-wide" title="${this._esc(u.last_seen || '')}">${age}</td>
                 <td class="col-wide">${via || '—'}</td>
-                <td style="text-align:right;white-space:nowrap;">
+                <td class="unit-acts"><span class="unit-acts-in">
                     <button class="btn btn-ghost btn-sm" ${this._act('openDeviceDetail', [u.device_id])}
                             title="${t('endpoints.openUnit', 'Open this unit')}" aria-label="${t('endpoints.openUnit', 'Open this unit')}"><i aria-hidden="true" class="bi bi-box-arrow-up-right"></i></button>
                     ${this._devRowMenuHtml({ id: u.device_id, name: u.name || u.device_id }, 'installation')}
-                </td>
+                </span></td>
             </tr>`;
         }).join('') || `<tr><td colspan="${5 + cols.length}"><span class="field-hint">${this.t('endpoints.noUnits', 'No units materialized.')}</span></td></tr>`;
     },

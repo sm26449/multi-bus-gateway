@@ -204,7 +204,12 @@ policy acts on exits.
 reads_total / errors_total / read_latency_ms / staleness_seconds / health`,
 `gateway_mqtt_connected / published_total`, `gateway_influx_connected /
 written_total / buffer_points / dropped_total`, `gateway_vmeter_up /
-requests_total / request_rate / errors_total / connections / quality`.
+requests_total / request_rate / errors_total / connections / quality`,
+and per listen-only (rtu_tap) bus `gateway_bus_frames_total / crc_errors_total /
+orphan_frames_total / exception_responses_total / resync_dropped_bytes_total /
+inferred_windows_total / writes_seen_total / paired_across_junk_total /
+unpaired_responses_total{bus=...}` — once per bus, not
+repeated on every tapped unit.
 Counters and health only, never configuration. `GET /api/status` (login
 required when auth is on) carries the same plus `config` (`healthy`,
 `saves_disabled`, `bad_file`, `written_by`, `written_by_newer`).

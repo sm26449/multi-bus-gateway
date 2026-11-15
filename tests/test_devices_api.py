@@ -872,13 +872,13 @@ def test_canonical_unit_contract_warns_not_rejects(caplog):
     from multibus.config import validate_register_identity as v
     rows = [{'address': 52, 'name': 'energy_active_import', 'unit': 'kWh',
              'data_type': 'int32', 'register_type': 'holding'}]
-    with caplog.at_level(logging.WARNING, logger='multibus.config'):
+    with caplog.at_level(logging.WARNING, logger='multibus.core.config'):
         v(rows)                                        # must NOT raise
     assert any('canonical unit' in r.message for r in caplog.records)
     # matching unit → silent
     caplog.clear()
     rows[0]['unit'] = 'Wh'
-    with caplog.at_level(logging.WARNING, logger='multibus.config'):
+    with caplog.at_level(logging.WARNING, logger='multibus.core.config'):
         v(rows)
     assert not any('canonical unit' in r.message for r in caplog.records)
 

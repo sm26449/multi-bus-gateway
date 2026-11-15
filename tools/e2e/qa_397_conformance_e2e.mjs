@@ -120,8 +120,9 @@ async function wizardRtu(page, where = 'here', role = '') {
   await page.click('[data-ad-way="connection"]');
   await answer(page, 'PortKind', 'serial');
   await answer(page, 'Reach', where);
-  await answer(page, 'Speaks', 'modbus:rtu').catch(() => {});
+  // the role before the protocol (ADR-0031 §2)
   if (role) await answer(page, 'Role', role).catch(() => {});
+  await answer(page, 'Speaks', 'modbus:rtu').catch(() => {});
   await settle(page, 600);
 }
 async function typePath(page, path, px = 'csAdd') {

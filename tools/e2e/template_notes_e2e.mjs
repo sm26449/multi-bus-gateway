@@ -10,6 +10,7 @@
 import { chromium } from 'playwright';
 import { execFileSync } from 'node:child_process';
 import { openDeviceTab } from './lib/device-page.mjs';
+import { openPage } from './lib/nav.mjs';
 
 const BASE = process.env.MBG_URL || 'http://127.0.0.1:8099';
 const CTR = process.env.CTR || 'mbg-ui-sandbox';
@@ -69,7 +70,7 @@ try {
   if (await later.count()) await later.first().click().catch(() => {});
 
   // ═══ 1. the device page ═══════════════════════════════════════════════
-  await page.click('[data-page="devices"]'); await page.waitForTimeout(800);
+  await openPage(page, 'devices'); await page.waitForTimeout(800);
   await page.evaluate(id => window.app.openDeviceDetail(id), DEV);
   await page.waitForSelector('#deviceWsTabs');
   const notes = page.locator('#deviceDetailView .tpl-note');
@@ -98,7 +99,7 @@ try {
   await page.waitForTimeout(300);
 
   // ═══ 3. written in the Advanced editor ═════════════════════════════════
-  await page.click('[data-page="templates"]');
+  await openPage(page, 'templates');
   await page.click(`[data-tm-edit="${TPL}"]`);
   await page.waitForSelector('#devTplModal.active');
   await page.click('#tplAdv > summary');

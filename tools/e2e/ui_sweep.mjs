@@ -3,6 +3,7 @@
 import { chromium } from 'playwright';
 import fs from 'fs';
 import { openDeviceTab } from './lib/device-page.mjs';
+import { openPage } from './lib/nav.mjs';
 const B = 'http://localhost:18090', OUT = '/tmp/audit';
 const report = [];
 const br = await chromium.launch({ executablePath: '/root/.cache/ms-playwright/chromium-1148/chrome-linux/chrome' });
@@ -32,7 +33,7 @@ async function fresh(viewport = { width: 1440, height: 1000 }, dark = false) {
   const later = p.locator('button:has-text("Later")'); if (await later.count()) await later.first().click().catch(() => {});
   return p;
 }
-const go = async (p, page) => { await p.click(`[data-page="${page}"]`); };
+const go = async (p, page) => { await openPage(p, page); };
 const toList = async (p) => {
   await p.evaluate(() => { try { app.closeDeviceDetail(); } catch (e) {} try { app.closeEndpointDetail(); } catch (e) {} });
   await go(p, 'devices'); await p.waitForTimeout(1000);

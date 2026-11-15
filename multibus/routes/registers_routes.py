@@ -27,6 +27,8 @@ import time
 import json
 import logging
 from datetime import datetime
+
+from multibus.transports.driver import DeviceDriver
 from typing import Dict, List, Optional
 
 from fastapi import APIRouter, Body, HTTPException, Query, Request
@@ -34,11 +36,11 @@ from fastapi.responses import JSONResponse, Response
 
 from .. import write_guard
 
-from ..can_signal import can_fields
+from ..codec.can_signal import can_fields
 from ._models import RegisterBatchQuery, RegisterQuery, SelectedRegisterUpdate
-from ..canonical_fields import CANONICAL_FIELDS
-from ..value_decode import apply_corrections
-from ..config import store_key
+from ..catalog.canonical_fields import CANONICAL_FIELDS
+from ..codec.value_decode import apply_corrections
+from ..core.config import store_key
 
 # What a measurement IS, from its canonical name. One classification for the
 # whole UI — the picker, the Selected list, the Overview and the Monitor used to
@@ -86,7 +88,7 @@ def build(ctx) -> APIRouter:
         real ones — sections, hero cards, the site-card metric picker. They
         are read-only here: the POST below drops them (their home is the
         Calculated tab), and `calculated: true` marks them for the UI."""
-        from ..calc_engine import CALC_ADDR_BASE
+        from ..devices.calc_engine import CALC_ADDR_BASE
         out = []
         for i, e in enumerate(config.load_calculated(device_id)):
             name = str(e.get('name') or f'CALC_{i}')
@@ -120,7 +122,7 @@ def build(ctx) -> APIRouter:
         return out
 
     def _display_for(dev_cfg) -> Dict:
-        from ..display import display_of
+        from ..catalog.display import display_of
         return display_of(template_registry, dev_cfg)
 
     def _with_template_categories(rows: List[Dict], dev_cfg) -> List[Dict]:
@@ -417,7 +419,7 @@ def build(ctx) -> APIRouter:
     # only (the Calculated tab's pseudo-rows ride the GET but are not saved
     # here), so a calculated edit never makes a selection stale.
     def _selection_rev(answer: Dict) -> str:
-        from ..calc_engine import CALC_ADDR_BASE
+        from ..devices.calc_engine import CALC_ADDR_BASE
         rows = [x for x in (answer.get("registers") or []) if (x.get("address") or 0) < CALC_ADDR_BASE]
         return write_guard.rev(rows)
 
@@ -527,7 +529,7 @@ def build(ctx) -> APIRouter:
         """A CAN row saved without its frame (an add that did not carry it)
         takes it from the device's template by name — without it the CAN
         driver would never read the row."""
-        from ..can_signal import can_fields, is_can_row
+        from ..codec.can_signal import can_fields, is_can_row
         dev_cfg = config.get_device(device) if device else None
         if dev_cfg is None or all(is_can_row(d) for d in reg_list):
             return
@@ -550,7 +552,7 @@ def build(ctx) -> APIRouter:
         a non-primary device saves to its own file and hot-reloads only its
         own pollers)."""
         try:
-            from ..calc_engine import CALC_ADDR_BASE
+            from ..devices.calc_engine import CALC_ADDR_BASE
             # calculated pseudo-rows ride the GET for display; their home is
             # the Calculated tab — a dashboard save must not duplicate them
             # into the register file
@@ -653,7 +655,7 @@ def build(ctx) -> APIRouter:
                                 dev_client.update_registers(regs_s, groups_s, source_id=s.id)
                             except TypeError:
                                 pass           # bare driver: nothing per-source to reload
-                    if touched_sources and dev_client and hasattr(dev_client, 'reload_registers'):
+                    if touched_sources and dev_client and isinstance(dev_client, DeviceDriver):
                         dev_client.reload_registers()
                     _clear_dropped(topics_before, dev_cfg)
                     return {"status": "ok", "count": len(consumed),
@@ -692,13 +694,13 @@ def build(ctx) -> APIRouter:
                         dev_client.update_registers(regs, groups, source_id=source)
                     except TypeError:      # a bare driver (no sources)
                         dev_client.update_registers(regs, groups)
-                    if hasattr(dev_client, 'reload_registers'):
+                    if isinstance(dev_client, DeviceDriver):
                         dev_client.reload_registers()
                 # drop store ghosts at deselected addresses (M2: a re-select
                 # keeping a name at a NEW address must not leave the old
                 # entry to shadow it in name-based vmeter lookup) — NOT gated
                 # on a live client: the store outlives client restarts
-                from ..device_registry import purge_deselected
+                from ..devices.device_registry import purge_deselected
                 _store = registry.store_for(device)
                 if _store is not None:
                     purge_deselected(_store, regs)
@@ -721,7 +723,7 @@ def build(ctx) -> APIRouter:
                 modbus_client.update_registers(config.selected_registers, config.poll_groups)
                 modbus_client.reload_registers()
             # drop store ghosts at deselected addresses (M2 — see device path)
-            from ..device_registry import purge_deselected
+            from ..devices.device_registry import purge_deselected
             purge_deselected(ctx.current_values, config.selected_registers)
 
             mqtt_publisher = ctx.mqtt_publisher              # request-time (rebindable)
@@ -823,7 +825,7 @@ def build(ctx) -> APIRouter:
         registers = [{"address": x.address, "data_type": x.data_type,
                       "register_type": ('input' if str(x.register_type).lower() in ('input', 'ir', 'fc4', '4') else 'holding')}
                      for x in query.registers]
-        from ..config import store_key
+        from ..core.config import store_key
         results = client.read_registers_batch(registers)   # keyed by store key
         # answer by address, as always; the same address asked in both tables
         # gives the second one as "<table>:<address>"
@@ -910,7 +912,7 @@ def build(ctx) -> APIRouter:
         register naming. The register editor reads it for inline autocomplete +
         'did you mean' guidance and to auto-fill the hierarchical MQTT topic +
         InfluxDB measurement, so a user names fields uniformly across devices."""
-        from ..canonical_fields import CANONICAL_FIELDS, USER_FIELDS, is_cumulative_field
+        from ..catalog.canonical_fields import CANONICAL_FIELDS, USER_FIELDS, is_cumulative_field
         return {
             "fields": {
                 name: {"measurement": meas, "unit": unit,
@@ -950,7 +952,7 @@ def build(ctx) -> APIRouter:
         ``{name, category, unit, topic?, description?, counter?}``. A field
         some device already reads keeps its category (InfluxDB measurement)
         and topic — moving them would split its history."""
-        from .. import canonical_fields as cf
+        from ..catalog import canonical_fields as cf
         name = str(payload.get("name") or "").strip()
         d = {k: payload.get(k) for k in ("category", "unit", "topic", "description", "counter")
              if payload.get(k) is not None}
@@ -975,7 +977,7 @@ def build(ctx) -> APIRouter:
 
     @r.delete("/api/canonical-fields/user/{name}")
     def delete_user_field(name: str):
-        from .. import canonical_fields as cf
+        from ..catalog import canonical_fields as cf
         if name not in cf.USER_FIELDS:
             raise HTTPException(status_code=404, detail="no such user field")
         users = _field_users(name)
@@ -995,7 +997,7 @@ def build(ctx) -> APIRouter:
         {guesses:[name|null]} list aligned by index — null where the classifier
         isn't confident (a wrong rename is worse than none). This is the single,
         unit-tested source of truth (the UI no longer classifies client-side)."""
-        from ..canonical_fields import guess_canonical
+        from ..catalog.canonical_fields import guess_canonical
         regs = payload.get("registers") or []
         if not isinstance(regs, list):
             raise HTTPException(status_code=422, detail="registers must be a list")

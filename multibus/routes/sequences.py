@@ -12,7 +12,7 @@ from typing import Dict
 import yaml
 from fastapi import APIRouter, Body, HTTPException, Request
 
-from ..sequences import parse_sequence, validate_sequence
+from multibus.control.sequences import parse_sequence, validate_sequence
 
 logger = logging.getLogger(__name__)
 
@@ -53,7 +53,7 @@ def build(ctx) -> APIRouter:
         return payload
 
     def _validate(raw: Dict, existing: str = ''):
-        from ..rules_runtime import _validate_expr
+        from multibus.control.rules_runtime import _validate_expr
         errs = validate_sequence(raw, devices=_offered, validate_expr=_validate_expr)
         items = _store().load()
         if not errs and not existing and any(str(x.get('id')) == raw.get('id') for x in items):

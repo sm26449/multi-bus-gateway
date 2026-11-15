@@ -1,19 +1,22 @@
-# Alerts & webhooks
+# Alerts & notifications
 
-The gateway raises **two families of alerts** and delivers both over **MQTT**
-and/or an **HTTP webhook**:
+The gateway **detects**; it does not send SMS, chat or e-mail itself. It
+raises alert events and delivers them to:
 
-- **Infrastructure health** — a device or sink goes down, read latency stays
-  high, the InfluxDB buffer backs up.
-- **Value thresholds** — a register crosses its configured warning/danger
-  limits ("grid current > 72 A"), evaluated by the built-in per-register
-  **threshold engine** (off by default, see below).
+- **[Klopot](https://klopot.dev)** — the recommended route for notifications
+  on any channel (SMS, Telegram, e-mail and whatever else you configure
+  there). The gateway posts each event to Klopot as a structured event;
+  Klopot routes it by type and severity and owns throttling, retries, snooze
+  and escalation. See [Klopot](#klopot-notifications-on-any-channel).
+- **MQTT** (`<topic_prefix>/alert`) and an **HTTP webhook** — the raw alert
+  JSON, for your own automation (Node-RED, Home Assistant, a script).
 
-The gateway is the *detector*: it emits compact JSON alert events,
-rate-limited per key. Deduplication, routing, escalation and the actual
-Telegram/SMS/e-mail fan-out are the job of **your webhook receiver /
-notification system** (ntfy, Node-RED, Home Assistant, an SMS gateway, …) —
-the gateway deliberately does not reimplement a notification pipeline.
+The alert families: infrastructure health (a device or sink goes down, read
+latency stays high, the InfluxDB buffer backs up), device alarms declared
+by templates, serial bus health, virtual meters, and value thresholds — a
+register crossing its warning/danger limits ("grid current > 72 A"),
+evaluated by the built-in per-register **threshold engine** (off by
+default, see below). Each is a compact JSON event, rate-limited per key.
 
 ## Signals
 
@@ -27,6 +30,7 @@ An alert fires on these conditions (each toggleable), plus three ungated ones: c
 | `buffer` | on | the InfluxDB store-and-forward buffer grows past `buffer_points` (or drops points) |
 | `threshold` | **off** | a register value crosses one of its warning/danger thresholds (see next section) |
 | `bridge` | **off** | a bus behind our serial bridge goes over one of its limits: line errors per minute (frame, parity, overrun, break), the bus silent while the gateway asks it, TCP reconnects per 10 minutes — and once more (`info`) when it is back under. See [Bus health](#bus-health-the-bridge-signal) |
+| `vmeter` | on | a virtual meter gives its consumers no live answer, serves held values, or is no longer polled by its consumer; limits `alerts.vmeter` (`not_serving_s` 30, `held_s` 20, `consumer_idle_s` 120), per meter in `virtual_meters.yaml` |
 | `alarm` | on | an **alarm field its template declares** (`display.alarms`: an error code, a fault word, a calculated flag) turns active and stays so for its `for_s`; again on a new value (another error code); an `info` when it clears. Only while the device is live |
 
 Saving the alerts form changes only the signals it shows; a signal set in
@@ -108,13 +112,18 @@ bridges:
 
 A standby gateway neither alerts nor publishes.
 
-## Configure (`config.yaml`, applied on restart; live-tunable from Config → Alerts)
+## Configure (`config.yaml`, applied on restart; live-tunable from Settings → Alerts)
 
 ```yaml
 alerts:
   enabled: true
   mqtt: true                                   # publish to <mqtt.topic_prefix>/alert
-  webhook_url: "https://ntfy.example/gateway"  # POST target; empty = webhook off
+  alertd:                                      # the Klopot integration (key name kept for compatibility)
+    enabled: true
+    url: "http://klopot:5090/v1/fire"
+    api_key: "…"
+    source: "multi-bus-gateway"
+  webhook_url: "https://automation.example/hooks/gateway"  # your own receiver; empty = webhook off
   webhook_headers: { "X-API-Key": "secret" }   # auth / any headers the receiver needs
   webhook_body: { "message": "{severity} {source}: {message}" }
   min_interval_s: 300
@@ -141,43 +150,91 @@ Every alert is the JSON object:
   the resulting dict is POSTed. Available fields:
   `{ts}` `{severity}` `{source}` `{message}` `{key}` `{host}`.
 
-Example — a receiver that wants the event typed and its details nested, like
-a notification service's `POST /v1/fire`:
+Example — a receiver of your own that wants the fields nested:
 
 ```yaml
-  webhook_url: "http://alertd:5090/v1/fire"
-  webhook_headers: { "X-API-Key": "…" }
-  webhook_body: { "type": "mbg_alert",
-                  "context": { "severity": "{severity}", "source": "{source}",
-                               "message": "{message}", "key": "{key}" } }
+  webhook_url: "https://automation.example/hooks/gateway"
+  webhook_body: { "event": "gateway_alert",
+                  "detail": { "severity": "{severity}", "source": "{source}",
+                              "message": "{message}", "key": "{key}" } }
 ```
 
-Example — mapping onto an SMS gateway that expects `{"message": "..."}`:
-
-```yaml
-  webhook_body: { "message": "[{severity}] {source}: {message}" }
-```
+For SMS, chat or e-mail, use Klopot (next section) rather than a webhook
+straight to a messaging gateway: Klopot adds the routing, throttling and
+retries a direct webhook does not have.
 
 MQTT subscribers get the raw alert object on `<topic_prefix>/alert` regardless of
 `webhook_body` (the body template only shapes the webhook POST).
 
+## Klopot: notifications on any channel
+
+[Klopot](https://klopot.dev) is a notification service: it delivers events on
+SMS, Telegram, e-mail and the other channels you set up in it, by type and
+severity, with throttling, retries, snooze and escalation. The gateway is
+one of its producers.
+
+**Set up (Settings → Alerts, with alerting enabled):** tick *Send to the
+Klopot notification service*, give its fire URL (in the bundled Docker
+network typically `http://klopot:5090/v1/fire`), its API key and a *Source*
+name (default `multi-bus-gateway`), Save & Apply — applied live. Then
+**Download Klopot config pack** and import it into Klopot once: it holds a
+template and a route for each event type below, routed to the Klopot
+channels you name (`?channels=a,b`, default `ui_default,banner_default`).
+The pack carries no secrets. Test it with **Test** (below).
+
+In `config.yaml` it is the `alerts.alertd` block and the pack is
+`GET /api/alerts/alertd-pack`; both keep their older names for
+compatibility.
+
+**What is sent.** Each **event** is posted once, as JSON, with
+`X-API-Key`:
+
+```json
+{ "type": "mbg_device",
+  "context": { "source": "fronius-solar", "message": "device down",
+               "key": "dev:fronius-solar", "host": "gw-1", "ts": 1751560000.0,
+               "severity": "critical", "device_id": "fronius-solar" },
+  "source": "multi-bus-gateway" }
+```
+
+- `severity`: `info`, `warning` or `critical` (the gateway's `warn` →
+  `warning`; `error` → `critical`).
+- `context` may also carry `device_id`, `field`, `label`, `value`, `unit`,
+  `band`, `code` when the alert has them.
+- Event types: `mbg_device` (a device down/up), `mbg_sink` (MQTT or
+  InfluxDB down/up), `mbg_influx_auth`, `mbg_influx_dropped`,
+  `mbg_device_alarm` (template alarms), `mbg_bridge` (serial bus health),
+  `mbg_vmeter`, `mbg_config` (config load, downgrade), `mbg_gateway` (role,
+  services, a rule that failed), `mbg_event` (anything else), `mbg_test`.
+- **Conditions are not posted:** latency (`mbg_latency`), InfluxDB buffer
+  backlog (`mbg_influx_buffer`) and value thresholds (`mbg_threshold`) stay
+  on MQTT for a Klopot rule to evaluate over the gateway's values; the pack
+  ships their templates.
+- **No retry from the gateway.** A 2xx (Klopot answers 202) is delivered;
+  Klopot's outbox owns delivery from there. A failed post (non-2xx,
+  network) is written to the event log. Redirects are refused, so the API
+  key cannot be replayed to another host.
+- The Status page's *Outputs* tab shows the destination and the last
+  delivery.
+
 ### Security notes
 
 - The webhook has **no LAN/SSRF restriction** (unlike HTTP *device* fetches) —
-  it is meant to reach external notifiers (ntfy, Telegram, an SMS gateway).
+  it is meant to reach your own receivers outside the LAN.
   Authenticate to the receiver with `webhook_headers` (e.g. an API key).
 - Delivery is **best-effort** (fire-and-forget, no retry). A failed POST is
-  logged and dropped. For guaranteed delivery, subscribe to the MQTT topic and
-  let a durable consumer (Node-RED / your notification system) forward it.
+  logged and dropped. For guaranteed delivery use Klopot (its outbox retries),
+  or subscribe to the MQTT topic with a durable consumer.
 
 ## Test the wiring
 
-You don't have to wait for a real alert. On the **Status** page, next to the
-Alerts line, click **Test** — it fires a synthetic alert over the configured
+You don't have to wait for a real alert. In Settings → Alerts, or on the
+**Status** page's *Outputs* tab next to the alerts, click **Test** — it fires a synthetic alert over the configured
 channels and reports per-channel `sent` / `failed`. It bypasses `enabled` and the
 rate limit, so you can verify config before going live.
 
-A test-fire drives **real** outbound traffic (webhook → SMS, MQTT), so it is
+A test-fire drives **real** outbound traffic (Klopot → your channels, the
+webhook, MQTT), so it is
 guarded like a Modbus write:
 
 - **Credentialed** — refused (`403`) unless login (`ui.auth`) is enabled or an
@@ -192,7 +249,8 @@ API equivalent (send the API key / an authenticated session):
 ```bash
 curl -X POST http://<gateway>:8080/api/alerts/test \
      -H 'Content-Type: application/json' -H 'X-API-Key: <key>' -d '{"message":"hello"}'
-# -> { "delivered": true, "channels": { "mqtt": "sent", "webhook": "sent (HTTP 200)" },
+# -> { "delivered": true, "channels": { "mqtt": "sent", "webhook": "sent (HTTP 200)",
+#                                  "alertd": "…" },   # the Klopot post (older key name)
 #      "sent_body": { "message": "[info] test: hello" } }
 ```
 

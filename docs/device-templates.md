@@ -548,6 +548,7 @@ A minimal complete template:
 | `category` | — | section it is shown under |
 | `poll_group` | `normal` | which read rate |
 | `enum` / `bits` | — | decode a code into a word, or a status word into named bits |
+| `valid_min` / `valid_max` | — | plausibility range of the engineering value (after scale/offset), inclusive: a value outside it is dropped as missing, never published or stored. On a listen-only tap a window where most guarded rows are out of range is discarded whole (a mis-paired frame). Counted per device as `implausible` / `implausible_windows` |
 | `writable`, `write_min`, `write_max`, `write_allowed`, `write_safe` | — | the write envelope ([MANUAL §14](MANUAL.md#14-modbus-writes--dead-man-leases)) |
 | `json_path` | — | HTTP/MQTT: where the value is in the payload |
 | `topic` | — | MQTT: the row's own topic; `~/leaf` is relative to the device's |

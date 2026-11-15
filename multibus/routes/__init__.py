@@ -14,18 +14,21 @@
 # You should have received a copy of the GNU Affero General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 #
-"""API route modules — the 95 routes of ``create_api()`` split by domain.
+"""API route modules — the 273 routes of ``create_api()`` split by domain.
 
 Each module exposes ``build(ctx) -> APIRouter``; ``api.py`` constructs one
 ``ApiCtx`` with the shared singletons and mounts every router with
 ``app.include_router``. Paths are IDENTICAL to the old ``@app`` registrations
 (the auth/allowlist middleware guards by path, so nothing changes there).
 
-The publishers deserve a note: ``/api/config/apply`` can REBIND
+The publishers deserve a note: ``/api/config/apply`` can REPLACE
 ``mqtt_publisher``/``influxdb_publisher`` (it creates a new one when a sink is
-enabled after boot). Inside ``create_api`` that rebinding is a ``nonlocal``;
-route modules can't see closure cells, so the same apply handler also writes
-the new object into ``ctx``. Routers must therefore read publishers from
+enabled after boot). Inside ``create_api`` the publishers live in a
+``PublisherHolder`` (``outputs/holder.py``, ADR-0038); apply MUTATES
+``holder.mqtt``/``holder.influx`` in place rather than rebinding a name, so the
+closures still inside the god-function read the fresh object at send time.
+Route modules can't see the holder, so the same apply handler also mirrors the
+new object into ``ctx``. Routers must therefore read publishers from
 ``ctx.<name>`` AT REQUEST TIME — never grab them once in ``build()``.
 """
 from __future__ import annotations
@@ -49,8 +52,10 @@ class ApiCtx:
       auth_state         auth.AuthState — sessions/lockout
       api_key            str — optional API key ("" when unset)
       service_tokens     service_tokens.ServiceTokens — named tokens for programs
-      mqtt_publisher     MQTTPublisher|None — MUTABLE: rebound by /api/config/apply
-      influxdb_publisher InfluxDBPublisher|None — MUTABLE: rebound by /api/config/apply
+      mqtt_publisher     MQTTPublisher|None — MUTABLE: a mirror of the
+                         PublisherHolder, refreshed by /api/config/apply
+      influxdb_publisher InfluxDBPublisher|None — MUTABLE: a mirror of the
+                         PublisherHolder, refreshed by /api/config/apply
       audit_log          AuditLog — append-only who-changed-what trail
       ip_allowed         callable(str)->bool — the api.py allowlist check;
                          WS routes must call it (HTTP middleware skips WS scopes)

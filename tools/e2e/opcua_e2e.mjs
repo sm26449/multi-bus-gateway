@@ -10,6 +10,7 @@
  * Config it expects: login on (the OPC UA users are the gateway's).
  */
 import { chromium } from 'playwright';
+import { openPage } from './lib/nav.mjs';
 const BASE = process.env.MBG_URL || 'http://127.0.0.1:18090';
 const results = [];
 const check = (name, cond, extra = '') => { results.push({ name, ok: !!cond }); console.log(`${cond ? 'PASS' : 'FAIL'} ${name}${extra ? ' — ' + JSON.stringify(extra) : ''}`); };
@@ -23,7 +24,7 @@ try {
   check('logged in', login.ok());
   await page.goto(BASE + '/'); await page.waitForLoadState('networkidle');
   const later = page.locator('button:has-text("Later")'); if (await later.count()) await later.first().click().catch(() => {});
-  await page.click('[data-page="config"]'); await page.waitForTimeout(800);
+  await openPage(page, 'config'); await page.waitForTimeout(800);
   await page.click('[data-cfgtab="opcua"]'); await page.waitForTimeout(1200);
   const panel = page.locator('[data-cfgpanel="opcua"]');
   check('the OPC UA tab says what it is for and that it is off', /SCADA systems and HMI panels/.test(await panel.innerText())
@@ -45,7 +46,7 @@ try {
   check('the server certificate downloads', cert.ok() && (await cert.body())[0] === 0x30);
   await page.evaluate(() => { try { localStorage.setItem('mbg-lang', 'ro'); } catch (e) {} });
   await page.reload(); await page.waitForLoadState('networkidle');
-  await page.click('[data-page="config"]'); await page.waitForTimeout(800);
+  await openPage(page, 'config'); await page.waitForTimeout(800);
   await page.click('[data-cfgtab="opcua"]'); await page.waitForTimeout(1200);
   const ro = await panel.innerText();
   check('in Romanian', /Server OPC UA/.test(ro) && /Rulează/.test(ro) && /conturile gateway-ului/.test(ro) && !/opcua\./.test(ro), ro.slice(0, 300));

@@ -10,6 +10,7 @@
 import { chromium } from 'playwright';
 import { watchDialogs } from './lib/dialogs.mjs';
 import { openDeviceTab } from './lib/device-page.mjs';
+import { openPage } from './lib/nav.mjs';
 
 const BASE = process.env.MBG_URL || 'http://127.0.0.1:8099';
 const DEV = process.env.ATTR_DEVICE || 'umg512';
@@ -44,7 +45,7 @@ try {
   if (await later.count()) await later.first().click().catch(() => {});
 
   // the plant: Settings → Plant
-  await page.click('[data-page="config"]');
+  await openPage(page, 'config');
   await page.click('#configSubtabs [data-cfgtab="plant"]');
   await page.waitForSelector('#plantAttrHost .attr-card');
   check('the plant offers the location', (await page.locator('#plantAttrHost .attr-add-sel option[value="location"]').count()) === 1);
@@ -90,7 +91,7 @@ try {
   await page.waitForTimeout(600);
   check('and deleted', !(await api(`/api/attributes/devices/${DEV}`)).body.attributes.grid_connection);
   // back to the plant while the device's section is still in the page
-  await page.click('[data-page="config"]');
+  await openPage(page, 'config');
   await page.click('#configSubtabs [data-cfgtab="plant"]');
   await page.waitForSelector('#plantAttrHost [data-attr-cat="location"]');
   await page.click('#plantAttrHost [data-attr-cat="location"] [data-action="attrEdit"]');

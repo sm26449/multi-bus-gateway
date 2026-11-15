@@ -24,8 +24,10 @@ import time
 from typing import Dict
 
 from fastapi import APIRouter, Body, HTTPException, Request
+from fastapi.responses import Response
 from ..payload import flag
-from ..bridge_diag import DEFAULT_THRESHOLDS as DEFAULT_BRIDGE_THRESHOLDS
+from multibus.transports.serial.bridge_diag import DEFAULT_THRESHOLDS as DEFAULT_BRIDGE_THRESHOLDS
+from multibus.outputs.vmeter_alerts import DEFAULT_VMETER_THRESHOLDS
 
 from ._shared import secrets_visible as _secrets_visible
 
@@ -120,7 +122,7 @@ def build(ctx) -> APIRouter:
         a = config.alerts or {}
         _webhook = a.get("webhook_url", "") or ""
         if _webhook and not _secrets_visible(request, auth_state, api_key):
-            from ..redact import redact_url
+            from ..core.redact import redact_url
             _webhook = redact_url(_webhook)
         return {
             "enabled": bool(a.get("enabled", False)),
@@ -128,12 +130,20 @@ def build(ctx) -> APIRouter:
             "webhook_url": _webhook,
             "webhook_headers": {k: _HDR_MASK for k in (a.get("webhook_headers") or {})},
             "webhook_body": a.get("webhook_body", None),
+            "alertd": {
+                "enabled": bool((a.get("alertd") or {}).get("enabled", False)),
+                "url": (a.get("alertd") or {}).get("url", "") or "",
+                "api_key": (_HDR_MASK if (a.get("alertd") or {}).get("api_key") else ""),
+                "source": (a.get("alertd") or {}).get("source", "") or "",
+            },
             "min_interval_s": a.get("min_interval_s", 300),
             "latency_ms": a.get("latency_ms", 1000),
             "buffer_points": a.get("buffer_points", 1000),
             "signals": {"device": True, "sink": True, "latency": True, "buffer": True,
-                        "threshold": False, "alarm": True, "bridge": False,
+                        "threshold": False, "alarm": True, "bridge": False, "vmeter": True,
                         **(a.get("signals") or {})},
+            # virtual-meter alert limits, seconds (0 = that condition off)
+            "vmeter": {**DEFAULT_VMETER_THRESHOLDS, **(a.get("vmeter") or {})},
             # bus diagnostics thresholds (bridge_diag.py); each bridge and bus
             # may carry its own `alerts:` over these
             "bridge": {**DEFAULT_BRIDGE_THRESHOLDS, **(a.get("bridge") or {})},
@@ -153,7 +163,7 @@ def build(ctx) -> APIRouter:
         # save made from a redacted view would wipe the real token
         _cur = str(a.get("webhook_url", "") or "")
         if url and _cur:
-            from ..redact import redact_url
+            from ..core.redact import redact_url
             if url == redact_url(_cur) != _cur:
                 url = _cur
         if url and not (url.startswith("http://") or url.startswith("https://")):
@@ -183,7 +193,7 @@ def build(ctx) -> APIRouter:
             except (TypeError, ValueError):
                 errors.append("threshold_deadband_pct must be a number")
         if "bridge" in payload:
-            from ..bridge_diag import validate_thresholds
+            from multibus.transports.serial.bridge_diag import validate_thresholds
             bt = payload.get("bridge")
             errs = validate_thresholds(bt, "bridge")
             if isinstance(bt, dict) and "enabled" in bt:
@@ -192,8 +202,33 @@ def build(ctx) -> APIRouter:
                 errors.extend(errs)
             else:
                 a["bridge"] = {k: float(v) for k, v in (bt or {}).items()}
+        if "vmeter" in payload:
+            from multibus.outputs.vmeter_alerts import validate_thresholds as _vm_validate
+            vt = payload.get("vmeter")
+            errs = _vm_validate(vt, "vmeter")
+            if errs:
+                errors.extend(errs)
+            else:
+                a["vmeter"] = {**(a.get("vmeter") or {}),
+                               **{k: float(v) for k, v in (vt or {}).items()}}
         if "threshold_alert_on_start" in payload:
             a["threshold_alert_on_start"] = flag(payload, "threshold_alert_on_start")
+        if "alertd" in payload:
+            # the alertd producer (ADR-0043): a masked api_key round-trips the stored
+            # value unchanged (same convention as webhook_headers), so a save from the
+            # masked view never wipes the key.
+            ad_in = payload.get("alertd") or {}
+            ad_old = (config.alerts or {}).get("alertd") or {}
+            key_in = str(ad_in.get("api_key", "") or "")
+            url = str(ad_in.get("url", ad_old.get("url", "")) or "").strip()
+            if url and not (url.startswith("http://") or url.startswith("https://")):
+                errors.append("alertd.url must start with http:// or https://")
+            a["alertd"] = {
+                "enabled": flag(ad_in, "enabled", ad_old.get("enabled", False)),
+                "url": url,
+                "api_key": (ad_old.get("api_key", "") if key_in == _HDR_MASK else key_in),
+                "source": str(ad_in.get("source", ad_old.get("source", "")) or "").strip(),
+            }
         if errors:
             raise HTTPException(status_code=422, detail={"errors": errors})
         if "webhook_headers" in payload:
@@ -205,5 +240,17 @@ def build(ctx) -> APIRouter:
         config.save_yaml_config()
         alert_mgr.configure(a)                     # apply live — no restart
         return {"status": "ok", "channels": alert_mgr.status()["channels"]}
+
+    @r.get("/api/alerts/alertd-pack")
+    async def alertd_pack(channels: str = "ui_default,banner_default"):
+        """The MBG→alertd notification pack (ADR-0043 D6) as a YAML download. Carries no
+        secrets — just this gateway's alert templates + routes, for the operator to import
+        into alertd (POST /v1/config/import?apply=true)."""
+        from multibus.outputs.alertd_catalog import to_yaml
+        chans = [c.strip() for c in str(channels or "").split(",") if c.strip()]
+        src = ((config.alerts or {}).get("alertd") or {}).get("source") or "multi-bus-gateway"
+        text = to_yaml(channels=chans or None, source=src)
+        return Response(content=text, media_type="application/yaml", headers={
+            "Content-Disposition": 'attachment; filename="mbg-alertd-pack.yaml"'})
 
     return r

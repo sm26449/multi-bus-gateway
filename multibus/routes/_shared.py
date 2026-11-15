@@ -61,6 +61,6 @@ def device_influx(config, device: str):
     if hasattr(config, "get_raw_endpoint"):
         endpoint = config.get_raw_endpoint(device)
     if endpoint is not None:
-        from ..endpoint_aggregator import endpoint_bucket
+        from ..devices.endpoint_aggregator import endpoint_bucket
         return endpoint_bucket(endpoint, device), device
     raise ValueError(f"unknown device or endpoint: {device!r}")

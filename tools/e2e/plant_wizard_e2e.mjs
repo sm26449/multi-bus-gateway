@@ -15,6 +15,7 @@
  * be discovered.
  */
 import { chromium } from 'playwright';
+import { openPage } from './lib/nav.mjs';
 
 const BASE = process.env.MBG_URL || 'http://localhost:18086';
 const FAKE = process.env.FAKE || '127.0.0.1:18099';
@@ -40,7 +41,7 @@ try {
   await page.waitForLoadState('networkidle');
   const later = page.locator('button:has-text("Later")');
   if (await later.count()) await later.first().click().catch(() => {});
-  await page.click('[data-page="devices"]');
+  await openPage(page, 'devices');
   await page.waitForTimeout(1000);
 
   // ---- the way in --------------------------------------------------------

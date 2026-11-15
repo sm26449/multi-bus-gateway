@@ -465,7 +465,7 @@ def test_lease_revert_failure_log_is_edge_triggered(caplog):
             raise OSError("device unreachable")
     mgr.arm("d", "holding", 1, lease_ms=1, revert=flaky)
     time.sleep(0.02)
-    with caplog.at_level(logging.DEBUG, logger="multibus.write_lease"):
+    with caplog.at_level(logging.DEBUG, logger="multibus.control.write_lease"):
         mgr._sweep()
         for lease in mgr._leases.values():
             lease['expiry'] = 0

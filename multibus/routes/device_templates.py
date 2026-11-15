@@ -54,7 +54,7 @@ def build(ctx) -> APIRouter:
     def _pending_updates() -> Dict[str, List[Dict]]:
         """template id -> the installations / standalone devices that have
         an update from it waiting (the Templates page links to them)."""
-        from ..template_refresh import plan_devices
+        from ..catalog.template_refresh import plan_devices
         config = ctx.config
         out: Dict[str, List[Dict]] = {}
 
@@ -87,7 +87,7 @@ def build(ctx) -> APIRouter:
         list it, ADR-0027), ``protocol`` (modbus/http/mqtt), ``origin``
         (builtin/custom) — each a comma list — and ``sort`` (name, id,
         vendor, kind, used_by; ``-`` for descending)."""
-        from ..device_kind import template_kind
+        from ..catalog.device_kind import template_kind
         used = _templates_in_use()
         pending = _pending_updates()
         rows = []
@@ -134,7 +134,7 @@ def build(ctx) -> APIRouter:
     def check_device_template(payload: Dict = Body(...)):
         """Every problem a save would report, without saving — the Advanced
         tabs and the raw JSON editor ask after each change."""
-        from ..device_template import validate_template
+        from ..catalog.device_template import validate_template
         if not isinstance(payload.get("device_template"), dict):
             payload = {"device_template": payload}
         try:
@@ -148,7 +148,7 @@ def build(ctx) -> APIRouter:
         """A calculated field's formula against the map being edited: syntax,
         and whether every name it reads is a register or another calculated
         field of this template. No device, no live value needed."""
-        from .. import expressions
+        from ..core import expressions
         tpl = payload.get("template") or {}
         tpl = tpl.get("device_template", tpl) if isinstance(tpl, dict) else {}
         expr = str(payload.get("expr") or "")
@@ -163,7 +163,7 @@ def build(ctx) -> APIRouter:
         if not ok:
             return {"ok": False, "error": err, "refs": []}
         refs = [expressions.unprepare_ref(n, dashed) for n in refs]
-        from ..linked_meter import LINKED_FIELDS
+        from ..devices.linked_meter import LINKED_FIELDS
         known = set(regs) | set(calcs) | set(LINKED_FIELDS)    # a linked meter's fields
         base = lambda n: n.split("[", 1)[0]  # noqa: E731 — name[0] reads an array register
         unknown = [n for n in refs if n not in known and base(n) not in known and "." not in n]
@@ -186,8 +186,8 @@ def build(ctx) -> APIRouter:
     def identify_test(payload: Dict = Body(...)):
         """Does this draft's ``identify`` block recognise a real device? Asked
         through the device's own (shared) connection, in turn."""
-        from ..bus_scan import identify
-        from ..device_template import parse_template
+        from ..commissioning.bus_scan import identify
+        from ..catalog.device_template import parse_template
         tpl = payload.get("template") or {}
         if not isinstance(tpl.get("device_template"), dict):
             tpl = {"device_template": tpl}
@@ -219,7 +219,7 @@ def build(ctx) -> APIRouter:
         """Create or update a USER template (built-in ids are shielded).
         Validation errors come back as a per-row list (422) so the editor can
         mark the exact offending rows."""
-        from ..device_template import validate_template
+        from ..catalog.device_template import validate_template
         errors = validate_template(payload)
         if errors:
             raise HTTPException(status_code=422, detail={"errors": errors})
@@ -253,7 +253,7 @@ def build(ctx) -> APIRouter:
         """Delete a USER template. A built-in one is read-only (422); a template
         a device or an installation (enabled or not) reads with is refused
         (409) until they use another. `?dry_run=true`: the same checks."""
-        from ..dependents import summary
+        from ..lifecycle.dependents import summary
         t = template_registry.get(template_id)
         if t is None:
             raise HTTPException(status_code=404, detail="template not found")
@@ -285,7 +285,7 @@ def build(ctx) -> APIRouter:
     def _own_fields_of(t) -> Dict[str, Dict]:
         """The installation's own canonical fields this template names — they
         travel with it, so it reads the same way on another gateway."""
-        from ..canonical_fields import USER_FIELDS
+        from ..catalog.canonical_fields import USER_FIELDS
         names = {r.name for r in (t.registers or [])} | {c.name for c in (t.calculated or [])}
         return {n: dict(USER_FIELDS[n]) for n in sorted(names) if n in USER_FIELDS}
 
@@ -293,7 +293,7 @@ def build(ctx) -> APIRouter:
         """Create the canonical fields a template brings that this gateway
         lacks. One that exists with another definition is left as it is and
         named — the local definition holds history already."""
-        from .. import canonical_fields as cf
+        from ..catalog import canonical_fields as cf
         dt = (data or {}).get("device_template") or data or {}
         brought = dt.get("fields") or {}
         added, kept = [], []
@@ -341,7 +341,7 @@ def build(ctx) -> APIRouter:
         id silently: pass ?overwrite=true semantics via payload flag."""
         data = payload.get('template') or payload
         overwrite = flag(payload, 'overwrite', False)
-        from ..device_template import validate_template
+        from ..catalog.device_template import validate_template
         errors = validate_template(data)
         if errors:
             raise HTTPException(status_code=422, detail={"errors": errors})
@@ -362,7 +362,7 @@ def build(ctx) -> APIRouter:
                 "restarted": _apply_protocol_change(t, old_proto), "fields": adopted}
 
     BYTE_ORDERS = ("big", "little", "badc", "dcba")
-    from ..config import REGISTER_MAP_PROTOCOLS
+    from ..core.config import REGISTER_MAP_PROTOCOLS
     TRANSPORTS = REGISTER_MAP_PROTOCOLS + ("http", "mqtt")
 
     def _protocol_from(payload: Dict, meta: Dict) -> Dict:
@@ -397,8 +397,8 @@ def build(ctx) -> APIRouter:
         """Convert a CSV register map into a device-template PREVIEW (not saved).
         The UI reviews register_count/warnings/validation_errors, then POSTs the
         returned device_template to /api/device-templates/upload to save it."""
-        from ..csv_import import parse_csv
-        from ..device_template import validate_template
+        from ..catalog.csv_import import parse_csv
+        from ..catalog.device_template import validate_template
         csv_text = str(payload.get('csv', '') or '')
         if not csv_text.strip():
             raise HTTPException(status_code=422, detail={"errors": ["csv is empty"]})
@@ -439,8 +439,8 @@ def build(ctx) -> APIRouter:
         write envelope pass through. The UI reviews register_count/warnings/
         validation_errors, then POSTs the returned device_template to
         /api/device-templates/upload to save it."""
-        from ..yaml_import import parse_yaml
-        from ..device_template import validate_template
+        from ..catalog.yaml_import import parse_yaml
+        from ..catalog.device_template import validate_template
         yaml_text = str(payload.get('yaml', '') or '')
         if not yaml_text.strip():
             raise HTTPException(status_code=422, detail={"errors": ["yaml is empty"]})

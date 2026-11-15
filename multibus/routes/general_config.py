@@ -84,7 +84,7 @@ def build(ctx) -> APIRouter:
                                         "phase_custom": dc.get("phase_custom") or [],
                                         "categories": cats}
         config.ui.timezone = tz
-        from .. import clock
+        from ..core import clock
         clock.set_timezone(tz)          # rules and calculated fields read the hour in it
         config.save_yaml_config()
         return {"status": "ok", "timezone": tz, "applies": "live",
@@ -92,7 +92,7 @@ def build(ctx) -> APIRouter:
 
     # ── how new devices are named (ADR-0026 §3) ──────────────────────────
     def _identity_view() -> Dict:
-        from ..identity import DEFAULT_PATTERNS
+        from ..core.identity import DEFAULT_PATTERNS
         return {"identity_scope": config.identity_scope, "gateway_id": config.gateway_id,
                 "defaults": DEFAULT_PATTERNS,
                 "default_topic_pattern": config.mqtt.default_topic_pattern,
@@ -115,8 +115,8 @@ def build(ctx) -> APIRouter:
         created AFTERWARDS are named — topic, bucket and Home Assistant node.
         A device that exists keeps all three: they are stored with it
         (ADR-0026 §3), so nothing is renamed or re-announced."""
-        from ..identity import DEFAULT_PATTERNS, SCOPES, fill, gateway_id_error, pattern_error
-        from ..topic_prefix import overlap
+        from ..core.identity import DEFAULT_PATTERNS, SCOPES, fill, gateway_id_error, pattern_error
+        from ..devices.topic_prefix import overlap
         fields: Dict[str, str] = {}
         scope = payload.get("identity_scope", config.identity_scope)
         gid = payload.get("gateway_id", config.gateway_id)

@@ -160,6 +160,19 @@ def stop_app_threads() -> None:
     for srv in list(OpcUaServer._instances):
         if srv._thread is not None:
             srv.stop()
+    # GATE-FLAKE-1: a REST pusher a test enabled pushes — and logs its failure to stderr —
+    # every few seconds for the rest of the run; one still logging while the interpreter
+    # finalizes crashed the process (exit 139) AFTER a fully green suite.
+    from multibus.outputs.rest_push import RestPusher
+    pushers = [t for t in threading.enumerate() if isinstance(t, RestPusher)]
+    for t in pushers:
+        t.stop()
+    for t in pushers:
+        # stop() only sets an event: a pusher waiting on it ends at once, one inside an HTTP
+        # call ends when that returns. Wait for it, briefly — a pusher still logging while the
+        # interpreter finalizes is the crash this is here to prevent (R2D-GATE-1).
+        if t is not threading.current_thread() and t.is_alive():
+            t.join(timeout=0.5)
 
 
 @pytest.fixture(autouse=True)
@@ -179,6 +192,17 @@ def _stop_leaked_app_threads():
 def pytest_sessionfinish(session, exitstatus):
     """Name any non-daemon thread still alive at the end: one would keep
     the process from exiting after its summary (FLK-7/FLK-9)."""
+    try:
+        stop_app_threads()                    # the last test's leftovers, before the summary
+    except Exception:  # noqa: BLE001
+        pass
+    from multibus.outputs.rest_push import RestPusher
+    still = [t.name for t in threading.enumerate() if isinstance(t, RestPusher) and t.is_alive()]
+    if still:
+        tr0 = session.config.pluginmanager.get_plugin("terminalreporter")
+        if tr0 is not None:
+            tr0.write_line("REST pushers still alive at the end (GATE-FLAKE-1): "
+                           + ", ".join(still), yellow=True)
     left = [t for t in threading.enumerate()
             if t is not threading.main_thread() and not t.daemon and t.is_alive()]
     if left:

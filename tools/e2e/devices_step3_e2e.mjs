@@ -53,6 +53,13 @@ const openDev = async (page, id, tab) => {
   }), [id, tab]);
   await page.waitForTimeout(700);
 };
+// the overview's facts (source, link, bus) sit in its collapsed "Technical
+// details" (UX-05): open it as a user does, then read the whole overview
+const overviewText = async page => {
+  const tech = page.locator('#deviceDetailView [data-dpanel="overview"] details.ddv-tech');
+  if (await tech.count() && !(await tech.evaluate(d => d.open))) await tech.locator('summary').click();
+  return page.locator('#deviceDetailView [data-dpanel="overview"]').innerText();
+};
 const rowText = (page, id) => page.locator(`#devicesListView .device-row:has(.dev-chip:text-is("${id}"))`).first().innerText();
 
 try {
@@ -69,7 +76,7 @@ try {
   check('list: HTTP has no unit', !/unit \d/.test(await rowText(page, 'web')), await rowText(page, 'web'));
 
   await openDev(page, 'gx');
-  const ov = await page.locator('#deviceDetailView [data-dpanel="overview"]').innerText();
+  const ov = await overviewText(page);
   check('overview: MQTT source is its broker, never ":8883 · unit"', /none\.invalid:8883 · TLS/.test(ov) && !/· unit/.test(ov), ov.slice(0, 300));
   await openDev(page, 'gx', 'setup');
   await page.waitForSelector('[data-dpanel="setup"] [data-setup="connection"]');
@@ -80,9 +87,9 @@ try {
   await openDev(page, 'udp');
   const head = await page.locator('#deviceDetailView [data-verdict]').innerText();
   check('overview: a disabled UDP device reads "Disabled", not "Connected"', /Disabled/.test(head) && !/Connected/.test(head), head);
-  check('overview: UDP has no "Link" fact (a datagram socket says nothing)', !/\bLink\b/.test(await page.locator('#deviceDetailView [data-dpanel="overview"]').innerText()));
+  check('overview: UDP has no "Link" fact (a datagram socket says nothing)', !/\bLink\b/.test(await overviewText(page)));
   await openDev(page, 'gwm');
-  const gwOv = await page.locator('#deviceDetailView [data-dpanel="overview"]').innerText();
+  const gwOv = await overviewText(page);
   check('overview: Modbus TCP shows its link', /\bLink\b/.test(gwOv));
   check('overview: a device on a gateway names the gateway\'s bus', /gw · bus :15997 · unit 3/.test(gwOv), gwOv.slice(0, 300));
 

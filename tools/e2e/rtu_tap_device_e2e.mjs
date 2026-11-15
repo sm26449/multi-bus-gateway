@@ -17,6 +17,7 @@ import { chromium } from 'playwright';
 import { openDeviceTab, saveDeviceEditor, editorSettled } from './lib/device-page.mjs';
 import { watchDialogs } from './lib/dialogs.mjs';
 import { openAdd, pickModel, answer, fill, next, waitCheck } from './lib/add-device.mjs';
+import { openPage } from './lib/nav.mjs';
 
 const BASE = process.env.MBG_URL || 'http://127.0.0.1:8099';
 const PORT = process.env.TAP_PORT || '/tmp/ttyTAPE2E';
@@ -65,7 +66,7 @@ try {
   await page.waitForLoadState('networkidle');
   const later = page.locator('button:has-text("Later")');
   if (await later.count()) await later.first().click().catch(() => {});
-  await page.click('[data-page="devices"]');
+  await openPage(page, 'devices');
   await page.waitForTimeout(800);
 
   // ---- 1. Add: a model that only listens → Listen-only, said why ------------
@@ -141,7 +142,7 @@ try {
   check('still hearing after the restart', t.ok === true, t.message);
 
   // ---- 4. the line rules surface in the wizard ----------------------------
-  await page.click('[data-page="devices"]');
+  await openPage(page, 'devices');
   await page.waitForTimeout(500);
   await wizardToTap({ serial: PORT, baud: 0, unit: 4 });
   const lineWhy = await page.locator('#csAddLineWhy').innerText();

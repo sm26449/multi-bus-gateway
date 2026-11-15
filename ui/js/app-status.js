@@ -20,15 +20,18 @@ Object.assign(JanitzaMonitor.prototype, {
         if (!counts || !Object.keys(counts).length) return '';
         const EXC = { 1: 'ILLEGAL FUNCTION', 2: 'ILLEGAL DATA ADDRESS', 3: 'ILLEGAL DATA VALUE',
                       4: 'DEVICE FAILURE', 6: 'DEVICE BUSY', 10: 'GW PATH', 11: 'GW TARGET' };
-        const parts = Object.entries(counts).sort((a, b) => b[1] - a[1]).map(([k, n]) => {
+        // only what happened (a 0 says nothing), in words, never a raw key (STATUS-KEYS-1)
+        const parts = Object.entries(counts).filter(([, n]) => Number(n) > 0).sort((a, b) => b[1] - a[1]).map(([k, n]) => {
             const m = k.match(/^exception_(\d+)$/);
             if (m) {
                 const code = Number(m[1]);
                 return `<span title="${this._esc(EXC[code] || '')}">exc ${String(code).padStart(2, '0')}: ${n}</span>`;
             }
-            const short = { timeout: 'timeout', connection: 'conn', other: 'other' }[k] || k;
+            const short = { timeout: 'timeout', connection: 'conn', other: 'other' }[k]
+                || (this._humanizeKey ? this._humanizeKey(k).toLowerCase() : k.replace(/_/g, ' '));
             return `${this._esc(short)} ${n}`;
         });
+        if (!parts.length) return '';
         return ` <span class="st-faint">· ${parts.join(' · ')}</span>`;
     },
 
@@ -349,10 +352,15 @@ Object.assign(JanitzaMonitor.prototype, {
                     g.rss != null ? `${this._stNum(g.rss)} MB` : '');
     },
 
+    toggleStatusIssues() { this._st.attnExpanded = !this._st.attnExpanded; this._statusPaint(); },
+
     _stAttention(m) {
         if (!m.issues.length) return '';
         const t = this.t.bind(this), MAX = 6;
-        const rows = m.issues.slice(0, MAX).map(i => {
+        // UX-09: "and N more" was dead text pointing at the pills; make it an explicit
+        // expand/collapse action that reveals every issue in place.
+        const expanded = !!this._st.attnExpanded, shown = expanded ? m.issues.length : MAX;
+        const rows = m.issues.slice(0, shown).map(i => {
             const sevWord = i.sev === 'error' ? t('status.sev.error', 'Error') : t('status.sev.warn', 'Warning');
             const since = i.since != null ? (i.seen ? t('status.seenFor', 'seen {d}', { d: this._stDur(i.since) }) : this._stDur(i.since)) : '';
             return `<li class="st-issue st-${i.sev}" data-key="${this._esc(i.key)}">
@@ -364,7 +372,9 @@ Object.assign(JanitzaMonitor.prototype, {
             </li>`;
         }).join('');
         const more = m.issues.length > MAX
-            ? `<div class="st-attn-more">${t('status.andMore', 'and {n} more — the pills and tabs marked ✖ ▲ hold them', { n: m.issues.length - MAX })}</div>` : '';
+            ? `<div class="st-attn-more"><button type="button" class="btn btn-ghost btn-sm" ${this._act('toggleStatusIssues', [])} aria-expanded="${expanded}">${expanded
+                ? `${t('status.showFewer', 'Show fewer')} <i aria-hidden="true" class="bi bi-chevron-up"></i>`
+                : `${t('status.showAll', 'Show all {n} issues', { n: m.issues.length })} <i aria-hidden="true" class="bi bi-chevron-down"></i>`}</button></div>` : '';
         return `<div class="st-attn-box"><div class="st-attn-title">${t('status.attention', 'Needs attention')} · ${m.issues.length}</div><ul>${rows}</ul>${more}</div>`;
     },
 
@@ -403,7 +413,7 @@ Object.assign(JanitzaMonitor.prototype, {
                     : /mqtt|tap|can/.test(proto(d)) ? `<span class="st-muted" title="${this._esc(t('status.pushTip', 'It sends its values; nothing is polled'))}">${t('status.push', 'push')}</span>` : '—'}</td>
                 <td class="num st-hide-sm${d.slow ? ' st-warn-t' : ''}">${lat}</td>
                 <td class="num">${d.staleness_age_s != null ? this._stDur(d.staleness_age_s) : '—'}</td>
-                <td class="num${fails ? ' st-bad' : ' st-muted'}">${this._stNum(fails)}<span class="st-hide-sm">${this._errBreakdown(d.error_counts)}</span>${d.can && this._canCountersHtml ? `<div class="st-muted st-hide-sm" style="font-size:11.5px;">${this._canCountersHtml(d.can)}</div>` : ''}</td>
+                <td class="num${fails ? ' st-bad' : ' st-muted'}">${this._stNum(fails)}<span class="st-hide-sm">${this._errBreakdown(d.device_error_counts || d.error_counts)}</span>${d.can && this._canCountersHtml ? `<div class="st-muted st-hide-sm" style="font-size:11.5px;">${this._canCountersHtml(d.can)}</div>` : ''}</td>
                 <td class="num st-muted st-hide-sm" title="${this._esc(t('status.upSinceTip', 'time in the current health state (connection uptime)'))}">${d.up_since_s != null ? this._stDur(d.up_since_s) : '—'}</td></tr>`;
             const groups = d.primary && (modbus.poll_groups_detail || []).length
                 ? `<tr class="st-sub" data-key="${this._esc(d.id)}:groups"><td></td><td colspan="7">${modbus.poll_groups_detail.map(g =>
@@ -537,6 +547,12 @@ Object.assign(JanitzaMonitor.prototype, {
             ])}
             <div class="st-sigs" aria-label="${this._esc(t('alerts.signals', 'Signals'))}">${SIGNALS.map(([k, key, d]) =>
                 `<span class="st-badge st-${sig[k] ? 'ok' : 'info'}" title="${this._esc(sig[k] ? t('status.sigOn', 'alerts are sent') : t('status.sigOff', 'not alerted'))}"><i aria-hidden="true" class="bi bi-${sig[k] ? 'check-lg' : 'dash'}"></i> ${this._esc(t(key, d))}</span>`).join('')}</div>
+            ${a.alertd && a.alertd.active ? `<div class="st-subtitle">${t('status.alertdTitle', 'Notification service (Klopot)')}</div>
+              <p class="st-muted" style="margin:0 0 6px;">${this._esc(a.alertd.url || '')}${a.alertd.last
+                ? ' · ' + t('status.lastDelivery', 'last') + ': ' + (a.alertd.last.ok
+                    ? `<span class="st-badge st-ok">${this._esc(String(a.alertd.last.status || ('HTTP ' + a.alertd.last.code)))}</span>`
+                    : `<span class="st-badge st-danger">${this._esc(String(a.alertd.last.error || 'failed'))}</span>`)
+                : ' · ' + t('status.noDelivery', 'no delivery yet')}</p>` : ''}
             <div class="st-subtitle">${t('status.lastAlerts', 'Last alerts sent')}</div>
             ${!list.length ? `<p class="st-muted" style="margin:0;">${t('status.noAlertsSent', 'No alert sent since the gateway started.')}</p>`
               : `<div class="st-scroll"><table class="st-table st-log"><tbody>${list.map(x => {

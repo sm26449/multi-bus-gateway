@@ -15,6 +15,7 @@ import { openAdd, pickModel, answer, fill, next, waitCheck, create } from './lib
 import { execFileSync } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { freshPage, openPage } from './lib/nav.mjs';
 
 const BASE = process.env.MBG_URL || 'http://127.0.0.1:8099';
 const CTR = process.env.CTR || 'mbg-ui-sandbox';
@@ -99,7 +100,7 @@ page.on('pageerror', e => errs.push(String(e)));
 const card = id => page.locator(`.bridge-card[data-bridge="${id}"]`);
 const busRow = (id, port) => card(id).locator(`.bridge-port:has(code:text-is(":${port}"))`);
 async function goDevices() {
-  await page.click('[data-page="devices"]');
+  await freshPage(page, 'devices');
   if (!(await page.isVisible('#devicesListView')))
     await page.click('#deviceRegistersView [data-action="closeDeviceRegisters"]');
   await page.waitForSelector('#devicesListView', { state: 'visible' });
@@ -202,10 +203,30 @@ try {
   check('Scan on a tapped bus is refused (409)', (await post(`/api/bridges/${BR.m}/ports/${P.m}/scan`, {})).status === 409);
   check('Check mode on a tapped bus is refused (409)',
     (await post(`/api/bridges/${BR.m}/probe`, { port: P.m, unit_id: 1 })).status === 409);
-  await goDevices();
+  // UI-LIVE-1: the card follows the gateway while the page is open — no
+  // reload, no navigation: the frame count the tap hears arrives on its own
+  await openPage(page, 'devices');
   await card(BR.m).waitFor();
-  await page.waitForFunction(id => /listening · [1-9]\d* frames/i.test(
-    document.querySelector(`.bridge-card[data-bridge="${id}"]`)?.innerText || ''), BR.m, { timeout: 15000 });
+  await page.evaluate(() => { window.__e2eSameDoc = 1; });
+  const liveOk = await page.waitForFunction(id => /listening · [1-9]\d* frames/i.test(
+    document.querySelector(`.bridge-card[data-bridge="${id}"]`)?.innerText || ''), BR.m, { timeout: 15000 })
+    .then(() => true, () => false);
+  check('the bridge card updates itself while the page is open (frames > 0, same page, no reload)',
+    liveOk && await page.evaluate(() => window.__e2eSameDoc === 1),
+    (await card(BR.m).innerText()).replace(/\s+/g, ' ').slice(0, 200));
+  // a part whose data did not change keeps its node (no tooltip/press lost)
+  await page.evaluate(id => { const d = document.querySelector(`.bridge-card[data-bridge="${id}"] [data-live-state] .status-dot`); if (d) d.__e2eMark = 1; }, BR.m);
+  await sleep(11000);
+  check('…an unchanged part is not replaced on a refresh round', await page.evaluate(id =>
+    document.querySelector(`.bridge-card[data-bridge="${id}"] [data-live-state] .status-dot`)?.__e2eMark === 1, BR.m));
+  let liveAsks = 0;
+  const onReq = r => { if (new URL(r.url()).pathname === '/api/bridges') liveAsks++; };
+  page.on('request', onReq);
+  await openPage(page, 'templates');
+  await sleep(7000);
+  page.off('request', onReq);
+  check('…and stops asking once the page is left', liveAsks === 0, `${liveAsks} requests to /api/bridges`);
+  await goDevices();
   const mRow = await busRow(BR.m, P.m).innerText();
   check('the bus shows "listening · N frames · 0 CRC errors"', /listening · \d+ frames · 0 CRC errors/i.test(mRow), mRow);
   check('…and offers no Scan, + Device or Check mode there',

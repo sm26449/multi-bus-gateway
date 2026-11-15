@@ -73,6 +73,7 @@ Object.assign(JanitzaMonitor.prototype, {
         if (this._sessionDead) return;
         this._sessionDead = true;
         if (this._statusTimer) { clearInterval(this._statusTimer); this._statusTimer = null; }
+        if (this._bridgesLiveStop) this._bridgesLiveStop();     // the bridge cards' refresh (UI-LIVE-1)
         if (this.ws) {
             this.ws.onclose = null;          // no reconnect loop on a dead session
             try { this.ws.close(); } catch (e) {}

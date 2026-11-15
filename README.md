@@ -110,8 +110,10 @@ all the same. No vendor lock-in, no per-box cost.
   ([rtu-serial.md §7](docs/rtu-serial.md)).
 - **CAN, listen-only** — SocketCAN (a USB adapter, a HAT), signals decoded
   from the template with DBC semantics (frame id, start bit, length, byte
-  order); there is no transmit path, and the interface's own listen-only
-  flag is checked and shown. First map: the Pylontech BMS → inverter link.
+  order); a CAN device has no transmit path, and the interface's own
+  listen-only flag is checked and shown. First map: the Pylontech BMS →
+  inverter link. **Settings → CAN** shows each interface's mode and can
+  switch it (opt-in `CAP_NET_ADMIN`, [manual §5.5](docs/MANUAL.md#55-can)).
 - **Seplos V2 BMS** — the packs' RS485 ASCII protocol, read-only by
   construction: poll a pack, or listen on a bus a master pack already
   polls (the inter-pack summary of a parallel bank), on a local port or
@@ -215,6 +217,11 @@ all the same. No vendor lock-in, no per-box cost.
   busy each wire really is.
 - **Asset attributes** — what the equipment is (location, grid connection
   limits, PV inputs, ratings) for an EMS or a SCADA ([guide](docs/attributes.md)).
+- **Virtual BMS (experimental)** — several battery packs aggregated into one
+  BMS served to an inverter over CAN (Pylontech LV), EMS-commandable within
+  configured bounds, with guided arming, slow pack return and a ramp from 0.
+  Not yet validated on hardware: do not arm it on an inverter in service
+  ([manual §11e](docs/MANUAL.md#11e-virtual-bms--experimental)).
 - **Nothing is deleted while something uses it** — a device, an
   installation or a template in use says what uses it and offers Disable
   instead.
@@ -298,11 +305,15 @@ publishing over MQTT is an ordinary MQTT device here.
   (412) and shown, not silently lost.
 
 **Observability & UX**
-- **Prometheus `/metrics`** (device/sink/vmeter series), a **Status** page
+- **Prometheus `/metrics`** (device/sink/vmeter/bus series; loopback or
+  `security.metrics_allowlist`), a **Status** page
   with the error taxonomy, a **persisted event log**, and a
   container-probe-correct `/health`.
-- **Infrastructure alerts** over MQTT + webhook
-  ([guide](docs/alerts-webhooks.md)).
+- **Alerts** — device, sink, template-alarm, bus-health, virtual-meter and
+  threshold events. For notifications on SMS, Telegram, e-mail or any other
+  channel they go to **[Klopot](https://klopot.dev)** as structured events,
+  with a downloadable config pack; MQTT and a webhook for your own
+  automation ([guide](docs/alerts-webhooks.md)).
 - **EN+RO i18n** — the whole UI in both languages, with the language's
   plural forms and date format (languages are `ui/languages/*.json` files
   — no rebuild),
@@ -383,8 +394,8 @@ with the credentials from `.env`; the gateway logs in with the same pair
 from the first boot) and InfluxDB self-configures. Want minimal?
 `docker compose up -d multi-bus-gateway mosquitto`. Your own broker or
 Influx? Repoint the gateway from the UI whenever you like — the bundled
-ones are ordinary containers. Pin a release with `MBG_VERSION=3.92.1` in
-`.env`; every install path in detail: [docs/install.md](docs/install.md),
+ones are ordinary containers. Pin a release with `MBG_VERSION=<version>`
+(e.g. `3.101.0-rc1`) in `.env`; every install path in detail: [docs/install.md](docs/install.md),
 day-two operations: [docs/operations.md](docs/operations.md).
 
 Already running a stack on the shared network (existing broker + Influx)?
@@ -439,8 +450,8 @@ release is cut: [docs/releasing.md](docs/releasing.md).
 
 They are **part of the default stack** — nothing to start separately. On
 first boot InfluxDB self-configures (org/bucket `multibus`; change the
-password/token in `.env`), then enable the sink in the UI (Config →
-InfluxDB) and paste the token. Grafana: `http://localhost:3000`. Don't
+password/token in `.env`), then enable the sink in the UI (System →
+Settings → InfluxDB) and paste the token. Grafana: `http://localhost:3000`. Don't
 want them? `docker compose up -d multi-bus-gateway mosquitto` starts just
 the core.
 
@@ -475,11 +486,12 @@ Files under `config/` (the volume): `config.yaml` (globals + devices),
 
 ## Web UI
 
-Four main areas — **Dashboard** (global), **Devices** (per-device
-workspace: Overview / Edit / Registers / Calculated / Outputs / Monitor /
-History / Energy), **Virtual Meters**, **Diagnostics**, **Status** and
-**Config**. Everything specific to one device lives in its workspace, not
-in a global menu. Full tab-by-tab tour:
+One navigation row — **Dashboard** · **Assets** (Devices, Virtual Meters,
+Virtual BMS) · **Configuration** (Rules, Templates) · **System**
+(Diagnostics, Settings) · **Status**. A device's page groups its tabs into
+Live, Data, Setup and Diagnose; everything that changes it is in its ⋯
+menu. Everything specific to one device lives with the device, not in a
+global menu. Full tab-by-tab tour:
 [manual §4](docs/MANUAL.md#4-the-web-ui-tab-by-tab).
 
 ## API
@@ -559,7 +571,7 @@ multi-bus-gateway/
 ## Using an existing MQTT / InfluxDB stack
 
 To point the gateway at brokers/databases you already run (instead of the
-bundled ones), set the connection details in the UI (Config → Settings) —
+bundled ones), set the connection details in the UI (System → Settings → MQTT / InfluxDB) —
 they persist to `config/config.yaml` and apply live, no restart — and start
 only the gateway service:
 

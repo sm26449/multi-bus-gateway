@@ -13,6 +13,7 @@
  */
 import { chromium } from 'playwright';
 import { execFileSync } from 'node:child_process';
+import { openPage } from './lib/nav.mjs';
 
 const BASE = process.env.MBG_URL || 'http://127.0.0.1:8099';
 const PORT = process.env.TAP_PORT || '/tmp/ttyTAPE2E';
@@ -107,7 +108,7 @@ page.on('console', m => { if (m.type() === 'error') errs.push(m.text()); });
 try {
   await page.goto(BASE + '/'); await page.waitForLoadState('networkidle');
   const later = page.locator('button:has-text("Later")'); if (await later.count()) await later.first().click().catch(() => {});
-  await page.click('[data-page="devices"]');
+  await openPage(page, 'devices');
   await page.evaluate(id => window.app.openEndpointDetail(id), ID);
   await page.waitForSelector(`[data-group-units]`);
   await page.waitForTimeout(1500);
@@ -122,12 +123,12 @@ try {
     const note = await page.locator('#plTplUpdate').innerText().catch(() => '');
     check('an aged unit raises the notice', /template/i.test(note) && /1 change/.test(note), note.replace(/\s+/g, ' '));
     // the Templates page says where an update is waiting
-    await page.click('[data-page="templates"]');
+    await openPage(page, 'templates');
     await page.waitForSelector('.tm-pending', { timeout: 15000 }).catch(() => {});
     const pend = await page.locator('.tm-pending').allInnerTexts().catch(() => []);
     check('Templates page names the installation waiting for an update',
       pend.some(x => /Bank display E2E/.test(x)), pend.join(' | ').replace(/\s+/g, ' ').slice(0, 160));
-    await page.click('[data-page="devices"]');
+    await openPage(page, 'devices');
     await page.evaluate(id => window.app.openEndpointDetail(id), ID);
     await page.waitForSelector('#plTplUpdate .tpl-update-notice', { timeout: 12000 });
     await page.locator('#plTplUpdate button').click();
@@ -183,7 +184,7 @@ try {
   check('poll group shown as a hint, not a status pill', await page.locator('.widget-card .badge.poll-normal, .widget-card .badge.poll-tap').count() === 0);
   // mobile endpoint table
   await page.setViewportSize({ width: 390, height: 844 });
-  await page.click('[data-page="devices"]');
+  await openPage(page, 'devices');
   await page.evaluate(id => window.app.openEndpointDetail(id), ID);
   await page.waitForTimeout(1500);
   const overflow = await page.evaluate(() => {
@@ -191,6 +192,18 @@ try {
     return t ? t.scrollWidth - w.clientWidth : -1;
   });
   check('phone: unit table fits without side-scrolling', overflow <= 4, `overflow ${overflow}px`);
+  // E2E-398-D1: every row's ⋯ wholly inside the card, and it opens
+  const menuFit = await page.evaluate(() => {
+    const t = document.querySelector('[data-group] table'); const w = t && t.closest('div');
+    const box = w ? w.getBoundingClientRect() : null;
+    const dots = [...document.querySelectorAll('[data-group-units] [data-dev-menu]')].map(b => b.getBoundingClientRect());
+    return box && dots.length ? dots.every(d => d.right <= box.right + 0.5 && d.left >= box.left - 0.5 && d.width > 0) : false;
+  });
+  check('phone: each unit row\'s ⋯ is wholly inside its card', menuFit);
+  await page.locator('[data-group-units] [data-dev-menu]').first().click();
+  await page.waitForTimeout(400);
+  check('phone: the row\'s ⋯ opens its menu', await page.locator('[data-group-units] .mbg-menu:not([hidden]) [role="menuitem"]').count() > 0);
+  await page.keyboard.press('Escape');
   // ---- 4. C: alarms the template declares; D: grid, active-only, bitmasks
   await page.setViewportSize({ width: 1440, height: 950 });
   const u3 = (g.units || []).find(u => u.unit_id === 3) || {};
@@ -207,7 +220,7 @@ try {
     JSON.stringify({ n: pe.units_alarming, a: pu3.alarms }));
   const fl = ((await api('/api/fleet')).body.devices || []).find(d => d.id === u3.device_id) || {};
   check('C: the fleet counts it too', (fl.alarms || {}).warning >= 1, JSON.stringify(fl.alarms));
-  await page.click('[data-page="devices"]');
+  await openPage(page, 'devices');
   await page.evaluate(id => window.app.openEndpointDetail(id), ID);
   await page.waitForTimeout(1500);
   check('C: census says how many units alarm', /alarming/.test(await page.innerText('#plCensus')));

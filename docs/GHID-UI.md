@@ -1,6 +1,6 @@
 # Ghid vizual al interfeței — Multi-Bus Gateway
 
-> Ghid în română, cu capturi din versiunea 3.92 (octombrie 2026). Referința
+> Ghid în română, pentru versiunea 3.101.0-rc1 (noiembrie 2026). Referința
 > completă, la zi, este [MANUAL.ro.md](MANUAL.ro.md) (română) /
 > [MANUAL.md](MANUAL.md) (engleză).
 
@@ -25,7 +25,11 @@ Paris):
 
 Interfața din capturi este în engleză; mai jos, butoanele și tab-urile poartă
 numele din interfața în română, cu cel englezesc în paranteză acolo unde ajută.
-Bara de sus e identică peste tot: navigarea între pagini, indicatorii de stare
+Bara de sus e identică peste tot: navigarea între pagini, pe un singur rând —
+**Tablou de bord** · **Active ▾** (Dispozitive, Contoare virtuale, Virtual BMS
+*Experimental*) · **Configurare ▾** (Reguli, Șabloane) · **Sistem ▾**
+(Diagnostic, Setări) · **Status**; un grup deschide un mic meniu, iar pe
+telefon tot rândul se strânge într-un buton **Navigare** —, indicatorii de stare
 (Dev / MQTT / DB / VM — verde = ok), selectorul de limbă și comutatorul de temă
 (clar/întunecat). Bara de jos arată conexiunea, cadențele de poll (Realtime /
 Normal / Slow), ora ultimului update și versiunea.
@@ -52,7 +56,7 @@ al Dispozitivului (§20).
 
 ---
 
-## 2. Monitor live (Dispozitive → unitate → Diagnostic → Monitor)
+## 2. Monitor live (Active → Dispozitive → unitate → Diagnostic → Monitor)
 
 ![Monitor](img/guide/02-monitor.png)
 
@@ -81,7 +85,7 @@ monitoarelor active. Butonul **Test** din antet face o citire de probă, iar
 
 ---
 
-## 3. Istoric (Dispozitive → unitate → Live → Istoric)
+## 3. Istoric (Active → Dispozitive → unitate → Live → Istoric)
 
 ![History](img/guide/03-history.png)
 
@@ -92,7 +96,7 @@ putere) fără a deschide Grafana.
 
 ---
 
-## 4. Dispozitive (Devices)
+## 4. Active → Dispozitive (Assets → Devices)
 
 ![Devices](img/guide/04-devices.png)
 
@@ -113,17 +117,27 @@ măsurătorile, monitorul, deschiderea spațiului de lucru (§19, §20) și meni
 **Dispozitive șterse: restaurează…**, deschide lista dispozitivelor șterse.
 După o ștergere, un mesaj oferă **Anulează** timp de 10 s.
 
+Bridge-urile seriale au și ele câte un card aici, reîmprospătat la fiecare 5 s
+pe loc: starea, fiecare magistrală cu gradul de ocupare și eticheta **Sănătatea
+liniei**. Eticheta deschide diagnosticul magistralei: un verdict cu un sfat
+(*linie sănătoasă*, *cablaj RS-485, terminație sau baud*, *un slave nu
+răspunde*…), contoarele kernelului pe bridge, conexiunea și activitatea, ce a
+văzut gateway-ul în ultimele 5 minute (inclusiv erorile unei magistrale Seplos
+V2) și, pentru o magistrală doar ascultată, secțiunea **Magistrala ascultată**:
+contoarele ei numărate o dată, nu pe fiecare dispozitiv care ascultă.
+
 ---
 
-## 5. Șabloane (Templates)
+## 5. Configurare → Șabloane (Configuration → Templates)
 
 ![Templates](img/guide/05-templates.png)
 
-Catalogul din spatele Dispozitivelor, în trei tab-uri: **Hărți dispozitiv**
+Catalogul din spatele Dispozitivelor, în patru tab-uri: **Hărți dispozitiv**
 (Device maps — cum se citește un echipament real: adrese, cod de funcție, ordinea
 octeților), **Emulări contor** (Meter emulations — ce poate servi un Contor
-virtual), **Câmpuri canonice** și **Tipuri de dispozitive** (tipurile
-incluse și cele proprii, cu **Adaugă tip**). Filtre pe tip, producător, protocol și
+virtual), **Câmpuri canonice** (dicționarul de nume standard, cu unitatea,
+categoria și topicul fiecăruia; un admin adaugă câmpuri proprii) și **Tipuri de
+dispozitive** (tipurile incluse și cele proprii, cu **Adaugă tip**). Filtre pe tip, producător, protocol și
 origine; fiecare card arată id-ul, protocolul, numărul de registre, versiunea și
 **Folosit de** (aici Șabloanele Fronius folosite de „Roof PV”). Pe un Șablon:
 **Vezi**, **Duplică** și descărcare. Sus: **Importă CSV**, **Importă YAML**,
@@ -131,7 +145,7 @@ origine; fiecare card arată id-ul, protocolul, numărul de registre, versiunea 
 
 ---
 
-## 6. Stare (Status)
+## 6. Status
 
 ![Status](img/guide/06-status.png)
 
@@ -147,7 +161,7 @@ pagină la care te uiți când ceva nu merge — îți spune *care strat* e boln
 
 ---
 
-## 7. Contoare virtuale (Virtual Meters)
+## 7. Active → Contoare virtuale (Assets → Virtual Meters)
 
 ![Virtual Meters](img/guide/07-vmeters.png)
 
@@ -163,7 +177,7 @@ previzualizarea valorilor și statisticile de comunicație.
 
 ---
 
-## 8. Diagnostic — Monitor magistrală
+## 8. Sistem → Diagnostic — Monitor magistrală
 
 ![Bus Monitor](img/guide/08-diagnostics-busmonitor.png)
 
@@ -177,7 +191,7 @@ unei magistrale noi.
 
 ---
 
-## 9. Diagnostic — Sondă registru (endianness)
+## 9. Sistem → Diagnostic — Sondă registru (endianness)
 
 ![Register Probe](img/guide/09-diagnostics-probe.png)
 
@@ -190,7 +204,7 @@ cu captura pornită, cadrele sondei apar în monitorul de deasupra.
 
 ---
 
-## 10. Diagnostic — Scanare SunSpec
+## 10. Sistem → Diagnostic — Scanare SunSpec
 
 ![SunSpec Scan](img/guide/10-diagnostics-sunspec.png)
 
@@ -203,13 +217,13 @@ folosesc la construirea unui Șablon.
 
 ---
 
-## 11. Setări — MQTT
+## 11. Sistem → Setări — MQTT
 
 ![Settings MQTT](img/guide/11-settings-mqtt.png)
 
 Tab-urile Setărilor: MQTT, InfluxDB, OPC UA, Modbus (bugetul
-previzualizării), Backup și restaurare, Securitate, Alerte, General, Amplasament
-și Module. Aici: brokerul (adresă, port, utilizator/parolă), **prefixul
+previzualizării), CAN (§23), Backup și restaurare, Securitate, Alerte, General,
+Amplasament și Module. Aici: brokerul (adresă, port, utilizator/parolă), **prefixul
 implicit de topic** pentru Dispozitivele noi (gol = cel al identității
 gateway-ului, `mbg/<gateway>/devices/{device}` sau `mbg/devices/{device}`, vezi
 §17 — fiecare Dispozitiv își păstrează prefixul propriu),
@@ -219,7 +233,7 @@ aplică** reconectează live.
 
 ---
 
-## 12. Setări — InfluxDB
+## 12. Sistem → Setări — InfluxDB
 
 ![Settings InfluxDB](img/guide/12-settings-influxdb.png)
 
@@ -233,7 +247,7 @@ sunt în configurație — vezi MANUAL.ro.md).
 
 ---
 
-## 13. Setări — Backup și restaurare + Snapshot-uri
+## 13. Sistem → Setări — Backup și restaurare + Snapshot-uri
 
 ![Backup & Snapshots](img/guide/13-settings-backup-snapshots.png)
 
@@ -243,13 +257,16 @@ excluse implicit (bifa **Include secretele** le adaugă). Dedesubt,
 **Snapshot-uri și revenire**: un snapshot al configurației se face automat după
 fiecare schimbare (coloana *Trigger* spune care), plus **Snapshot acum**. Pe
 fiecare: diff, revenire, descărcare, ștergere. Revenirea salvează întâi starea
-curentă, deci e reversibilă. **LKG** („last known good”) se actualizează doar
+curentă, deci e reversibilă. Înainte de o restaurare sau de un import, dialogul
+spune ce ar reactiva backup-ul (dispozitive cu scrierile deblocate, comenzi
+activate, reguli armate) și propune implicit **Blochează toate scrierile
+(recomandat)**; blocarea suspendă și regulile care scriu până deblochezi. **LKG** („last known good”) se actualizează doar
 după un boot sănătos și se restaurează automat dacă configurația nu se mai
 încarcă.
 
 ---
 
-## 14. Setări — Securitate
+## 14. Sistem → Setări — Securitate
 
 ![Settings Security](img/guide/14-settings-security.png)
 
@@ -265,7 +282,7 @@ când iese din el.
 
 ---
 
-## 15. Setări — Securitate: Jurnal de audit
+## 15. Sistem → Setări — Securitate: Jurnal de audit
 
 ![Audit Trail](img/guide/15-settings-security-audit.png)
 
@@ -278,21 +295,28 @@ rolul admin poate citi jurnalul.
 
 ---
 
-## 16. Setări — Alerte
+## 16. Sistem → Setări — Alerte
 
 ![Settings Alerts](img/guide/16-settings-alerts.png)
 
-Alerte trimise pe MQTT (`<prefix>/alert`) și/sau printr-un webhook HTTP.
+Gateway-ul produce evenimente de alertă; pentru notificări pe SMS, Telegram,
+e-mail sau orice alt canal le trimite la **[Klopot](https://klopot.dev)**, un
+serviciu de notificări care le rutează după tip și severitate.
 **Semnale**: Dispozitiv căzut/revenit, sink deconectat/reconectat, latență mare,
-buffer InfluxDB în urmă, alarmele declarate de Șablonul Dispozitivului și,
-opțional, pragurile per valoare; plus intervalul minim și pragurile de latență și
-de buffer. **Canale**: MQTT și webhook-ul (URL, antete JSON, corp JSON cu
-placeholdere `{severity} {source} {message}` …). **Test** trimite o alertă de
-probă; **Activează alertele** e bifa generală.
+buffer InfluxDB în urmă, alarmele declarate de Șablonul Dispozitivului,
+opțional pragurile per valoare și **Sănătatea magistralelor seriale** (erori pe
+linie, magistrală tăcută, reconectări — cu limitele pe magistrală); plus
+intervalul minim și pragurile de latență și de buffer. **Canale**: MQTT
+(`<prefix>/alert`) și un webhook (URL, antete JSON, corp JSON cu placeholdere
+`{severity} {source} {message}` …) pentru automatizările tale, apoi **Trimite
+către serviciul de notificări Klopot**: URL-ul (de ex.
+`http://klopot:5090/v1/fire`), cheia API, sursa și **Descarcă pachetul de
+configurare Klopot**, de importat o dată în Klopot. **Test** trimite o alertă de
+probă pe fiecare canal activ; **Activează alertele** e bifa generală.
 
 ---
 
-## 17. Setări — General
+## 17. Sistem → Setări — General
 
 ![Settings General](img/guide/17-settings-general.png)
 
@@ -408,7 +432,7 @@ merg pe MQTT și din Home Assistant; fiecare rulare e auditată.
 
 ---
 
-## 22. Reguli
+## 22. Configurare → Reguli
 
 ![Rules](img/guide/22-rules.png)
 
@@ -423,9 +447,50 @@ regulă cere un câmp pe care Dispozitivul nu-l are, cardul o marchează **intr�
 necunoscute** și propune numele corect. Tabelul: unitatea,
 starea, ce vrea, timpul de azi și ce a citit înapoi. Intervențiile operatorului:
 **Dezactivează**, **Plafon…**, **Pauză…**, **Forțează…**; **Decizii** deschide
-istoricul. Sus: **Adaugă regulă**, **Export**, **Import**. Dedesubt,
+istoricul. O regulă *Trepte* are în editor și secțiunea **Avansat / reglaj**
+(`resume_on_boot`, `step_down_margin`, timpii de pornire, de reîncercare urgentă
+și de menținere la coborâre). Sus: **Adaugă regulă**, **Export**, **Import**. Dedesubt,
 **Secvențe**: comenzi în ordine, cu așteptări și verificări, anulate în ordine
 inversă dacă un pas eșuează.
+
+---
+
+## 23. Sistem → Setări — CAN
+
+![Settings CAN](img/guide/30-settings-can.png)
+
+Fiecare interfață CAN a gazdei: punctul de stare (pornită / oprită), modul
+**Transmite** sau **doar ascultare**, bitrate-ul și **Citește aici** (dispozitivele
+care citesc magistrala). **Comută pe Listen-only** / **Comută pe Transmite** se
+face dintr-un clic, cu confirmare, și e auditată; comutarea pe Transmite cere
+scrierile permise, un port cu un Virtual BMS armat e refuzat, iar un bitrate nou
+pe o magistrală citită de dispozitive cere confirmare. Comutarea are nevoie de
+capabilitatea `CAP_NET_ADMIN` dată containerului (`--cap-add NET_ADMIN` și
+`MBG_CAN_NET_ADMIN=1`, vezi MANUAL.ro.md §5.5); fără ea, interfața se setează pe
+gazdă. Când o
+acțiune are nevoie de o setare oprită (de exemplu armarea unui Virtual BMS cere
+scrieri permise și portul în Transmit), gateway-ul spune ce lipsește și se
+oferă s-o activeze.
+
+---
+
+## 24. Active → Virtual BMS (experimental)
+
+![Virtual BMS](img/guide/31-vbms.png)
+
+Un Virtual BMS agregă unul sau mai multe pachete de baterii într-un BMS logic și
+îl servește unui invertor prin CAN. **Experimental:** nu e încă validat pe
+hardware — nu-l arma pe un invertor în funcțiune; o limită greșită poate opri
+sau afecta o baterie. Sus, **Adaugă Virtual BMS** și **Reîmprospătează**. Cardul
+arată starea (**Dezarmat** = tăcut, invertorul nu vede niciun BMS), interfața
+CAN, pachetele sursă și, cu **Arată agregarea**, tabelul: fiecare câmp, valoarea
+din fiecare pachet și ce se trimite (`soc` ponderat, `capacity_total` însumat,
+limitele de curent). Pe card: **Armează…**, **Editează** și **Șterge** (ultimele
+două doar dezarmat). **Armează…** verifică întâi condițiile (scrieri permise,
+portul în Transmite, bitrate-ul) și explică ce lipsește, cu **Activează acum**.
+Cu pachete lipsă limitele scad la ce pot duce pachetele rămase, un pachet
+revine abia după 60 s, iar după fiecare pornire limitele cresc treptat de la 0
+(detalii: MANUAL.ro.md §11e).
 
 ---
 
@@ -441,5 +506,5 @@ inversă dacă un pas eșuează.
 - **Mai departe**: [MANUAL.ro.md](MANUAL.ro.md), [API.md](API.md),
   [rules.md](rules.md), [opcua.md](opcua.md).
 
-*Capturi generate pe versiunea 3.92, pe un gateway demo cu dispozitive simulate
+*Capturi generate pe versiunea 3.101.0-rc1, pe un gateway demo cu dispozitive simulate
 și adrese de documentație (Playwright la 1440×950, temă clară, UI în engleză).*

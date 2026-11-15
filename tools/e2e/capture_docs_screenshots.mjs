@@ -15,6 +15,7 @@ import { chromium } from 'playwright';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { openDeviceTab } from './lib/device-page.mjs';
+import { openPage } from './lib/nav.mjs';
 
 const BASE = process.env.MBG_URL || 'http://localhost:18090';
 const USER = process.env.MBG_USER || 'admin';
@@ -36,7 +37,7 @@ const shot = async (name, opts = {}) => {
     await page.screenshot({ path: `${OUT}/${name}`, ...opts });
     console.log('  ✓', name);
 };
-const go = async (pg, ms = 1500) => { await page.click(`[data-page="${pg}"]`); await wait(ms); };
+const go = async (pg, ms = 1500) => { await openPage(page, pg); await wait(ms); };
 const closeModals = () => page.evaluate(() => document.querySelectorAll('.modal.active').forEach(m => m.classList.remove('active')));
 const top = () => page.evaluate(() => window.scrollTo(0, 0));
 const openUnit = async (unitId, tab, ms = 2500) => {
@@ -113,7 +114,7 @@ if (await logsTab.count()) {
     const pg = await ctx2.newPage();
     await pg.goto(BASE + '/'); await pg.waitForTimeout(2000);
     await pg.evaluate(() => { try { app.dismissFirstRun(); } catch (e) {} });
-    await pg.click('[data-page="vmeters"]'); await pg.waitForTimeout(2000);
+    await openPage(pg, 'vmeters'); await pg.waitForTimeout(2000);
     const h2 = pg.locator('.vm-acc-head').first(); if (await h2.count()) { await h2.click(); await pg.waitForTimeout(1200); }
     const l2 = pg.locator('[data-vmsub="logs"]').first(); if (await l2.count()) { await l2.click(); await pg.waitForTimeout(2500); }
     await pg.evaluate(() => window.scrollTo(0, 0));

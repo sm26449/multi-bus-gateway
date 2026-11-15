@@ -13,6 +13,8 @@
  */
 import { chromium } from 'playwright';
 import { watchDialogs } from './lib/dialogs.mjs';
+import { openPage } from './lib/nav.mjs';
+import { ruleOverride } from './lib/rules.mjs';
 const BASE = process.env.MBG_URL || 'http://127.0.0.1:18090';
 const results = [];
 const check = (name, cond, extra = '') => { results.push({ name, ok: !!cond }); console.log(`${cond ? 'PASS' : 'FAIL'} ${name}${extra ? ' — ' + JSON.stringify(extra) : ''}`); };
@@ -26,7 +28,7 @@ const answers = dlg.answers;
 try {
   await page.goto(BASE + '/'); await page.waitForLoadState('networkidle');
   const later = page.locator('button:has-text("Later")'); if (await later.count()) await later.first().click().catch(() => {});
-  await page.click('[data-page="rules"]'); await page.waitForTimeout(800);
+  await openPage(page, 'rules'); await page.waitForTimeout(800);
   const content = page.locator('#rulesContent');
   await page.click('#rulesAddBtn'); await page.waitForTimeout(800);
   const m = page.locator('#ruleModal');
@@ -60,18 +62,18 @@ try {
   check('the API keeps days as numbers', JSON.stringify(sch[0].days) === '[1,2,3,4,5]' && JSON.stringify(sch[2].days) === '[6,7]', JSON.stringify(sch));
   // force, then end it
   answers.push({ value: 30, minutes: 60 });
-  await card.locator('button:has-text("Force")').click(); await page.waitForTimeout(1500);
+  await ruleOverride(page, 'week-pump', 'force'); await page.waitForTimeout(1500);
   await page.click('#rulesRefreshBtn'); await page.waitForTimeout(1200);
   check('a force shows on the card with its value and end', /forced value 30 until/i.test(await content.locator('[data-rule="week-pump"]').innerText()),
         (await content.locator('[data-rule="week-pump"]').innerText()).slice(0, 500));
   answers.push({ value: '' });
-  await content.locator('[data-rule="week-pump"] button:has-text("Force")').click(); await page.waitForTimeout(1500);
+  await ruleOverride(page, 'week-pump', 'force'); await page.waitForTimeout(1500);
   await page.click('#rulesRefreshBtn'); await page.waitForTimeout(1200);
   check('an empty answer ends the force', !/forced value/i.test(await content.locator('[data-rule="week-pump"]').innerText()));
   // the Romanian page: translated days on the card, the field keeps Mon-Fri
   await page.evaluate(() => { try { localStorage.setItem('mbg-lang', 'ro'); } catch (e) {} });
   await page.reload(); await page.waitForLoadState('networkidle');
-  await page.click('[data-page="rules"]'); await page.waitForTimeout(1200);
+  await openPage(page, 'rules'); await page.waitForTimeout(1200);
   const ro = await content.locator('[data-rule="week-pump"]').innerText();
   await content.locator('[data-rule="week-pump"] button[data-action="openRuleModal"]').click(); await page.waitForTimeout(800);
   check('in Romanian the card says Lu-Vi, the field keeps what the server reads', /Lu-Vi 06:00 → 25/.test(ro)

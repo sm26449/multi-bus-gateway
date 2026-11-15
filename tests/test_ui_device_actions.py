@@ -26,9 +26,15 @@ import pytest
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 UI = ROOT / "ui" / "js"
 HTML = (ROOT / "ui" / "templates" / "index.html").read_text(encoding="utf-8")
-API = (ROOT / "multibus" / "api.py").read_text(encoding="utf-8")
+# api is a package now (P0.8b); read its whole source so a refusal/UI string is
+# found wherever within multibus/api/ it lives (e.g. device_validation.py).
+# P0.8b Lot G moved the route handlers (and the write refusals they raise) into
+# multibus/routes/*.py, so the server-refusal universe spans both packages.
+API = "\n".join(p.read_text(encoding="utf-8")
+                for p in sorted((ROOT / "multibus" / "api").glob("*.py"))
+                + sorted((ROOT / "multibus" / "routes").glob("*.py")))
 # the primary's fixed fields are refused in device_patch.py's words (L3.11a)
-PATCH_WORDS = (ROOT / "multibus" / "device_patch.py").read_text(encoding="utf-8")
+PATCH_WORDS = (ROOT / "multibus" / "devices" / "device_patch.py").read_text(encoding="utf-8")
 LANGS = {n: json.loads((ROOT / "ui" / "languages" / f"{n}.json").read_text(encoding="utf-8")) for n in ("en", "ro")}
 
 try:

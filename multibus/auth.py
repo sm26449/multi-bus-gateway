@@ -208,7 +208,16 @@ class AuthState:
         rem = until - time.time()
         return int(rem) if rem > 0 else None
 
-    def _record_failure(self, ip: str) -> None:
+    def ensure_not_locked(self, ip: str) -> None:
+        """Raise PermissionError(seconds remaining) while ``ip`` is locked out.
+        The one gate every login flow (password, passkey begin/finish) passes."""
+        locked = self.is_locked(ip)
+        if locked:
+            raise PermissionError(locked)
+
+    def record_failure(self, ip: str) -> None:
+        """Count one failed login from ``ip`` (any flow); the
+        ``lockout_threshold``-th within ``lockout_minutes`` locks the IP."""
         now = time.time()
         with self._lock:
             fails = [t for t in self._fails.get(ip, []) if now - t < self.lockout_s]
@@ -218,7 +227,8 @@ class AuthState:
                 self._locked_until[ip] = now + self.lockout_s
                 self._fails[ip] = []
 
-    def _clear_failures(self, ip: str) -> None:
+    def clear_failures(self, ip: str) -> None:
+        """A login from ``ip`` succeeded: its failure streak and lock end."""
         with self._lock:
             self._fails.pop(ip, None)
             self._locked_until.pop(ip, None)
@@ -246,14 +256,12 @@ class AuthState:
     def login(self, ip: str, username: str, password: str) -> Tuple[Optional[str], Optional[str]]:
         """Attempt login. Returns (token, role) on success, (None, None) on
         bad credentials. Raises PermissionError with seconds if locked out."""
-        locked = self.is_locked(ip)
-        if locked:
-            raise PermissionError(locked)
+        self.ensure_not_locked(ip)
         role = self.authenticate(username, password)
         if role is None:
-            self._record_failure(ip)
+            self.record_failure(ip)
             return None, None
-        self._clear_failures(ip)
+        self.clear_failures(ip)
         token = secrets.token_urlsafe(32)
         with self._lock:
             self._sessions[_token_key(token)] = (role, time.time() + SESSION_TTL_S, username, time.time())

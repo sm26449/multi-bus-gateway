@@ -131,6 +131,37 @@ def test_buffer_bounds_age_and_count():
     assert len(lines) == 3                 # count-capped (drop-oldest)
     assert lines[-1] == "fresh 3"
     assert pub.points_dropped >= 2
+    # A-MED-3: age/capacity drops are attributed to the BUFFER cause, not schema
+    assert pub.points_dropped_buffer == pub.points_dropped and pub.points_dropped_schema == 0
+    st = pub.get_stats()
+    assert st['dropped_buffer'] >= 2 and st['dropped_schema'] == 0
+
+
+def test_a_schema_rejection_counts_only_the_rejected_points_as_schema():
+    """A-MED-3: a 422 partial write reports 'dropped=N' — only N counts, under the
+    SCHEMA cause (not the whole chunk, not the buffer-overflow cause)."""
+    pub = make_publisher()
+    for i in range(10):
+        pub._buffer_line(f"line {i}", time.time())
+
+    class _ApiErr(Exception):
+        status = 422
+
+        def __str__(self):
+            return 'partial write: field type conflict: field "x" is type string, already exists as type float dropped=2'
+
+    wapi = MagicMock()
+    wapi.write.side_effect = _ApiErr()
+    client = MagicMock()
+    client.write_api.return_value = wapi
+    pub.client = client
+    pub.connected = True
+    pub._drain_buffer()
+    assert pub.points_dropped == 2            # the server's count, not the 10-point chunk
+    assert pub.points_dropped_schema == 2
+    assert pub.points_dropped_buffer == 0
+    st = pub.get_stats()
+    assert st['dropped_schema'] == 2 and st['dropped_buffer'] == 0
 
 
 def test_drain_replays_in_order_then_clears():

@@ -158,7 +158,7 @@ def test_multi_source_devices_get_a_spec_per_source():
 
 
 def test_template_speaks_is_derived_from_transports(tmp_path):
-    from multibus.connection_spec import template_speaks
+    from multibus.device_template import template_speaks
     from multibus.device_template import TemplateRegistry
     reg = TemplateRegistry(user_dir=tmp_path)
     want = {'eastron_sdm630': ('modbus', False), 'seplos_bms_v3_rtu_tap': ('modbus', True),

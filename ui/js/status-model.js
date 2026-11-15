@@ -174,7 +174,7 @@
             if (d.sev === 'ok') return;
             mark('devices', d.sev);
             if (folded.has(d.id)) return;
-            const fails = Object.entries(d.error_counts || {}).sort((a, b) => b[1] - a[1])
+            const fails = Object.entries(d.device_error_counts || d.error_counts || {}).sort((a, b) => b[1] - a[1])
                 .slice(0, 2).map(([k, n]) => `${k.replace(/^exception_/, 'exc ')} ${n}`).join(' · ');
             const what = d.word === 'ok'                     // ok and slow: the latency is the news
                 ? { k: 'status.why.slow', d: 'slow · {ms} ms', p: { ms: Math.round(d.last_latency_ms) } }

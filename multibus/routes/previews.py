@@ -27,7 +27,7 @@ from typing import Any, Dict, Optional
 from fastapi import APIRouter, Body, HTTPException, Request
 from fastapi.responses import JSONResponse
 
-from .. import preview
+from ..commissioning import preview
 
 logger = logging.getLogger(__name__)
 
@@ -121,7 +121,7 @@ def build(ctx) -> APIRouter:
             raise
 
     def _plan_of(payload: Dict[str, Any], device_id: str = "") -> preview.Plan:
-        from ..save_merge import MASKED, BridgeConflict, merge_connection
+        from ..devices.save_merge import MASKED, BridgeConflict, merge_connection
         if not isinstance(payload, dict):
             raise HTTPException(status_code=422, detail={"errors": ["a JSON object"]})
         conn = payload.get("connection") or {}

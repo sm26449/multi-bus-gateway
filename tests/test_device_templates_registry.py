@@ -60,18 +60,225 @@ def test_bench_templates_load_validate_and_say_their_kind(registry, tid, kind):
 
 # ── Lot C: Deye single-phase hybrid ─────────────────────────────────────────
 
-def test_deye_is_read_only_through_and_through(registry):
+WRITE_REGS = {"battery_max_charge_current", "battery_max_discharge_current",
+              "grid_charge_current", "grid_charge_enable",
+              # batch 1 settings (0.6.0) — battery_operation_mode (213) dropped pre-merge
+              # (never-through-MBG, design 2.3)
+              "work_mode", "solar_sell",
+              "max_sell_power", "zero_export_power", "grid_charge_start_soc",
+              # grid-charge start voltage (0.7.0); the shutdown/restart/low thresholds (217-222)
+              # were dropped pre-merge — the engine cannot validate shutdown<low<restart (FINDINGS)
+              "grid_charge_start_voltage"}
+WRITE_CMDS = {"set_max_charge_current", "set_max_discharge_current",
+              "set_grid_charge_current", "grid_charge",
+              # batch 1 settings (0.6.0) — set_battery_operation_mode dropped pre-merge
+              "set_work_mode", "set_solar_sell",
+              "set_max_sell_power", "set_zero_export_power", "set_grid_charge_start_soc",
+              # grid-charge start voltage (0.7.0); the 6 battery-threshold commands dropped pre-merge
+              "set_grid_charge_start_voltage"}
+# batch 3 TOU slot setpoints (0.8.0): per-slot, multi-register commands
+TOU_SLOT_REGS = {f"tou_{k}_{i}" for i in range(1, 7) for k in ("time", "power", "soc")}
+TOU_SLOT_CMDS = {f"set_tou_slot_{i}" for i in range(1, 7)}
+# batch 5 (0.10.0): a composite command used by the grid_charge_soc_floor example
+COMPOSITE_CMDS = {"grid_charge_control"}
+ALL_WRITE_REGS = WRITE_REGS | TOU_SLOT_REGS
+ALL_WRITE_CMDS = WRITE_CMDS | TOU_SLOT_CMDS | COMPOSITE_CMDS
+
+
+def test_deye_is_read_only_except_the_four_documented_write_commands(registry):
     t = registry.get("deye_hybrid_1p")
-    assert not any(r.writable for r in t.registers)
-    assert all(r.access == "RD" for r in t.registers)
-    assert not t.commands and not t.setup and not t.rules and not t.channels
-    raw = _raw("deye_hybrid_1p")["device_template"]
-    assert not any(k.startswith("write") for r in raw["registers"] for k in r)
+    # everything is read except the documented set points (v1 + batches 1-3)
+    writable = {r.name for r in t.registers if r.writable}
+    assert writable == ALL_WRITE_REGS
+    for r in t.registers:
+        assert r.access == ("RD/WR" if r.name in ALL_WRITE_REGS else "RD"), r.name
+    assert set(t.commands) == ALL_WRITE_CMDS
+    assert not t.setup
+    # it ships four rule examples (trim + condition + schedule + load-aware floor), all shadow
+    assert {r["id"] for r in t.rules} == {"charge_from_excess", "charge_soc_ceiling",
+                                          "grid_charge_window", "grid_charge_soc_floor"}
+    assert set(t.channels) == {"battery_limits", "grid_charge"}
+    # FC16 only: the template must never ask for single-register (FC6) writes,
+    # and it paces writes so a Deye logger does not hang on a burst
+    assert not t.protocol.get("single_register_writes")
+    assert t.protocol.get("min_write_gap_s") == 1
     assert t.protocol["default_unit_id"] == 1 and set(t.protocol["transports"]) == {"rtu", "tcp"}
     assert "read-only" in t.description.lower() and "9600 8N1" in t.description
     assert "verified on site" in t.description.lower()
     # each row says whether the bench checked it (test_deye_rows_say_whether_the_bench_checked_them)
     assert all("checked on hardware" in r.description.lower() for r in t.registers)
+
+
+def test_deye_write_commands_are_guarded_disabled_presets(registry):
+    t = registry.get("deye_hybrid_1p")
+    for name in WRITE_CMDS:
+        c = t.commands[name]
+        # single-phase device-type guard on every write command
+        assert any(g.get("read") == "device_type" and set(g.get("in", [])) == {3, 768}
+                   for g in c["guard"]), name
+        assert c["confirm"] is True and c.get("skip_if_set") is True, name
+        assert c["readback_group"] == "settings", name
+        # each writes exactly one holding register, verified by read-back
+        assert len(c["writes"]) == 1 and c["writes"][0]["register"] in WRITE_REGS, name
+        assert c["verify"][0]["read"] == c["writes"][0]["register"], name
+    # the current limits are gated on a lithium battery; grid charge reverts to off
+    for name in ("set_max_charge_current", "set_max_discharge_current"):
+        assert any(g.get("read") == "battery_type" and g.get("expect") == 1
+                   for g in t.commands[name]["guard"]), name
+    # the current limits carry a safe value a lease restores to (default per installation)
+    assert t.commands["set_max_charge_current"]["safe"] == {"value": 180}
+    assert t.commands["set_max_discharge_current"]["safe"] == {"value": 90}
+    assert t.commands["grid_charge"]["safe"] == {"value": 0}
+    assert t.commands["grid_charge"]["on"] == "${value} > 0"
+    # the four set points carry write bounds (the writable envelope)
+    by = {r.name: r for r in t.registers}
+    for n in ("battery_max_charge_current", "battery_max_discharge_current", "grid_charge_current"):
+        assert by[n].write_min == 0 and by[n].write_max == 185, n
+    assert by["grid_charge_enable"].write_allowed == [0, 1]
+    # batch 1 settings (0.6.0): enums allow the safe set, ranges are bounded
+    assert by["work_mode"].write_allowed == [0, 1, 2]
+    assert by["solar_sell"].write_allowed == [0, 1]
+    assert by["max_sell_power"].write_min == 0 and by["max_sell_power"].write_max == 8000
+    assert by["zero_export_power"].write_min == 0 and by["zero_export_power"].write_max == 500
+    assert by["grid_charge_start_soc"].write_min == 0 and by["grid_charge_start_soc"].write_max == 100
+    # grid-charge start voltage (0.7.0); the lithium-guarded protection setpoints (217-222) and
+    # battery_operation_mode (213) were dropped pre-merge (see the read-only assertion below)
+    assert (by["grid_charge_start_voltage"].write_min, by["grid_charge_start_voltage"].write_max) == (46.0, 54.0)
+
+
+def test_deye_premerge_review_corrections(registry):
+    # pre-merge review (main session): drop never-through-MBG + unordered thresholds,
+    # pace the battery_limits channel, mark hardware-verified commands.
+    t = registry.get("deye_hybrid_1p")
+    by = {r.name: r for r in t.registers}
+    # 213 (never through MBG) and the 217-222 thresholds are read-only, no command
+    dropped_regs = ("battery_operation_mode", "battery_shutdown_voltage", "battery_restart_voltage",
+                    "battery_low_voltage", "battery_shutdown_soc", "battery_restart_soc", "battery_low_soc")
+    for n in dropped_regs:
+        assert by[n].access == "RD" and not by[n].writable, n
+    for n in ("set_battery_operation_mode", "set_battery_shutdown_voltage", "set_battery_shutdown_soc",
+              "set_battery_low_voltage", "set_battery_low_soc", "set_battery_restart_voltage",
+              "set_battery_restart_soc"):
+        assert n not in t.commands, n
+    # the single grid-charge start voltage stays writable (not an ordering group)
+    assert by["grid_charge_start_voltage"].writable and "set_grid_charge_start_voltage" in t.commands
+    # the battery_limits channel is paced to 600 s; the two presets on it respect that
+    assert t.channels["battery_limits"]["min_interval_s"] == 600
+    for rid in ("charge_from_excess", "charge_soc_ceiling"):
+        r = next(x for x in t.rules if x["id"] == rid)
+        assert r["timing"]["min_interval_s"] >= 600, rid
+    # each command is marked checked / not-yet-checked on hardware (notes with fields)
+    checked = next(n for n in t.notes if n.get("level") == "info"
+                   and "Checked on hardware (SG05LP1, 2026-11-03): a write" in n.get("text", ""))
+    assert set(checked["fields"]) == {"set_max_charge_current", "set_grid_charge_start_soc", "set_tou_slot_1"}
+    unchecked = next(n for n in t.notes if n.get("level") == "warning"
+                     and "Not yet checked on hardware" in n.get("text", "") and n.get("fields"))
+    # every command is in exactly one of the two marker notes
+    assert set(checked["fields"]) | set(unchecked["fields"]) == set(t.commands)
+    assert not (set(checked["fields"]) & set(unchecked["fields"]))
+
+
+def test_deye_tou_slot_commands_set_time_power_soc_together(registry):
+    # batch 3 (0.8.0): one command per TOU slot writes time (HHMM), power (W)
+    # and floor SOC (%) in a single run. Whole-word only: the slot enable
+    # (tou_enable 248) and grid/gen flags (tou_flags_* 274-279) are single-bit
+    # fields that stay RD until the masked-write engine feature lands.
+    t = registry.get("deye_hybrid_1p")
+    by = {r.name: r for r in t.registers}
+    assert by["tou_enable"].access == "RD"
+    for i in range(1, 7):
+        assert by[f"tou_flags_{i}"].access == "RD", i
+        c = t.commands[f"set_tou_slot_{i}"]
+        assert any(g.get("read") == "device_type" and set(g.get("in", [])) == {3, 768}
+                   for g in c["guard"]), i
+        assert c["confirm"] is True and c.get("skip_if_set") is True, i
+        assert c["readback_group"] == "settings", i
+        assert set(c["params"]) == {"time", "soc", "power"}, i
+        assert all(c["params"][p].get("required") for p in ("time", "soc", "power")), i
+        wrote = {w["register"]: w["value"] for w in c["writes"]}
+        assert wrote == {f"tou_time_{i}": "${time}", f"tou_power_{i}": "${power}",
+                         f"tou_soc_{i}": "${soc}"}, i
+        read = {v["read"]: v["expect"] for v in c["verify"]}
+        assert read == {f"tou_time_{i}": "${time}", f"tou_power_{i}": "${power}",
+                        f"tou_soc_{i}": "${soc}"}, i
+    # the slot setpoint envelopes (engineering units)
+    assert (by["tou_time_1"].write_min, by["tou_time_1"].write_max) == (0, 2359)
+    assert (by["tou_power_1"].write_min, by["tou_power_1"].write_max) == (0, 8000)
+    assert (by["tou_soc_1"].write_min, by["tou_soc_1"].write_max) == (0, 100)
+
+
+def test_deye_ships_a_shadow_charge_from_excess_trim_preset(registry):
+    # ADR-0039: the charge-from-excess control logic ships as a rule EXAMPLE
+    # (never armed by itself); the template validator already ran it through the
+    # rule-editor checks (target command exists, signal parses) at load time.
+    t = registry.get("deye_hybrid_1p")
+    p = next(r for r in t.rules if r["id"] == "charge_from_excess")
+    assert p["kind"] == "trim" and p["layer"] == "optimize"
+    assert p["target"] == {"device": "{device}", "command": "set_max_charge_current"}
+    # a closed-loop grid regulator (self-limiting), over a real template field
+    assert p["signal"] == "0 - {device}.grid_ct_power"
+    names = {r.name for r in t.registers}
+    assert "grid_ct_power" in names
+    # dead band, bounds and a fail-closed stop
+    assert p["below"] < p["above"] and p["min"] < p["max"]
+    assert p["off_value"] == 0 and p["on_stale"] == 0  # lose telemetry → stop charging
+    assert p["timing"]["min_interval_s"] >= t.channels["battery_limits"]["min_interval_s"]
+
+
+def test_deye_ships_shadow_soc_ceiling_and_grid_window_presets(registry):
+    # ADR-0039: two more control examples, offered (never armed by themselves)
+    # and validated through the rule-editor checks at load time.
+    t = registry.get("deye_hybrid_1p")
+    rules = {r["id"]: r for r in t.rules}
+
+    # the SOC ceiling: a protective cap ABOVE the trim, same battery_limits channel
+    ceil = rules["charge_soc_ceiling"]
+    assert ceil["kind"] == "condition" and ceil["layer"] == "safety"
+    assert ceil["target"] == {"device": "{device}", "command": "set_max_charge_current"}
+    assert ceil["when"] == "{device}.soc >= 95" and ceil["release"] == "{device}.soc < 90"
+    assert ceil["then"] == {"params": {"value": 0}} and ceil["else"] is None
+    assert ceil["on_stale"] == 0  # stale SOC → stop charging (fail closed)
+    assert ceil["timing"]["min_interval_s"] >= t.channels["battery_limits"]["min_interval_s"]
+
+    # the grid-charge window: schedule the grid-charge current by time of day
+    win = rules["grid_charge_window"]
+    assert win["kind"] == "schedule" and win["layer"] == "schedule"
+    assert win["target"] == {"device": "{device}", "command": "set_grid_charge_current"}
+    ats = [(e["at"], e["params"]["value"]) for e in win["schedule"]]
+    assert ats == [("00:00", 0), ("01:00", 40), ("06:00", 0)]
+    assert all(e.get("days") == "all" for e in win["schedule"])
+    assert win["timing"]["min_interval_s"] >= t.channels["grid_charge"]["min_interval_s"]
+
+
+def test_deye_ships_grid_charge_soc_floor_example(registry):
+    # batch 5 (0.10.0): a worked load-aware floor-protection example — a condition
+    # rule on a composite command, fed by an ema() calculated field.
+    t = registry.get("deye_hybrid_1p")
+
+    # the calculated field: a ~1 h EMA of the house load (consumption)
+    calc = {c.name: c for c in t.calculated}
+    assert "load_ema_1h" in calc
+    assert calc["load_ema_1h"].expr == "ema(0 - power_load, 3600)"
+    assert calc["load_ema_1h"].unit == "W"
+
+    # the composite command writes current THEN enable (current first for safety)
+    c = t.commands["grid_charge_control"]
+    assert set(c["params"]) == {"enable", "current"}
+    assert [w["register"] for w in c["writes"]] == ["grid_charge_current", "grid_charge_enable"]
+    assert c["channel"] == "grid_charge" and c["on"] == "${enable} > 0"
+    assert c["safe"] == {"enable": 0, "current": 0}
+    assert any(g.get("read") == "device_type" and set(g.get("in", [])) == {3, 768} for g in c["guard"])
+
+    # the rule: soc floor AND low load -> grid charge; hysteresis release; fail safe
+    r = next(x for x in t.rules if x["id"] == "grid_charge_soc_floor")
+    assert r["kind"] == "condition" and r["layer"] == "safety"
+    assert r["target"] == {"device": "{device}", "command": "grid_charge_control"}
+    assert r["when"] == "{device}.soc < 15 and {device}.load_ema_1h < 2000"
+    assert r["release"] == "{device}.soc > 20"
+    assert r["then"] == {"params": {"enable": 1, "current": 10}}
+    assert r["else"] == {"params": {"enable": 0, "current": 0}}
+    assert r["on_stale"] == "safe" and r["on_disable"] == "safe"
+    assert r["timing"]["min_interval_s"] >= t.channels["grid_charge"]["min_interval_s"]
 
 
 def test_deye_rows_sit_at_the_published_addresses(registry):
@@ -176,6 +383,22 @@ DEYE_CHECKED = {
 }
 CHECKED_MARK = "checked on hardware (sg05lp1, 2026-10-27)"
 
+# the 0.4.0 settings/TOU rows verified on 2026-11-03 (Solarman + the live Pi5
+# read; the current limits also by the RS485 write test). The lead-acid-only
+# voltages, the voltage-mode TOU voltages, the special-functions word and the
+# BMS alarm/fault flag words stay "not yet checked" (inactive or bit map unknown).
+CHECKED_MARK_1103 = "checked on hardware (sg05lp1, 2026-11-03)"
+DEYE_CHECKED_1103 = {
+    "battery_max_charge_current", "battery_max_discharge_current", "battery_operation_mode",
+    "battery_wake_up", "battery_shutdown_soc", "battery_restart_soc", "battery_low_soc",
+    "battery_shutdown_voltage", "battery_restart_voltage", "battery_low_voltage",
+    "grid_charge_start_voltage", "grid_charge_start_soc", "grid_charge_current", "grid_charge_enable",
+    "gen_port_mode", "battery_charge_priority", "work_mode", "max_sell_power", "solar_sell",
+    "tou_enable", "zero_export_power", "bms_protocol", "grid_connected", "bms_interface_flags",
+    "rtc_year_month", "rtc_day_hour", "rtc_minute_second",
+} | {f"tou_time_{i}" for i in range(1, 7)} | {f"tou_soc_{i}" for i in range(1, 7)} \
+  | {f"tou_flags_{i}" for i in range(1, 7)}
+
 
 def test_deye_bench_words_decode_to_what_the_inverter_was_doing(registry):
     t = registry.get("deye_hybrid_1p")
@@ -234,13 +457,16 @@ def test_deye_grid_rows_say_where_they_measure(registry):
 def test_deye_rows_say_whether_the_bench_checked_them(registry):
     t = registry.get("deye_hybrid_1p")
     names = {r.name for r in t.registers}
-    assert DEYE_CHECKED <= names
+    assert DEYE_CHECKED <= names and DEYE_CHECKED_1103 <= names
     for r in t.registers:
         d = r.description.lower()
         if r.name in DEYE_CHECKED:
             assert CHECKED_MARK in d and "not yet checked" not in d, r.name
+        elif r.name in DEYE_CHECKED_1103:
+            assert CHECKED_MARK_1103 in d and "not yet checked" not in d, r.name
         else:
-            assert "not yet checked on hardware" in d and CHECKED_MARK not in d, r.name
+            assert ("not yet checked on hardware" in d
+                    and CHECKED_MARK not in d and CHECKED_MARK_1103 not in d), r.name
 
 
 def test_deye_notes_say_how_a_bms_loss_looks(registry):
@@ -286,7 +512,8 @@ def test_deye_gen_port_and_bms_rows_sit_at_the_published_addresses(registry):
         assert by[n].data_type == "int16", n                     # signed on the wire
     assert by["battery_type"].enum == {"0": "Lead-acid", "1": "Lithium"}
     assert by["battery_rated_capacity"].poll_group == "static" and by["battery_type"].poll_group == "static"
-    assert not any(r.writable for r in t.registers)               # settings are read, never written
+    # the GEN-port, battery-type/capacity and BMS-mirror rows are read, never written
+    assert not any(by[n].writable for n in DEYE_GEN_ADDR if n in by)
 
 
 def test_deye_display_words_decode_to_what_the_screen_showed(registry):

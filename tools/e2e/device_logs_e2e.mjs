@@ -7,6 +7,7 @@
  */
 import { chromium } from 'playwright';
 import { openDeviceTab } from './lib/device-page.mjs';
+import { openPage } from './lib/nav.mjs';
 
 const BASE = process.env.MBG_URL || 'http://localhost:18081';
 const DEVICE = process.env.DEVICE || 'sunfield-u1';
@@ -28,7 +29,7 @@ try {
   await page.waitForLoadState('networkidle');
   const later = page.locator('button:has-text("Later")');
   if (await later.count()) await later.first().click().catch(() => {});
-  await page.click('[data-page="devices"]');
+  await openPage(page, 'devices');
   await page.waitForTimeout(1200);
 
   // into the endpoint, then into one of its units

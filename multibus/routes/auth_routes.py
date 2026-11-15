@@ -32,6 +32,37 @@ from .. import auth as _auth
 
 
 _FORWARD_ROLES = ("viewer", "operator", "admin")
+_PK_LOGIN = "login (passkey)"
+
+
+def _login_failed(audit, *, user: str, ip: str, action: str, status: str) -> None:
+    """A refused login, coalesced per client IP (AUD-LOGIN-1): the first of a
+    streak is its own entry, repeats of the same refusal from that IP are
+    counted into a summary (every 10 min / when it changes / on a success),
+    with the distinct usernames tried as ``notes`` — a locked-out client
+    hammering the endpoint must not roll the audit away."""
+    lf = getattr(audit, "login_failures", None)
+    if lf is None:
+        audit.append(user=user, ip=ip, action=action, status=status)
+        return
+    lf.repeat(("login", ip), (action, status), user=user or "-", ip=ip,
+              action=action, status=status, note=user if user and user != "-" else "")
+
+
+def _locked_out(audit, *, user: str, ip: str, action: str, seconds) -> HTTPException:
+    """The refusal every login flow gives a locked-out IP (password, passkey
+    begin and finish alike): 429 ``locked_out`` + ``retry_after_s``, audited
+    through the same per-IP coalescing as the other refused logins."""
+    _login_failed(audit, user=user, ip=ip, action=action, status="locked out")
+    return HTTPException(status_code=429, detail={
+        "error": "locked_out", "retry_after_s": int(str(seconds))})
+
+
+def _login_ok(audit, ip: str) -> None:
+    """A login succeeded from ``ip``: its failure streak is summarised first."""
+    lf = getattr(audit, "login_failures", None)
+    if lf is not None:
+        lf.end(lambda g: g == ("login", ip))
 
 
 def build(ctx) -> APIRouter:
@@ -77,14 +108,13 @@ def build(ctx) -> APIRouter:
             token, role = auth_state.login(ip, str(payload.get("username", "")),
                                            str(payload.get("password", "")))
         except PermissionError as locked:
-            audit.append(user=str(payload.get("username", ""))[:40], ip=ip,
-                         action="login", status="locked out")
-            raise HTTPException(status_code=429, detail={
-                "error": "locked_out", "retry_after_s": int(str(locked))})
+            raise _locked_out(audit, user=str(payload.get("username", ""))[:40], ip=ip,
+                              action="login", seconds=locked)
         if not token:
-            audit.append(user=str(payload.get("username", ""))[:40], ip=ip,
-                         action="login", status="invalid credentials")
+            _login_failed(audit, user=str(payload.get("username", ""))[:40], ip=ip,
+                          action="login", status="invalid credentials")
             raise HTTPException(status_code=401, detail={"error": "invalid_credentials"})
+        _login_ok(audit, ip)
         audit.append(user=str(payload.get("username", ""))[:40], ip=ip,
                      action="login", status="ok", detail={"role": role})
         # Secure flag when the UI is served over HTTPS — either by uvicorn
@@ -190,7 +220,9 @@ def build(ctx) -> APIRouter:
 
 def build_passkeys(ctx) -> APIRouter:
     """WebAuthn endpoints. Login begin/finish are auth-OPEN (a passkey holder
-    is not logged in yet) and share the password path's per-IP lockout."""
+    is not logged in yet) and share the password path's per-IP lockout
+    (AUD-LOGIN-1): a locked IP is refused at both, every finish that does not
+    authenticate counts as a failure, a success clears the streak."""
     import json as _json
     from urllib.parse import urlsplit
 
@@ -310,10 +342,10 @@ def build_passkeys(ctx) -> APIRouter:
         if not auth_state.enabled:
             return {"status": "ok", "note": "auth disabled"}
         ip = request.client.host if request.client else "?"
-        locked = auth_state.is_locked(ip)
-        if locked:
-            raise HTTPException(status_code=429, detail={
-                "error": "locked_out", "retry_after_s": locked})
+        try:
+            auth_state.ensure_not_locked(ip)
+        except PermissionError as locked:
+            raise _locked_out(audit, user="-", ip=ip, action=_PK_LOGIN, seconds=locked)
         rp_id = _rp(request)
         creds = store.for_rp(rp_id)
         if not creds:
@@ -333,14 +365,25 @@ def build_passkeys(ctx) -> APIRouter:
         if not auth_state.enabled:
             return {"status": "ok", "role": "admin", "note": "auth disabled"}
         ip = request.client.host if request.client else "?"
+
+        def _refused(user: str, status: str) -> HTTPException:
+            auth_state.record_failure(ip)
+            _login_failed(audit, user=user, ip=ip, action=_PK_LOGIN, status=status)
+            return HTTPException(status_code=401, detail={"error": "invalid_passkey"})
+
+        # Locked first: while locked even a valid assertion is not evaluated
+        # (the password path refuses a correct password the same way).
+        try:
+            auth_state.ensure_not_locked(ip)
+        except PermissionError as locked:
+            raise _locked_out(audit, user="-", ip=ip, action=_PK_LOGIN, seconds=locked)
         meta = challenges.take(str(payload.get("state", "")))
-        cred = payload.get("credential") or {}
+        cred = payload.get("credential")
+        if not isinstance(cred, dict):
+            raise _refused("-", "malformed credential")
         entry = store.find(str(cred.get("id", "")))
         if not meta or entry is None or entry["rp_id"] != meta["rp_id"]:
-            auth_state._record_failure(ip)
-            audit.append(user="-", ip=ip, action="login (passkey)",
-                         status="unknown credential")
-            raise HTTPException(status_code=401, detail={"error": "invalid_passkey"})
+            raise _refused("-", "unknown credential")
         try:
             ver = webauthn.verify_authentication_response(
                 credential=cred,
@@ -350,10 +393,7 @@ def build_passkeys(ctx) -> APIRouter:
                 credential_public_key=_from_b64u(entry["public_key"]),
                 credential_current_sign_count=int(entry["sign_count"]))
         except Exception:  # noqa: BLE001
-            auth_state._record_failure(ip)
-            audit.append(user=entry["user"], ip=ip, action="login (passkey)",
-                         status="verification failed")
-            raise HTTPException(status_code=401, detail={"error": "invalid_passkey"})
+            raise _refused(entry["user"], "verification failed")
         # The (user, role) frozen in the credential blob at ENROLLMENT time is
         # a claim, not an authorization: the account may have been renamed,
         # removed or re-roled since — config import and snapshot restore
@@ -369,14 +409,12 @@ def build_passkeys(ctx) -> APIRouter:
                     str(entry["user"]).encode("utf-8"), _u.encode("utf-8")):
                 live_role = _rl
         if live_role is None:
-            auth_state._record_failure(ip)
-            audit.append(user=entry["user"], ip=ip, action="login (passkey)",
-                         status="account gone")
-            raise HTTPException(status_code=401, detail={"error": "invalid_passkey"})
-        auth_state._clear_failures(ip)
+            raise _refused(entry["user"], "account gone")
+        auth_state.clear_failures(ip)
         store.update_sign_count(entry["id"], ver.new_sign_count)
         token = auth_state.mint_session(live_role, entry["user"])
-        audit.append(user=entry["user"], ip=ip, action="login (passkey)",
+        _login_ok(audit, ip)
+        audit.append(user=entry["user"], ip=ip, action=_PK_LOGIN,
                      status="ok", detail={"role": live_role, "label": entry["label"]})
         secure = bool(config.ui.tls_enabled) or request.url.scheme == "https"
         resp = JSONResponse({"status": "ok", "role": live_role})

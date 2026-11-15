@@ -215,8 +215,12 @@ def _no_real_mqtt(monkeypatch):
     (mqtt.enabled=True, broker 192.168.1.100): the apply path then builds a
     REAL MQTTPublisher and connects in a background thread — outbound network
     I/O from the test suite (external audit), a leaked MQTT-Reconnect daemon
-    thread, and on an unlucky LAN an actual broker. Stub the constructor."""
-    import multibus.api as api_mod
+    thread, and on an unlucky LAN an actual broker. Stub the constructor.
+
+    The apply path lives in routes/config_apply.py since P0.8b Lot G, so the
+    MQTTPublisher name it constructs is looked up there (it used to be a global
+    of multibus.api) — stub it where it is now resolved."""
+    import multibus.routes.config_apply as apply_mod
 
     class _StubPub:
         def __init__(self, *a, **k):
@@ -231,7 +235,7 @@ def _no_real_mqtt(monkeypatch):
 
         def __getattr__(self, name):            # any method → inert no-op
             return lambda *a, **k: False
-    monkeypatch.setattr(api_mod, "MQTTPublisher", _StubPub)
+    monkeypatch.setattr(apply_mod, "MQTTPublisher", _StubPub)
 
 
 def _client(api_key=None):

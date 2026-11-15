@@ -10,8 +10,7 @@
   "kind": "meter",
   "source_document": "volkszaehler/mbmd meters/rs485/iem3000.go (field-tested; cites Schneider DOCA0005). Official register list saved at docs/vendor/meters/schneider-iem3000-modbus-register-list.pdf (image-only PDF, not machine-parsed).",
   "protocol": {
-   "byte_order": "big",
-   "default_register_type": "holding"
+   "byte_order": "big"
   },
   "categories": {},
   "registers": [

@@ -18,9 +18,9 @@ from typing import Any, Dict, List
 
 from fastapi import APIRouter, Body, HTTPException, Request
 
-from .. import attribute_catalog as catalog
-from ..attributes import Invalid, NotFound
-from ..config_store import Broken, Conflict
+from ..catalog import attribute_catalog as catalog
+from ..catalog.attributes import Invalid, NotFound
+from ..core.config_store import Broken, Conflict
 from ._shared import secrets_visible
 
 logger = logging.getLogger(__name__)

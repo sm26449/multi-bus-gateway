@@ -26,10 +26,10 @@ from typing import Dict, Optional
 from fastapi import APIRouter
 from fastapi.responses import JSONResponse
 
-from ..device_registry import client_health
-from ..linked_meter import fleet_names
-from ..meter_links import links_of
-from ..threshold_engine import gate_open
+from ..devices.device_registry import client_health
+from ..devices.linked_meter import fleet_names
+from ..devices.meter_links import links_of
+from ..outputs.threshold_engine import gate_open
 
 
 def _drift_held(rt) -> list:
@@ -38,7 +38,7 @@ def _drift_held(rt) -> list:
     someone else starves a rule's reassert (ADR-0022)."""
     if rt is None:
         return []
-    from ..rules import DRIFT_HELD_WARN_S
+    from multibus.control.rules import DRIFT_HELD_WARN_S
     out = []
     for (rid, dev), st in list((getattr(rt, 'states', None) or {}).items()):
         held = getattr(st, 'drift_held_s', None)
@@ -52,7 +52,7 @@ def build(ctx) -> APIRouter:
     config, registry = ctx.config, ctx.registry
 
     def _display_of(dev) -> Dict:
-        from ..display import display_of
+        from ..catalog.display import display_of
         return display_of(getattr(ctx, "template_registry", None), dev)
     modbus_client, ws_manager, last_update = ctx.modbus_client, ctx.ws_manager, ctx.last_update
 
@@ -105,7 +105,7 @@ def build(ctx) -> APIRouter:
                 # editable credential URL, so redact it for every role (userinfo
                 # or a ?token= would otherwise leak to a viewer here).
                 if entry.get('http_url'):
-                    from ..redact import redact_url
+                    from ..core.redact import redact_url
                     entry['http_url'] = redact_url(entry['http_url'])
                 if getattr(dev_cfg, 'endpoint_id', ''):
                     # a unit is read through its sources — the status table
@@ -128,6 +128,11 @@ def build(ctx) -> APIRouter:
                         # None for push-driven sources (MQTT-in has no rate).
                         "poll_rate": stats.get("poll_rate"),
                         "error_counts": stats.get("error_counts"),
+                        # a listen-only tap: only its own errors — its error_counts
+                        # repeat the BUS's counters, shared by every unit on it
+                        # (TAP-DIAG-2); absent for every other driver
+                        **({"device_error_counts": stats["device_error_counts"]}
+                           if isinstance(stats.get("device_error_counts"), dict) else {}),
                         "staleness_age_s": stats.get("staleness_age_s"),
                         "last_latency_ms": stats.get("last_latency_ms"),
                         "data_health": client.data_health().get("status"),
@@ -135,7 +140,7 @@ def build(ctx) -> APIRouter:
                         # degraded — the status page must not contradict it
                         "health": client_health(client),
                     })
-                    from ..can_client import stats_summary as _can_summary
+                    from ..transports.can.can_client import stats_summary as _can_summary
                     _cs = _can_summary(stats)
                     if _cs:
                         entry["can"] = _cs      # a CAN device: frames, unknown ids, listen-only
@@ -153,7 +158,7 @@ def build(ctx) -> APIRouter:
         # 2/4 producing tells the operator nothing about the ENDPOINT.
         endpoints = getattr(config, "endpoints", None) or []
         if endpoints and registry:
-            from ..endpoint_aggregator import asleep_units, compute_endpoint_aggregates
+            from ..devices.endpoint_aggregator import asleep_units, compute_endpoint_aggregates
             out["endpoints"] = []
             for p in endpoints:
                 pid = p.get("id")
@@ -256,7 +261,7 @@ def build(ctx) -> APIRouter:
                 regs = []
             store = (registry.store_for(dev_cfg.id) or {}) if registry else {}
             danger = warning = 0
-            from ..display import active_alarms, alarm_fields
+            from ..catalog.display import active_alarms, alarm_fields
             _disp = _display_of(dev_cfg)
             _declared_alarms = alarm_fields(_disp)
             _vals = {e.get("name"): e.get("value") for e in list(store.values())}
@@ -323,7 +328,7 @@ def build(ctx) -> APIRouter:
             agg = {}
             if registry:
                 try:
-                    from ..endpoint_aggregator import compute_endpoint_aggregates
+                    from ..devices.endpoint_aggregator import compute_endpoint_aggregates
                     agg = compute_endpoint_aggregates(config, registry, pid)
                 except Exception:  # noqa: BLE001 — overview must never 500
                     agg = {}

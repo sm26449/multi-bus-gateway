@@ -32,7 +32,8 @@ securizat. Documente însoțitoare (în engleză):
 11b. [Noduri ESP — un serviciu separat](#11b-noduri-esp--un-serviciu-separat)
 11c. [Calitatea energiei — înregistratorul de evenimente PQ (Janitza)](#11c-calitatea-energiei--înregistratorul-de-evenimente-pq-janitza)
 11d. [Server OPC UA — pentru SCADA și panouri HMI](#11d-server-opc-ua--pentru-scada-și-panouri-hmi)
-12. [Alerte și webhook-uri](#12-alerte-și-webhook-uri)
+11e. [Virtual BMS — experimental](#11e-virtual-bms--experimental)
+12. [Alerte și notificări](#12-alerte-și-notificări)
 13. [Diagnostic](#13-diagnostic)
 14. [Scrieri Modbus și lease-uri dead-man](#14-scrieri-modbus-și-lease-uri-dead-man)
 14b. [Comenzi — scrieri cu nume, din șablon](#14b-comenzi--scrieri-cu-nume-din-șablon)
@@ -152,7 +153,18 @@ pentru detalii.
 
 ## 4. Interfața web, filă cu filă
 
-Deschide `http://<host>:8080`. Navigarea de sus:
+Deschide `http://<host>:8080`. Navigarea de sus e un singur rând:
+
+**Tablou de bord** · **Active ▾** (Dispozitive, Contoare virtuale, Virtual
+BMS *Experimental*) · **Configurare ▾** (Reguli, Șabloane) · **Sistem ▾**
+(Diagnostic, Setări) · **Status**.
+
+Un grup deschide un mic meniu; butonul lui rămâne aprins cât timp una din
+paginile lui e deschisă. Pe telefon tot rândul se strânge într-un singur
+buton **Navigare** (Esc îl închide). Fiecare pagină are adresa ei
+(`#/devices`, `#/rules`, `#/config`…), deci Înapoi, Înainte, o reîncărcare
+și un semn de carte duc la aceeași vedere; vederea unui dispozitiv în
+tablou e `#/dashboard/<dispozitiv>`. Paginile:
 
 - **Tablou de bord** — o **bandă a amplasamentului** (câte un card pe
   instalație, cu puterea totală live și unitățile conectate, plus
@@ -170,7 +182,7 @@ Deschide `http://<host>:8080`. Navigarea de sus:
   buton schimbă rapid dispozitivul. Culorile implicite ale widget-urilor
   urmează convenția de faze din Setări → General. O instalare cu un singur
   dispozitiv sare peste prezentare și se deschide direct pe dispozitiv.
-- **Dispozitive** — fiecare sursă, cu starea ei live, grupate pe
+- **Active → Dispozitive** — fiecare sursă, cu starea ei live, grupate pe
   instalație. Găsești una cu căsuța de căutare (`/` sare la ea) și cu
   filtrele: *tip* (contor, invertor, baterie, pompă de căldură… și tipurile
   tale, §5c), *etichetă*, *stare*, *protocol*. Tot aici sunt **Adaugă
@@ -350,26 +362,41 @@ Deschide `http://<host>:8080`. Navigarea de sus:
   **înregistratorul de evenimente PQ** e cu ieșirile, în așteptare și salvat
   cu același **Salvează** (intervalul lui: secunde, cel puțin 30),
   evenimentele lui în fila *Calitatea energiei*.
-- **Reguli** — controlerul declarativ: câte un card pe regulă, cu starea,
-  cerut → real, deciziile, Armează / În shadow (vezi §14c).
-- **Șabloane** — catalogul din spatele dispozitivelor: **hărți de
-  dispozitiv** (cum se citește un echipament real) și **emulări de contor**
-  (șabloanele contoarelor virtuale din §11) — incluse, încărcate, importate
-  din CSV/YAML, editate — și **Tipuri de dispozitive** (§5c).
-- **Status** — sănătatea fluxului, tipurile de erori, evenimente, alerte,
-  resursele folosite (vezi §17).
-- **Setări** — setările gateway-ului, câte o filă: *MQTT*, *InfluxDB* (cu
-  heartbeat-ul, §9), *OPC UA* (§11d), *Modbus* (**Bugetul
-  previzualizării**, §5.2), *Backup și restaurare* (snapshot-uri, revenire,
-  export — §15), *Securitate* (autentificare, roluri, passkeys, HTTPS,
-  scrieri Modbus — §16), *Alerte* (§12), *General* (fus orar, culori și
-  **Identitatea gateway-ului**, §8), *Amplasament* (locația, atributele lui
-  și alegerile de confidențialitate — §5c) și, când e configurat un serviciu
-  însoțitor, *Module*.
-- **Contoare virtuale** — servesc valorile live ca un contor Modbus
-  standard (vezi §11).
-- **Diagnostic** — trusa de punere în funcțiune: monitorul de magistrală,
-  sonda de registre, descoperirea, scanarea SunSpec (vezi §13).
+- **Active → Contoare virtuale** — servesc valorile live ca un contor
+  Modbus standard (vezi §11).
+- **Active → Virtual BMS** *(Experimental)* — agregă pack-uri de baterii
+  într-un singur BMS logic, servit unui invertor prin CAN (vezi §11e). Încă
+  nevalidat pe hardware: nu-l arma pe un invertor în funcțiune.
+- **Configurare → Reguli** — controlerul declarativ: câte un card pe
+  regulă, cu starea, cerut → real, deciziile, Armează / În shadow (vezi
+  §14c).
+- **Configurare → Șabloane** — catalogul din spatele dispozitivelor, în
+  patru file: **Hărți dispozitiv** (cum se citește un echipament real),
+  **Emulări contor** (șabloanele contoarelor virtuale din §11) — incluse,
+  încărcate, importate din CSV/YAML, editate — **Câmpuri canonice** și
+  **Tipuri de dispozitive** (§5c). *Câmpuri canonice* e dicționarul de nume
+  standard al gateway-ului (§6.1): fiecare nume cu unitatea, categoria
+  (măsurătoarea InfluxDB), frunza de topic MQTT și descrierea, cu căutare și
+  filtru pe categorie. Un administrator adaugă **un câmp propriu** pentru o
+  mărime pe care dicționarul nu o acoperă (`<mărime>_<unde>`, cu litere
+  mici, ex. `pool_chlorine`); devine canonic peste tot și pleacă împreună
+  cu un șablon exportat. Odată ce un dispozitiv citește un câmp, categoria
+  și topicul lui rămân cum sunt (țin istoricul); unitatea și descrierea se
+  pot schimba.
+- **Sistem → Diagnostic** — trusa de punere în funcțiune: monitorul de
+  magistrală, sonda de registre, descoperirea, scanarea SunSpec (vezi §13).
+- **Sistem → Setări** — setările gateway-ului, câte o filă: *MQTT*,
+  *InfluxDB* (cu heartbeat-ul, §9), *OPC UA* (§11d), *Modbus* (**Bugetul
+  previzualizării**, §5.2), *CAN* (modul fiecărei interfețe CAN, §5.5),
+  *Backup și restaurare* (snapshot-uri, revenire, export — §15),
+  *Securitate* (autentificare, roluri, passkeys, HTTPS, scrieri Modbus —
+  §16), *Alerte* (§12), *General* (fus orar, culori și **Identitatea
+  gateway-ului**, §8), *Amplasament* (locația, atributele lui și alegerile
+  de confidențialitate — §5c) și, când e configurat un serviciu însoțitor,
+  *Module*.
+- **Status** — verdictul gateway-ului, un rezumat pe zone, ce necesită
+  atenție și file pentru dispozitive, instalații, ieșiri, automatizări,
+  procesul gateway-ului și evenimente (vezi §17).
 
 Când gateway-ul e actualizat cât timp o pagină e deschisă, o bară anunță
 asta: **Reîncarcă** încarcă versiunea nouă, **Mai târziu** ascunde bara până
@@ -749,30 +776,33 @@ setările), `PUT /api/devices/{id}/meters` cu `{meters: [{role, device,
 power, energy?, sign?}], options?}`; `[]` scoate toate legăturile. Vechiul
 `PUT /api/devices/{id}/energy-meter` setează încă un singur contor de consum.
 
-### 5.5 CAN, listen-only
+### 5.5 CAN
 
 Gateway-ul citește o magistrală CAN **ascultând**: sosesc cadre, rândurile
 de semnal ale șablonului le decodează, iar valorile ajung în MQTT, InfluxDB,
-Home Assistant, interfață și reguli ca ale oricărui dispozitiv. Nu transmite
-niciodată: driverul CAN nu are cale de transmisie, iar un dispozitiv CAN nu
-poate fi scris. Harta inclusă este `pylontech_can_inverter`, legătura în
-protocolul Pylontech dintre BMS-ul unei baterii și invertorul ei (inclusiv
-cadrele Seplos 0x370/0x371).
+Home Assistant, interfață și reguli ca ale oricărui dispozitiv. Un
+**dispozitiv** CAN nu transmite niciodată: driverul lui nu are cale de
+transmisie și nu poate fi scris. Harta inclusă este `pylontech_can_inverter`,
+legătura în protocolul Pylontech dintre BMS-ul unei baterii și invertorul
+ei (inclusiv cadrele Seplos 0x370/0x371).
+
+Singurul lucru din gateway care transmite pe CAN este un **Virtual BMS**
+(§11e, experimental), și doar cât e armat, pe un port în modul *Transmite*.
+Listen-only rămâne implicit și poziția sigură pentru orice port doar citit.
 
 **De ce ai nevoie.** O interfață CAN pe care procesul gateway-ului o vede —
 `can0` de la un adaptor USB (gs_usb / candleLight) sau de la un HAT
-(MCP2515), ori `vcan0` pentru teste — configurată **de host**, listen-only,
-la bitrate-ul magistralei:
+(MCP2515), ori `vcan0` pentru teste — pornită, la bitrate-ul magistralei și
+listen-only pentru o magistrală doar citită. Configureaz-o pe host:
 
 ```sh
 ip link set can0 down && ip link set can0 type can bitrate 500000 listen-only on && ip link set can0 up
 ```
 
 `listen-only on` face controlerul însuși tăcut (fără ACK, fără cadre de
-eroare). Gateway-ul nu-l setează niciodată; citește indicatorul din kernel
-la fiecare deschidere a interfeței și îl arată (*listen-only* / *not
-listen-only*, cu un avertisment). Verifică-l pe host cu
-`ip -details link show can0`.
+eroare). Gateway-ul citește indicatorul din kernel la fiecare deschidere a
+interfeței și îl arată (*listen-only* / *nu e listen-only*, cu un
+avertisment). Verifică-l pe host cu `ip -details link show can0`.
 
 > **Docker.** În Docker, un container vede interfețele CAN ale host-ului doar cu rețeaua
 > host-ului (Compose: `network_mode: host`; `docker run --network host`). Pentru
@@ -780,14 +810,49 @@ listen-only*, cu un avertisment). Verifică-l pe host cu
 > porturile containerului sunt porturile host-ului: `ports:` publicate sunt
 > ignorate, iar interfața, contoarele virtuale, :502 și OPC UA ascultă direct pe
 > host — verifică să nu se ciocnească porturile. Containerul rămâne în rețeaua
-> host-ului și pentru tot restul. Listen-only se setează pe host
-> (`ip link … listen-only on`).
+> host-ului și pentru tot restul.
+
+**Setări → CAN** listează interfețele CAN ale host-ului: modul fiecăreia
+(*Transmite* / *doar ascultare*), pornită/oprită, bitrate-ul și
+dispozitivele care o citesc, cu **Comută pe Transmite** / **Comută pe
+Listen-only** (întreabă înainte). Aceeași schimbare e
+`POST /api/can-interfaces/{name}` (`mode`, `bitrate`, `up`;
+[API.md](API.md)). Gateway-ul schimbă o interfață doar când îi ceri, și:
+
+- are nevoie de capabilitatea `CAP_NET_ADMIN`, pe care containerul **nu** o
+  are implicit. Acord-o deliberat, ambele părți împreună:
+
+  ```yaml
+  services:
+    multi-bus-gateway:
+      network_mode: host            # ca să vadă can0
+      cap_add: [NET_ADMIN]          # procesul poate rula `ip link set can0 …`
+      environment:
+        MBG_CAN_NET_ADMIN: "1"      # păstrează acea capabilitate după trecerea la utilizatorul aplicației
+  ```
+
+  `MBG_CAN_NET_ADMIN=1` face entrypoint-ul să păstreze `CAP_NET_ADMIN` (și
+  doar pe ea) ca o capabilitate ambientală când renunță la root; fără ea,
+  sau fără `cap_add`, o comutare răspunde *MBG cannot change CAN interfaces
+  — it needs CAP_NET_ADMIN* și setezi interfața pe host, ca mai sus.
+  `NET_ADMIN` cu rețeaua host-ului lasă procesul să schimbe orice interfață
+  de rețea a host-ului: acord-o doar unde un Virtual BMS are nevoie;
+- comutarea **pe Transmite** cere `security.allow_writes` (e o scriere în
+  hardware); comutarea pe listen-only sau oprirea nu sunt refuzate pentru
+  asta;
+- un port care poartă un Virtual BMS armat e refuzat (dezarmează-l întâi);
+- un bitrate nou pe o magistrală citită de dispozitive e refuzat fără
+  confirmare (`force: true`): acele dispozitive n-ar mai auzi-o.
+
+Orice schimbare oprește și repornește legătura (`ip` poate schimba modul și
+bitrate-ul doar cu ea oprită), deci cititorii acelei magistrale pierd o
+clipă.
 
 **Adăugarea.** Adaugă dispozitiv → portul **CAN**: interfețele host-ului
 sunt listate cu pornit/oprit, bitrate și listen-only. **Listen-only e o
 barieră fermă**: o interfață oprită sau care poate transmite nu poate fi
-aleasă, iar pasul arată comanda de mai sus de rulat pe host, apoi
-**Reîmprospătează**. Câmpurile: *Purtător* (SocketCAN; purtătorul prin
+aleasă, iar pasul arată comanda de mai sus de rulat pe host (sau o comuți din
+Setări → CAN), apoi **Reîmprospătează**. Câmpurile: *Purtător* (SocketCAN; purtătorul prin
 bridge-ul serial e listat, încă nu se poate alege), *Interfață* (implicit
 `can0`), *Bitrate* (doar afișat — îl setează host-ul; 10000–1000000,
 implicit 500000), *Învechit după (s)* (1–3600; atâta liniște = învechit; 30
@@ -1779,17 +1844,125 @@ Clienții se autentifică cu conturile gateway-ului. Criptarea e obligatorie
 dacă nu alegi altfel. Ghidul, cu UaExpert, Weintek și Ignition, e
 [opcua.md](opcua.md).
 
-## 12. Alerte și webhook-uri
+## 11e. Virtual BMS — experimental
 
-Trei familii de alerte pe o singură cale de livrare (MQTT + webhook):
+> **Experimental.** Virtual BMS nu este încă validat pe hardware. Nu-l arma
+> pe un invertor în funcțiune: o limită greșită poate opri sau afecta o
+> baterie. Indicatorii de alarmă și protecție ai pack-urilor nu sunt încă
+> transmiși invertorului.
+
+Un Virtual BMS agregă unul sau mai multe pack-uri de baterii pe care
+gateway-ul le citește deja (fiecare un dispozitiv de tip *baterie*, nu el
+însuși un agregat de bancă) într-un singur BMS logic și vorbește un protocol
+CAN de baterie cu un invertor. Profilul inclus este `pylontech_can_inverter`
+(Pylontech CAN de joasă tensiune, 500 kbit/s). Este singura parte a
+gateway-ului care transmite pe CAN.
+
+**Active → Virtual BMS** listează instanțele. **Adaugă Virtual BMS** cere:
+*Id* (un slug), *Nume*, *Profil de protocol*, *Interfață CAN* (doar porturi
+pe care nu publică alt Virtual BMS; un port citit de dispozitive e partajat
+și marcat *folosit și de*; un port în listen-only se poate salva, dar nu va
+transmite), *Pack-uri sursă*, *Limită încărcare (A)* și *Limită descărcare
+(A)* (plafoanele pe care le poate comanda un EMS), *Tensiune încărcare (V)*
+și *Tensiune descărcare (V)*, *Producător*, *Invertorul alimentat*
+(opțional: un id de dispozitiv; preview-ul compară apoi ce se trimite cu ce
+raportează acel invertor că primește) și *Trimite cadrele opționale de
+detaliu* (oprit trimite doar cadrele de care invertorul are nevoie: limite,
+SOC, V/I/T, enables). Salvarea e refuzată când bitrate-ul portului diferă
+de al profilului, când un pack citește magistrala CAN pe care transmite
+instanța, sau când alt dispozitiv de pe acea magistrală citește deja un BMS
+pe id-urile de cadru ale profilului. O instanță armată nu poate fi editată
+sau ștearsă: dezarmeaz-o întâi.
+
+O instanță nouă sau schimbată e mereu **dezarmată**: nu se trimite nimic și
+invertorul nu vede niciun BMS. *Arată agregarea*
+(`GET /api/vbms/{id}/preview`) arată, înainte și după armare, valoarea
+fiecărui câmp, pack-urile din care vine, câmpurile de control și cadrele
+care s-ar trimite.
+
+**Ce se trimite.** Valorile măsurate vin din pack-uri: tensiunea medie,
+curentul însumat, SOC-ul ponderat cu capacitatea, extremele de celule și
+temperaturi. Câmpurile de control — limita de curent la încărcare/descărcare,
+limita de tensiune la încărcare/descărcare, permisiunea de
+încărcare/descărcare — sunt fiecare ultima comandă EMS (limitată la
+`bounds`) sau, fără o comandă mai nouă de `command_max_age_s` (60 s),
+`floor`-ul configurat. Formularul din interfață pune la 0 limitele de curent
+și permisiunile din `floor`, deci fără EMS invertorului i se spune că nu
+poate nici încărca, nici descărca. Un EMS comandă prin MQTT pe
+`mbg/devices/<id>/cmd/<câmp>` (baza urmează `mqtt.default_topic_pattern`;
+un mesaj reținut e ignorat), iar instanța publică ce trimite pe
+`mbg/devices/<id>/<câmp>`, armată sau nu. Un câmp fără `bounds` finite nu
+poate fi comandat.
+
+**Armarea.** **Armează…** (întreabă înainte) cere, în ordinea verificării:
+
+1. `security.allow_writes` pornit (armarea e o scriere în hardware);
+2. portul CAN **scos din listen-only și pornit**;
+3. portul la **bitrate-ul** profilului.
+
+Fiecare condiție neîndeplinită răspunde cu un dialog ghidat — *Activează
+acum* sau *Mai târziu*, cu locul unde o găsești (Setări → Securitate, Setări
+→ CAN). Comutarea unui port din gateway cere `CAP_NET_ADMIN` (§5.5). Armarea
+e refuzată și pe un gateway standby și cât rulează un import sau o
+restaurare de configurație. **Dezarmează** nu e refuzat niciodată:
+transmițătorul se închide și invertorul trece în propria stare de pierdere
+a BMS-ului. Dacă scrierile sunt oprite sau gateway-ul devine standby cât e
+armat, se dezarmează singur și rămâne tăcut până e armat din nou; un import
+sau o restaurare dezarmează toate instanțele.
+
+**Când lipsesc pack-uri.** Contează doar pack-urile *admise*:
+
+- un pack iese în clipa în care nu mai raportează un SOC și o tensiune;
+- un pack ieșit revine doar după `recovery.return_after_s` (60 s) de
+  raportare fără întrerupere; un pack văzut prima dată în acest interval de
+  la pornirea instanței e admis imediat;
+- un pack ieșit de `recovery.flap_drops` ori (3) în
+  `recovery.flap_window_s` (600 s) e **ținut afară** până îl readmite un
+  operator (`POST /api/vbms/{id}/packs/{pack}/clear`); revine apoi cu
+  aceeași întârziere. Ieșirile și reținerile supraviețuiesc unui restart
+  (`vbms_admission.json` lângă configurație);
+- limitele de curent sunt plafonate la ce pot duce pack-urile admise: din
+  limita proprie a fiecărui pack când e cunoscută (`pack_limits`, sau un
+  `ccl`/`dcl` per pack prin `field_map`: `min(n × min Lᵢ × share_factor,
+  Σ Lᵢ)`), altfel limita băncii × pack-uri admise / configurate;
+- cu mai puțin de `min_packs` pack-uri admise (implicit toate minus unul)
+  ambele limite și ambele permisiuni se trimit ca 0 timp de
+  `fallback.hold_s` (5 s), apoi nu se mai trimite nimic până revin destule
+  pack-uri (*Armat · trimite limite zero*, apoi *Armat · tăcut*);
+- după fiecare pornire, re-armare sau revenire dintr-o astfel de cădere,
+  limitele de curent **cresc de la 0** cu `recovery.slew_a_per_s` (2 A/s);
+  o scădere e imediată.
+
+Cheile de configurare și intervalele lor: [config-reference.md](config-reference.md#virtual_bms--virtual-bms-instances-experimental) (EN);
+endpoint-urile: [API.md](API.md#virtual-bms-experimental) (EN).
+
+## 12. Alerte și notificări
+
+Gateway-ul **produce** evenimente de alertă; nu trimite el însuși SMS,
+mesaje de chat sau e-mail. Pentru notificări pe orice canal — SMS, Telegram,
+e-mail și orice altceva rutezi — conectează-l la
+**[Klopot](https://klopot.dev)**, un serviciu de notificări: gateway-ul îi
+trimite fiecare eveniment ca un eveniment structurat, iar Klopot îl rutează
+după tip și severitate, limitează rata, reîncearcă și escaladează. Topicul
+MQTT și webhook-ul generic rămân disponibile pentru automatizările tale.
+
+Familiile de alerte:
 
 - **Sănătatea infrastructurii** — un dispozitiv sau o ieșire cade, latența
-  de citire rămâne mare, tamponul InfluxDB se umple.
+  de citire rămâne mare, tamponul InfluxDB se umple, InfluxDB refuză
+  token-ul sau aruncă puncte.
 - **Alarmele dispozitivelor** — câmpurile de alarmă declarate de șablonul
   unui dispozitiv (un cod de eroare, un cuvânt de defect, un semnal calculat
   ca „descărcare peste 100 °C”) declanșează când devin active și rămân așa
   `for_s`, din nou la o valoare nouă și încă o dată când dispar
   (`signals.alarm`, pornit implicit).
+- **Sănătatea magistralelor seriale** — erori pe linie, o magistrală tăcută
+  sau reconectări repetate pe o magistrală din spatele unui bridge serial
+  de-al nostru (`signals.bridge`, oprit implicit; limite pe magistrală).
+- **Contoare virtuale** — un contor virtual care nu-și servește
+  consumatorii, servește valori reținute sau nu mai e interogat de
+  consumatorul lui (`signals.vmeter`, pornit implicit; limite în
+  `alerts.vmeter` sau pe contor în `virtual_meters.yaml`).
 - **Pragurile pe valori** — limitele de avertizare/pericol pe registru din
   §6 devin evenimente de alertă printr-un motor cu histerezis inclus
   (**oprit implicit**, `signals.threshold`): cinci benzi, declanșează doar
@@ -1797,34 +1970,65 @@ Trei familii de alerte pe o singură cale de livrare (MQTT + webhook):
   `threshold_deadband_pct`, implicit 2 %), suprimat pe date învechite, ca o
   pierdere de comunicație să nu declanșeze o trecere fantomă.
 
+**Klopot (recomandat).** Setări → Alerte, cu alertele activate → *Trimite
+către serviciul de notificări Klopot*: URL-ul de fire (în rețeaua inclusă,
+de obicei `http://klopot:5090/v1/fire`), cheia API (păstrată mascat) și un
+nume de *Sursă* (implicit `multi-bus-gateway`). Se aplică live. Fiecare
+**eveniment** (un dispozitiv sau o ieșire căzută/revenită, o problemă de
+autentificare sau puncte aruncate în InfluxDB, o alarmă de șablon, o alertă
+de magistrală sau de contor virtual, un eveniment de configurație sau de
+gateway) se trimite o dată ca `{type, context, source}` — `type` ca
+`mbg_device`, `mbg_device_alarm`, `mbg_bridge`, `mbg_vmeter`; `context` cu
+severitatea, mesajul, cheia, host-ul, momentul și, unde există,
+dispozitivul, câmpul și valoarea. Gateway-ul nu reîncearcă: outbox-ul
+Klopot preia livrarea odată ce a acceptat evenimentul, iar o trimitere
+eșuată se scrie în jurnalul de evenimente. **Condițiile** (latența,
+tamponul, pragurile pe valori) nu se trimit: rămân în MQTT, ca regulile
+Klopot să le evalueze. **Descarcă pachetul de configurare Klopot**
+(`GET /api/alerts/alertd-pack`, un fișier YAML fără secrete) dă Klopot un
+template și o rută pentru fiecare tip de eveniment; importă-l o dată în
+Klopot. Fila *Ieșiri* din pagina Status arată destinația și ultima
+livrare. În `config.yaml` e blocul `alerts.alertd` — integrarea Klopot;
+cheia își păstrează vechiul nume, pentru compatibilitate.
+
+**MQTT și webhook (integrări proprii).** Fiecare alertă e publicată și pe
+`<topic_prefix>/alert` și, când `webhook_url` e setat, trimisă prin POST ca
+JSON acolo — pentru automatizările tale (Node-RED, Home Assistant, un
+script).
+
 Configurezi în Setări → Alerte sau în blocul `alerts:`:
 
 ```yaml
 alerts:
   enabled: true
   mqtt: true                                   # publică în <topic_prefix>/alert
-  webhook_url: "https://ntfy.example/gateway"  # gol = webhook oprit
-  webhook_headers: { "X-API-Key": "secret" }
-  webhook_body: { "message": "[{severity}] {source}: {message}" }
+  alertd:                                      # integrarea Klopot
+    enabled: true
+    url: "http://klopot:5090/v1/fire"
+    api_key: "…"
+    source: "multi-bus-gateway"
+  webhook_url: ""                              # opțional: receptorul tău; gol = oprit
   min_interval_s: 300
   latency_ms: 1000
   buffer_points: 1000
   signals: { device: true, sink: true, latency: true, buffer: true,
-             threshold: true, alarm: true }    # threshold e implicit false, alarm implicit true
+             threshold: true, alarm: true,     # threshold e implicit false
+             bridge: true, vmeter: true }      # bridge e implicit false
+  vmeter: { not_serving_s: 30, held_s: 20, consumer_idle_s: 120 }
+  bridge: { line_errors_per_min: 10, silent_s: 120, reconnects_per_10min: 6 }
   threshold_deadband_pct: 2.0
   threshold_alert_on_start: true
 ```
 
 Alertele sunt limitate ca rată pe cheie (`min_interval_s`), copiate în
-jurnalul de evenimente și în pagina Status. Gateway-ul *detectează și
-livrează*; eliminarea dublurilor, rutarea și distribuirea pe canale
-(Telegram/SMS/e-mail) sunt treaba receptorului de webhook / a sistemului tău
-de notificări. Butonul **Test** (sau `POST /api/alerts/test`) trimite o
-alertă de probă prin canalele reale — cere autentificare sau o cheie API și
-are o pauză obligatorie, pentru că produce trafic real spre exterior.
-Livrarea prin webhook e fără garanție (fără reîncercare) și refuză
-redirecționările. Forma mesajului și motorul de praguri în detaliu:
-[alerts-webhooks.md](alerts-webhooks.md).
+jurnalul de evenimente și în pagina Status. Butonul **Test** (sau
+`POST /api/alerts/test`) trimite o alertă de probă pe fiecare canal activ
+(MQTT, webhook, Klopot) și raportează rezultatul fiecăruia — cere
+autentificare sau o cheie API și are o pauză obligatorie, pentru că produce
+trafic real spre exterior. Livrarea prin webhook e fără garanție (fără
+reîncercare); nici webhook-ul, nici trimiterea către Klopot nu urmează o
+redirecționare. Forma mesajelor și motorul de praguri în detaliu:
+[alerts-webhooks.md](alerts-webhooks.md) (EN).
 
 ---
 
@@ -1868,6 +2072,47 @@ citire pe magistrală.
   aplicate, fără stare: o citire de depanare nu avansează filtrul monotonic).
   Dacă cele două diferă neașteptat, declarația de scală/decodare a
   registrului e locul unde trebuie să te uiți.
+
+**Diagnosticul bridge-urilor (Active → Dispozitive).** Fiecare bridge
+serial are un card în pagina Dispozitive: starea lui, fiecare magistrală cu
+indicatorul de ocupare, o **etichetă de sănătate a liniei** și, pentru o
+magistrală ascultată, cadrele auzite. Cât e afișată lista, cardurile se
+reîmprospătează la fiecare 5 s pe loc (un meniu deschis, focusul și filtrul
+rămân); interogarea se oprește când pleci din pagină sau ascunzi fila.
+
+Eticheta deschide **Sănătatea liniei · magistrala :<port>**, din ce
+gateway-ul întreabă bridge-ul la fiecare 30 s (primele cifre vin în
+aproximativ un minut):
+
+- un **verdict** cu un rând de sfat — *linie sănătoasă*, *cablaj RS-485,
+  terminație sau baud*, *un slave nu răspunde*, *dispozitiv oprit sau
+  deconectat*, *rețeaua dintre gateway și bridge*, *gazda bridge-ului e
+  prea ocupată*, *erori pe linie, citirile încă merg*, *bridge-ul nu
+  răspunde*; un adaptor care nu numără erorile de linie scade încrederea și
+  o spune;
+- **Linia** — contoarele kernelului pe bridge (erori de cadru, de paritate,
+  depășiri UART și de tampon, break-uri), total și pe minut;
+- **Conexiune și activitate** — clientul conectat, conectările din ultimele
+  10 min, de cât timp e tăcută magistrala, ultimul octet în fiecare sens;
+- **Ce a văzut gateway-ul pe această magistrală (ultimele 5 min)** — citiri
+  cu răspuns, timeout-uri, erori de conexiune, excepții și erori CRC. Se
+  numără și o magistrală Seplos V2: erorile de checksum și de cadru ca
+  erori CRC, timeout-urile și erorile de I/O, răspunsurile de eroare ca
+  excepții; în modul ascultare, cadrele greșite ale magistralei se numără o
+  singură dată pe magistrală;
+- **Magistrala ascultată** (una pe care gateway-ul doar ascultă) —
+  contoarele cititorului comun, numărate **o dată**, nu o dată pe fiecare
+  dispozitiv care ascultă: cadre valide, cadre fără pereche, răspunsuri de
+  excepție, octeți săriți pentru realiniere, răspunsuri fără cererea
+  potrivită, perechi peste octeți săriți, ultimele șiruri de octeți săriți
+  (în hex), apoi pentru fiecare dispozitiv care ascultă ferestrele lui,
+  valorile, valorile neplauzibile aruncate și vechimea ultimei valori;
+- **Evenimente recente pe bridge.**
+
+Aceleași probleme pot ajunge la tine prin semnalul de alertă *Sănătatea
+magistralelor seriale* (§12). În spatele sursei tap a unei instalații,
+rândul sursei poartă aceleași contoare de magistrală; în `/metrics` sunt
+`gateway_bus_*_total`.
 
 ---
 
@@ -2228,7 +2473,7 @@ regula comandă din nou la abatere, nu la un ceas) și **eșuează în siguranț
 
 1. Ținta trebuie să ofere o **comandă activată** (§14b.1); doar astfel de
    ținte apar în listă.
-2. Pagina **Reguli** → **Adaugă regulă**. Întâi tipul: *Trepte* (praguri →
+2. **Configurare → Reguli** → **Adaugă regulă**. Întâi tipul: *Trepte* (praguri →
    valoare), *Condiție* (adevărat / fals) sau *Ajustare* (pas cu pas, sus /
    jos, până când semnalul stă într-o bandă). Ținta: o unitate sau un grup
    întreg (comanda se împarte pe unități). Semnalul: o expresie peste valori
@@ -2240,6 +2485,13 @@ regula comandă din nou la abatere, nu la un ceas) și **eșuează în siguranț
    câmpurile de timp — fiecare cu valoarea implicită și o explicație de un
    rând. **Previzualizare acum** arată ce ar vedea și ce ar vrea regula în
    această secundă, fără să păstreze nimic.
+   O regulă *Trepte* are și o secțiune **Avansat / reglaj** cu cinci chei
+   opționale: `resume_on_boot`, `step_down_margin`, `timing.boot_wait_s`,
+   `timing.urgent_retries` și `timing.step_down_hold_s` (marja își arată
+   limita superioară live). O casetă goală lasă cheia afară; un 0 scris e
+   păstrat; o valoare în afara intervalului e refuzată sub caseta ei. Ce
+   face fiecare și intervalul ei:
+   [rules.md §3.1](rules.md#31-over-voltage-protection-on-one-inverter-steps) (EN).
 3. **Salvează.** O regulă nouă e salvată în **shadow** (butonul de mod se
    numește *În umbră*): evaluează, decide, scrie în jurnal și publică — și
    nu scrie nimic în echipament. Urmărește-i cardul: starea în cuvinte,
@@ -2473,6 +2725,30 @@ Setări → **Backup și restaurare**.
   anula o revenire*. Valorile secrete sunt mascate.
 - **Revenirea** — restaurarea înlocuiește pachetul exact cum e, după ce face
   un snapshot `pre-restore`, deci o revenire e și ea reversibilă.
+- **O restaurare sau un import blochează implicit scrierile.** Înainte de
+  aplicare, dialogul spune ce ar reactiva pachetul — dispozitive,
+  componente și unități de instalație cu scrierile deblocate, legăturile de
+  comandă activate pe ele și, la restaurarea unui snapshot, regulile armate
+  — și oferă **Blochează toate scrierile (recomandat)**, implicit, sau
+  **Păstrează stările de scriere din backup**. Cu blocarea, fiecare cale de
+  scriere e blocată chiar când se încarcă configurația, înainte ca vreun
+  dispozitiv să fie relegat sau pornit, deci nimic din ce a armat pachetul
+  nu poate scrie până nu deblochezi deliberat. Blocarea scrierilor
+  **suspendă și regulile care scriu** (inclusiv o regulă de supratensiune)
+  până deblochezi; ține cont de asta pe un amplasament care depinde de una.
+  În API: `dry_run=true` (doar dezvăluirea, `would_unlock`) și
+  `lock_writes` (implicit `true`; răspunsul conține `write_locked_forced`).
+  Un import sau o restaurare dezarmează fiecare Virtual BMS armat.
+- **Dispozitivele după un import sau o restaurare** — dispozitivele adăugate
+  de pachet pornesc, iar cele scoase se opresc, fără restart (cu excepția
+  `apply=false`, care doar le oprește pe cele scoase). Un dispozitiv a cărui
+  conexiune a mutat-o pachetul (alt host, port, magistrală, broker sau
+  canal CAN) își păstrează vechea conexiune și **refuză scrierile până la
+  repornirea gateway-ului**. O schimbare a dispozitivului primar
+  (`primary_device`) cere și ea un restart. `restart_required` din răspuns
+  e `true` ori de câte ori configurația are vreun dispozitiv în afară de
+  primar — un indicator prudent; restartul e necesar doar în cele două
+  cazuri de mai sus.
 - **Centura de siguranță la pornire (last-known-good, LKG)** — după ~5
   minute de funcționare sănătoasă, pachetul e marcat LKG. Dacă
   `config.yaml` nu poate fi citit la pornire (o editare manuală greșită, o
@@ -2535,10 +2811,12 @@ coadă:**
    restaurează și passkeys-urile și acreditările dispozitivelor; unul curățat
    îți cere să reintroduci secretele).
 3. Importul aplică dintr-o dată configurația, dispozitivele, selecțiile de
-   registre, contoarele virtuale și presetările calculate. Cu **mai multe
-   dispozitive**, răspunsul poate seta `restart_required` — repornește
-   containerul (`docker compose restart multi-bus-gateway`) ca fiecare
-   citire să pornească din definițiile restaurate.
+   registre, contoarele virtuale și presetările calculate, cu fiecare cale
+   de scriere **blocată** (implicit): deblochează fiecare dispozitiv
+   deliberat, după ce citește corect. Un dispozitiv pe care backup-ul l-a
+   mutat pe altă conexiune refuză scrierile până la un restart — dacă ai
+   dubii, repornește containerul (`docker compose restart multi-bus-gateway`)
+   ca fiecare citire să pornească din definițiile restaurate.
 4. Verifică: `/health` arată contoarele, Status arată fiecare dispozitiv
    citind, iar ESS-ul/consumatorii tăi se reconectează singuri la porturile
    contoarelor virtuale.
@@ -2641,8 +2919,10 @@ gestionează pe ale lui; adminul le vede pe toate). Cerințe și capcane:
 ### 16.4 Lista de IP-uri permise
 
 `security.allowlist` — câte un IP/CIDR pe rând (de ex. `192.168.1.0/24`);
-gol = deschis. Loopback-ul e mereu permis; păzește și `/ws`, `/health` și
-`/metrics`. Cardul arată *IP-ul tău curent*, ca să nu te blochezi singur.
+gol = deschis. Loopback-ul e mereu permis; păzește și `/ws` și `/health`.
+`/metrics` are regula lui (§17): un colector din afara loopback-ului trebuie
+să fie în `security.metrics_allowlist` (sau admis de un `allowlist` setat).
+Cardul arată *IP-ul tău curent*, ca să nu te blochezi singur.
 **Notă Docker:** în spatele rețelei bridge implicite, clienții apar adesea
 ca IP-ul gateway-ului Docker — verifică „IP-ul tău curent” și permite ce vezi
 de fapt, sau folosește rețea host/macvlan pentru filtrare reală pe client.
@@ -2672,7 +2952,8 @@ tokenurile și hash-urile parolelor.
 
 ### 16.6 Jurnalul de audit
 
-JSONL doar cu adăugare în `config/audit.jsonl` (rotire 1 MB × 5 fișiere):
+JSONL doar cu adăugare în `config/audit.jsonl` (2 MB pe fișier, fișierul
+curent + 5 rotite):
 autentificări (inclusiv eșecuri și blocări), evenimente de passkey,
 **fiecare scriere Modbus**, exporturi/importuri de configurație, restaurări
 de snapshot — cu utilizatorul, IP-ul, acțiunea, ținta, starea; valorile
@@ -2683,19 +2964,42 @@ pagina Status (admin), sau exportă CSV prin `GET /api/audit/export.csv`.
 
 ## 17. Observabilitate: Status, /metrics, evenimente
 
-- **Pagina Status** — sănătatea fiecărui dispozitiv (conectat, rata de
-  citire, tipurile de erori, vârsta datelor, latența), statisticile
-  ieșirilor (publicate/sărite/eșuate, contoarele tamponului), clienții
-  WebSocket, resursele procesului (CPU, RSS, thread-uri, descriptori de
-  fișiere), evenimentele și alertele recente.
+- **Pagina Status** — de sus în jos:
+  - **verdictul**: *totul funcționează* sau numărul de erori și
+    avertismente, cu versiunea, timpul de funcționare și rolul gateway-ului
+    (un standby spune că gateway-ul activ citește);
+  - **carduri de rezumat** — *Dispozitive* și *Instalații* (online / total,
+    adormite), *Ieșiri* (conectate / activate), *Automatizări* (reguli) și
+    *Gateway* (CPU), fiecare marcat ✖ sau ▲ când are o problemă; un card
+    îi deschide fila;
+  - **Necesită atenție** — câte un rând pe problemă, cele mai grave primele,
+    fiecare cu legătura spre locul ei; *Arată toate cele N probleme* când
+    sunt mai multe;
+  - file: **Dispozitive** (sănătatea fiecărui dispozitiv — conectat, rata
+    de citire, tipurile de erori, vârsta datelor, latența — cu căutare și
+    *Toate / Probleme / Dezactivate*), **Instalații**, **Ieșiri** (MQTT,
+    InfluxDB, canalele de alertă cu **Test**, destinația Klopot și ultima
+    ei livrare, unde pleacă datele), **Automatizări** (reguli, secvențe,
+    benzile de comenzi), **Gateway** (CPU, memorie, thread-uri, descriptori
+    de fișiere, conexiuni, magistrale) și **Evenimente** (jurnalul de
+    evenimente, cu căutare, pe sursă și severitate).
+  Valorile care nu se mai actualizează sunt marcate ca atare; o
+  reîmprospătare eșuată e spusă în cuvinte, iar interogarea continuă.
 - **`/metrics`** — format text Prometheus, fără autentificare (un colector
-  nu se poate autentifica), dar tot în spatele listei de IP-uri permise; doar
-  contoare și sănătate, niciodată configurație. Serii:
+  nu se poate autentifica); doar contoare și sănătate, niciodată
+  configurație. **Cine îl poate citi:** loopback-ul mereu; un client din
+  `security.metrics_allowlist`; și, când `security.allowlist` e setat,
+  clienții admiși de el. Cu ambele liste goale răspunde doar loopback-ului
+  — orice alt colector primește **403**. Adaugă IP-ul sau subrețeaua
+  colectorului în `security.metrics_allowlist` din `config.yaml` (sau prin
+  `POST /api/config/security`; fila Securitate nu o arată încă); lista
+  deschide doar `/metrics`, nu interfața sau API-ul. Serii:
   `gateway_device_up/poll_rate/reads_total/errors_total/read_latency_ms/staleness_seconds/health`,
   `gateway_mqtt_connected/published_total`,
   `gateway_influx_connected/written_total/buffer_points/dropped_total`,
-  `gateway_vmeter_up/requests_total/request_rate/errors_total/connections/quality`.
-  Exemplu de colectare:
+  `gateway_vmeter_up/requests_total/request_rate/errors_total/connections/quality`,
+  iar contoarele unei magistrale ascultate, o dată pe magistrală, ca
+  `gateway_bus_*_total`. Exemplu de colectare:
 
   ```yaml
   scrape_configs:

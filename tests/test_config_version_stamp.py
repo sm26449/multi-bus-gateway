@@ -42,7 +42,7 @@ def test_newer_stamp_warns_and_surfaces(tmp_path, caplog):
     cfg_file = tmp_path / "config.yaml"
     _write_min_config(cfg_file, "config_version: 999.0.0\n")
     import logging
-    with caplog.at_level(logging.WARNING, logger="multibus.config"):
+    with caplog.at_level(logging.WARNING, logger="multibus.core.config"):
         cfg = Config(str(cfg_file))
     assert cfg.config_written_by_newer is True
     st = cfg.config_status()

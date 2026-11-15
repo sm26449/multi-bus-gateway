@@ -30,8 +30,9 @@ from typing import Dict, List
 from fastapi import APIRouter, Body, HTTPException, Query
 from ..payload import flag
 
-from ..bus_trace import trace
-from ..register_parser import RegisterParser
+from multibus.transports.modbus.bus_trace import trace
+from multibus.transports.driver import PreviewSnapshot
+from ..codec.register_parser import RegisterParser
 
 _PROBE_ORDERS = ("abcd", "cdab", "badc", "dcba")
 
@@ -129,7 +130,7 @@ def build(ctx) -> APIRouter:
         temp = None
         if unit != own:
             import dataclasses
-            from ..modbus_client import ModbusConnection
+            from multibus.transports.modbus.modbus_client import ModbusConnection
             temp = ModbusConnection(dataclasses.replace(conn.config, unit_id=unit, retry_attempts=1,
                                                         retry_delay=0),
                                     trace_label=f"{dev_id} → unit {unit}")
@@ -168,7 +169,7 @@ def build(ctx) -> APIRouter:
         device's URL through its SSRF-guarded client."""
         import asyncio
         import json as _json
-        from .. import discovery
+        from ..commissioning import discovery
 
         pair = next(((d, c) for d, c in ctx.registry if d.id == device_id), None)
         if pair is None:
@@ -186,10 +187,10 @@ def build(ctx) -> APIRouter:
                 str(m.get("username", "") or ""), str(m.get("password", "") or ""),
                 bool(m.get("tls")), topic)
         if dev_cfg.protocol == "http":
-            if client is None or not hasattr(client, "_fetch"):
+            if not isinstance(client, PreviewSnapshot):
                 raise HTTPException(status_code=503, detail="HTTP client not available")
             try:
-                doc = await asyncio.to_thread(client._fetch)
+                doc = await asyncio.to_thread(client.snapshot)
             except Exception as e:  # noqa: BLE001
                 return {"ok": False, "error": str(e)}
             if doc is None:

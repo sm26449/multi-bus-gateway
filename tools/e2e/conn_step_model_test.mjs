@@ -46,15 +46,16 @@ for (const c of CELLS) {
       check(`${name}: its reach is offered`, r && r.state === 'ok', o.reaches);
     }
   }
+  // the role is asked before the protocol (ADR-0031 §2) and filters it: a
+  // cell not available yet is refused at its protocol, under its role
   if (c.port === 'serial') {
     const p = opt(o.protocols, protoKey(ax));
-    if (c.status === 'not_yet') check(`${name}: its protocol here is refused with the note`, p && p.state === 'off' && p.reason === c.note, o.protocols);
+    if (c.status !== 'today') check(`${name}: its protocol here, as ${c.mode}, is refused with the note`, p && p.state === 'off' && p.reason === c.note, o.protocols);
     else check(`${name}: its protocol is offered`, p && p.state === 'ok', o.protocols);
   }
   const role = opt(o.roles, c.mode);
   if (c.port === 'http' || c.port === 'mqtt') check(`${name}: no role is asked (no bus)`, o.roles.length === 0, o.roles);
   else if (c.status === 'today') check(`${name}: its role is offered`, role && role.state === 'ok', o.roles);
-  else if (c.port === 'serial' && c.protocol === 'modbus') check(`${name}: its role refused with the note`, role && role.state === 'off' && role.reason === c.note, o.roles);
   // the M it makes is the connection the matrix stores for that cell
   if (c.status === 'today') {
     let M = CS.applyAxes(CM.blank(), ax);
@@ -69,12 +70,78 @@ for (const c of CELLS) {
 }
 
 // ── every combination no device may have: refused with the server's words ──
+// where the protocol is a question (a serial bus here or at an address), the
+// role comes first and the protocol it cannot take is refused; where the
+// protocol is the only one (Modbus TCP, CAN, a bridge's framing), the role is
 for (const inv of INVALID) {
   const ax = axes(inv);
   const o = CS.options(ctxOf(ax));
-  const r = opt(o.roles, inv.mode);
-  check(`invalid ${inv.code} (${inv.port}/${inv.reach}/${inv.framing}${inv.udp ? '/udp' : ''}): the role is shown, aria-disabled, with its reason`,
-        r && r.state === 'off' && r.code === inv.code && r.reason === inv.text, o.roles);
+  const what = `invalid ${inv.code} (${inv.port}/${inv.reach}/${inv.framing}${inv.udp ? '/udp' : ''})`;
+  if (inv.port === 'serial' && inv.reach !== 'bridge') {
+    const p = opt(o.protocols, protoKey(ax));
+    check(`${what}: as ${inv.mode}, the protocol is shown, refused with the server's reason`,
+          p && p.state === 'off' && p.code === inv.code && p.reason === inv.text, o.protocols);
+  } else {
+    const r = opt(o.roles, inv.mode);
+    check(`${what}: the role is shown, aria-disabled, with its reason`,
+          r && r.state === 'off' && r.code === inv.code && r.reason === inv.text, o.roles);
+  }
+}
+
+// ── 2c before 2d: the role is asked with no protocol yet, and filters it ──
+{
+  const noProto = (port, reach, more = {}) => ctxOf({ port, reach, protocol: null, framing: null, udp: false, mode: null }, { role: null, ...more });
+  const here = CS.options(noProto('serial', 'here'));
+  check('role first: a serial bus here asks both roles before any protocol',
+        opt(here.roles, 'poll')?.state === 'ok' && opt(here.roles, 'listen')?.state === 'ok' && here.prefill === null, here.roles);
+  const keys = o => o.protocols.filter(x => x.state === 'ok').map(x => x.value).join();
+  check('…no role yet: every protocol open', keys(here) === 'modbus:rtu,modbus:ascii,seplos_v2', here.protocols);
+  const lo = CS.options(noProto('serial', 'here', { role: 'listen' }));
+  check('…Listen-only: the protocols that can listen (Modbus RTU tap, Seplos V2)', keys(lo) === 'modbus:rtu,seplos_v2', lo.protocols);
+  check('…Modbus ASCII still shown, refused with the server\'s reason', opt(lo.protocols, 'modbus:ascii')?.state === 'off'
+        && opt(lo.protocols, 'modbus:ascii').code === 'listen_ascii', lo.protocols);
+  const ma = CS.options(noProto('serial', 'here', { role: 'poll' }));
+  check('…Master: the protocols that poll', keys(ma) === 'modbus:rtu,modbus:ascii,seplos_v2', ma.protocols);
+  const at = CS.options(noProto('serial', 'address', { role: 'listen' }));
+  check('at a converter\'s address, Listen-only: Seplos V2 only, Modbus RTU refused with the matrix\'s note', keys(at) === 'seplos_v2'
+        && opt(at.protocols, 'modbus:rtu')?.code === 'new', at.protocols);
+  // a model that fixes the protocol fixes what the role is judged for
+  const sdm = { name: 'SDM', speaks: 'modbus', ports: ['serial'] };
+  const atSdm = CS.options(noProto('serial', 'address', { tpl: sdm }));
+  check('a Modbus model at an address: Listen-only refused with the matrix\'s note (no Seplos to listen with)',
+        opt(atSdm.roles, 'listen')?.state === 'off' && opt(atSdm.roles, 'listen').code === 'new', atSdm.roles);
+  const sv = CS.options(noProto('serial', 'here', { tpl: { name: 'Seplos', speaks: 'seplos_v2', ports: ['serial'] } }));
+  check('a Seplos model: both roles asked, never pre-filled (M7)', opt(sv.roles, 'poll')?.state === 'ok' && opt(sv.roles, 'listen')?.state === 'ok'
+        && sv.prefill === null, sv);
+  const lt = CS.options(noProto('serial', 'here', { tpl: { name: 'Tap meter', speaks: 'modbus', ports: ['serial'], listen_only: true } }));
+  check('a listen-only model: Listen-only pre-filled before the protocol', lt.prefill?.value === 'listen' && lt.prefill.code === 'template_listens', lt.prefill);
+  // a protocol the user picked does not bind the role: the role filters it
+  const picked = CS.options(ctxOf({ port: 'serial', reach: 'here', protocol: 'modbus', framing: 'ascii', udp: false, mode: null }, { role: null }));
+  check('a Modbus ASCII pick does not refuse Listen-only (the role filters the protocol, not the reverse)',
+        opt(picked.roles, 'listen')?.state === 'ok', picked.roles);
+  // review: a role the bus pre-fills after a protocol pick never saves another
+  // cell than the one shown — the protocol it cannot take is an error
+  const listenedBus = { id: '/dev/ttySC0', kind: 'serial', devices: [{ id: 'tap1' }], pollers: [], listeners: ['tap1'], units_in_use: [] };
+  const ascii = { port: 'serial', reach: 'here', protocol: 'modbus', framing: 'ascii', udp: false, mode: null };
+  check('a Modbus ASCII pick on a listened bus: Listen-only pre-filled, and ASCII under it is an error at the protocol',
+        CS.options(ctxOf(ascii, { role: null, bus: listenedBus })).prefill?.value === 'listen'
+        && /listening decodes Modbus RTU/.test(CS.errors(ctxOf(ascii, { role: 'listen', bus: listenedBus }))['connection.protocol'] || ''),
+        CS.errors(ctxOf(ascii, { role: 'listen', bus: listenedBus })));
+  // review: a model read only in ASCII is never offered Listen-only (no RTU tap)
+  const asc = { name: 'ASCII meter', speaks: 'modbus', ports: ['serial'], transports: ['ascii'] };
+  const ao = CS.options(noProto('serial', 'here', { tpl: asc }));
+  check('an ASCII-only model: Listen-only refused with the server\'s reason', opt(ao.roles, 'listen')?.state === 'off'
+        && opt(ao.roles, 'listen').code === 'listen_ascii', ao.roles);
+  // review: a Seplos model with no protocol yet is never pre-filled either (M7)
+  const svb = CS.options(noProto('serial', 'here', { tpl: { name: 'Seplos', speaks: 'seplos_v2', ports: ['serial'] }, bus: listenedBus }));
+  check('a Seplos model on a listened bus, no protocol yet: Listen-only said, not chosen (M7)', svb.prefill === null && svb.forced?.value === 'listen', svb);
+  const eth = CS.options(noProto('ethernet', 'address'));
+  check('Ethernet: Master pre-filled before the protocol, Listen-only refused with the server\'s reason',
+        eth.prefill?.value === 'poll' && opt(eth.roles, 'listen')?.code === 'listen_mbap', eth.roles);
+  check('HTTP / MQTT: no role', CS.options(noProto('http', null)).roles.length === 0 && CS.options(noProto('mqtt', null)).roles.length === 0);
+  check('CAN: the one role there is, Listen-only (Master refused, the server\'s reason)',
+        opt(CS.options(noProto('can', 'socketcan')).roles, 'poll')?.code === 'can_poll'
+        && CS.options(noProto('can', 'socketcan')).forced?.value === 'listen');
 }
 
 // ── the template narrows: a port it has not is off, with why ──

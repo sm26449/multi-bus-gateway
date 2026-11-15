@@ -261,7 +261,7 @@ def template(tid, name, model, description, registers, poll_groups):
         "source_document": "SunSpec Information Models (int+SF); register map "
                            "verified live against a production Fronius fleet "
                            "(raw-frame decode parity, 2026-09-11)",
-        "protocol": {"byte_order": "big", "default_register_type": "holding"},
+        "protocol": {"byte_order": "big"},
         "poll_groups": poll_groups,
         "categories": {
             "ac": {"label": "AC measurements", "order": 1},

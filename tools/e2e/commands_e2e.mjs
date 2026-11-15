@@ -10,6 +10,7 @@
 import { chromium } from 'playwright';
 import { watchDialogs } from './lib/dialogs.mjs';
 import { openDeviceTab } from './lib/device-page.mjs';
+import { openPage } from './lib/nav.mjs';
 const BASE = process.env.MBG_URL || 'http://localhost:18087';
 const results = [];
 const check = (name, cond, extra = '') => { results.push({ name, ok: !!cond }); console.log(`${cond ? 'PASS' : 'FAIL'} ${name}${extra ? ' — ' + extra : ''}`); };
@@ -22,7 +23,7 @@ const errs = []; page.on('console', m => { if (m.type() === 'error' && !/403|502
 try {
   await page.goto(BASE + '/'); await page.waitForLoadState('networkidle');
   const later = page.locator('button:has-text("Later")'); if (await later.count()) await later.first().click().catch(() => {});
-  await page.click('[data-page="devices"]'); await page.waitForTimeout(1000);
+  await openPage(page, 'devices'); await page.waitForTimeout(1000);
   await page.locator('.endpoint-row button[data-action="openEndpointDetail"]').first().click(); await page.waitForTimeout(2000);
   const inv = page.locator('[data-group="inverters"]');
   check('the inverter card offers Commands…', await inv.locator('button[data-action="openCommandModal"]').count() === 1);

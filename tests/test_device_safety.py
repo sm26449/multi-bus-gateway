@@ -101,9 +101,9 @@ devices:
 
 
 def test_the_import_validator_accepts_listen_only_on_a_modbus_tap_template():
-    import pathlib
     from multibus import device_template as dt
-    data = json.loads((pathlib.Path(dt.__file__).parent / "device_templates"
+    from multibus.paths import DEVICE_TEMPLATES_DIR
+    data = json.loads((DEVICE_TEMPLATES_DIR
                        / "seplos_bms_v3_rtu_tap.json").read_text())
     data["device_template"]["protocol"]["listen_only"] = True
     assert not [e for e in dt.validate_template(data) if "listen_only" in e]
@@ -209,7 +209,6 @@ HA_YAML = """
 devices:
   - id: loud
     template: eastron_sdm120
-    enabled: false
     connection: { protocol: tcp, host: 192.0.2.9, unit_id: 1 }
   - id: quiet
     template: eastron_sdm120
@@ -301,3 +300,73 @@ def test_a_device_already_cleared_is_not_cleared_again_after_a_restart(tmp_path)
     app2, _ = create_api(cfg2, None, pub2, None, devices=[(d, None) for d in cfg2.devices])
     TestClient(app2, raise_server_exceptions=False).post("/api/devices/loud/outputs", json={"ha_discovery": True})
     assert "loud" in pub2.announced and pub2.cleared == []
+
+
+# ── HA-DISC-2: a disabled device announces nothing ───────────────────────
+OFF_YAML = """
+devices:
+  - id: parked
+    template: eastron_sdm120
+    enabled: false
+    connection: { protocol: tcp, host: 192.0.2.9, unit_id: 3 }
+"""
+
+
+@needs_tc
+def test_a_disabled_device_is_not_announced_and_what_it_had_is_taken_back_once(tmp_path):
+    """HA-DISC-2 (prod 2026-11-14): a device switched off still got its 7
+    discovery configs at boot. Off = nothing announced; its old entities are
+    cleared once, and not again at the next start."""
+    cfg = write_config(tmp_path, extra_yaml=OFF_YAML)
+    pub = _Pub()
+    create_api(cfg, None, pub, None, devices=[(d, None) for d in cfg.devices])   # the boot announces
+    assert "parked" not in pub.announced
+    assert "parked" in pub.cleared
+    assert "parked" in json.loads((tmp_path / "ha_discovery_cleared.json").read_text())
+    # the next start: cleared already, nothing is sent again
+    from multibus.config import Config
+    cfg2 = Config(str(tmp_path / "config.yaml"))
+    pub2 = _Pub()
+    create_api(cfg2, None, pub2, None, devices=[(d, None) for d in cfg2.devices])
+    assert "parked" not in pub2.announced and pub2.cleared == []
+
+
+# ── HA-DISC-3: deleting a device takes ALL its entities out of Home Assistant ──
+def test_a_clear_of_every_kind_takes_number_select_and_connectivity_too(tmp_path):
+    """A deleted device's write entities (number/select) and its connectivity
+    sensor stayed in HA: the delete path cleared only `sensor/*`. Asked for
+    every kind, the clear covers each register as sensor, number and select —
+    also what a previous run announced, which this run never saw."""
+    from multibus.config import MQTTConfig, SelectedRegister
+    from multibus.mqtt_publisher import MQTTPublisher
+    pub = MQTTPublisher(MQTTConfig(enabled=False, topic_prefix="meters/em24", ha_discovery_enabled=True),
+                        [], publish_mode="changed")
+    sent = {}
+    pub.connected = True
+    pub._publish = lambda topic, payload, retain=None: sent.__setitem__(topic, payload) or True
+    a = SelectedRegister(address=100, name="V1", label="V1", unit="V", data_type="float", poll_group="normal")
+    pub.clear_device_discovery("em24", [a])                     # switched off first: sensor only
+    sent.clear()
+    assert pub.clear_device_discovery("em24", [a], every_kind=True) is True   # then deleted
+    cleared = {t for t, p in sent.items() if p == ""}
+    assert cleared == {"homeassistant/sensor/mbg_dev_em24/100_v1/config",
+                       "homeassistant/number/mbg_dev_em24/100_v1/config",
+                       "homeassistant/select/mbg_dev_em24/100_v1/config",
+                       "homeassistant/binary_sensor/mbg_dev_em24/connectivity/config"}
+
+
+@needs_tc
+def test_deleting_a_device_clears_every_kind_of_its_discovery(tmp_path):
+    cfg = write_config(tmp_path, extra_yaml=HA_YAML)
+    calls = []
+
+    class _P(_Pub):
+        def clear_device_discovery(self, device_id, *a, **k):
+            calls.append((device_id, k.get("every_kind"), k.get("ha_node")))
+            return True
+    pub = _P()
+    app, _ = create_api(cfg, None, pub, None, devices=[(d, None) for d in cfg.devices])
+    client = TestClient(app, raise_server_exceptions=False)
+    calls.clear()
+    assert client.delete("/api/devices/loud").status_code == 200
+    assert ("loud", True, "mbg_dev_loud") in calls, calls

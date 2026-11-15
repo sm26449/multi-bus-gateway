@@ -17,10 +17,11 @@ from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Body, HTTPException, Request
 
-from ..bridges import (FRAMING_PROTOCOL, TYPES, _crc16, _exchange, _mbap_ok,  # noqa: F401 — _crc16 is used by tests
+from multibus.transports.serial.bridges import (FRAMING_PROTOCOL, TYPES, _crc16, _exchange, _mbap_ok,  # noqa: F401 — _crc16 is used by tests
                        _mbap_read, _rtu_ok, _rtu_read, public_view, validate_bridge)
-from .. import bridge_diag, bridge_guard, modbus_client
-from .. import bridges as bridge_api
+from multibus.transports.serial import bridge_diag, bridge_guard
+from multibus.transports.modbus import modbus_client
+from multibus.transports.serial import bridges as bridge_api
 from ..payload import flag
 from ._shared import secrets_visible
 
@@ -123,7 +124,7 @@ def build(ctx) -> APIRouter:
         """One value per bus: the wire time of its lane(s) over the last
         minute — taken once per lane, so N slaves never count the wire N
         times (buses.load_view, the same words /api/buses serves)."""
-        from ..buses import load_view
+        from ..devices.buses import load_view
         occ = None
         for d in polled:
             host = getattr(d.connection, "host", None)
@@ -142,9 +143,15 @@ def build(ctx) -> APIRouter:
                 except Exception:  # noqa: BLE001
                     return None
                 bus = st.get("bus") or {}
+                # the shared reader's counters: the BUS's, the same for every
+                # tap on it — read once, never summed over them (TAP-DIAG-2)
                 return {"frames": bus.get("frames", 0),
-                        "crc_errors": (st.get("error_counts") or {}).get("crc_errors", 0),
-                        "error": bus.get("open_error", "")}
+                        "crc_errors": bus.get("crc_errors",
+                                              (st.get("error_counts") or {}).get("crc_errors", 0)),
+                        "error": bus.get("open_error", ""),
+                        **{k: bus.get(k, 0) for k in ("orphan_frames", "exception_responses",
+                                                      "resync_dropped_bytes", "unpaired_responses",
+                                                      "paired_across_junk")}}
         return None
 
     def _bus(bridge_id: str, port: int) -> str:
@@ -154,19 +161,19 @@ def build(ctx) -> APIRouter:
     def _listened(bus: str) -> List[str]:
         """The enabled devices only listening on this bus (bus_claims.py,
         ADR-0025): the one claim every transmitting path asks."""
-        from ..bus_claims import listeners
+        from multibus.transports.serial.bus_claims import listeners
         return listeners(config, bus, getattr(ctx, "template_registry", None))
 
     def _other_protocol(bus: str) -> List[str]:
         """Devices reading this bus in another protocol through the bridge's
         host and port: a Seplos V2 bus, where a Modbus frame is noise to the packs."""
-        from ..bus_claims import bus_of
-        from ..config import VIRTUAL_MAP_OVER_TCP
+        from multibus.transports.serial.bus_claims import bus_of
+        from ..core.config import VIRTUAL_MAP_OVER_TCP
         return [d.id for d in config.devices
                 if d.protocol in VIRTUAL_MAP_OVER_TCP and bus_of(d.protocol, d.connection) == bus]
 
     def _refuse_if_tapped(bridge_id: str, port: int, what: str) -> None:
-        from ..bus_claims import refusal_detail
+        from multibus.transports.serial.bus_claims import refusal_detail
         bus = _bus(bridge_id, port)
         taps = _listened(bus)
         if taps:
@@ -353,15 +360,15 @@ def build(ctx) -> APIRouter:
         converter by an open port of the kinds' ``lan_discovery`` lists, then
         one register asked of a unit (default 1) as RTU and as Modbus TCP.
         Hosts already added are listed, not knocked on."""
-        from .. import discovery
-        from ..bridges import discover
+        from ..commissioning import discovery
+        from multibus.transports.serial.bridges import discover
         try:
             hosts = discovery.hosts_from_cidr(str(payload.get("cidr", "") or ""),
                                               allow_nonlan=config.security.allow_nonlan_http_devices)
             unit = int(payload.get("unit_id", 1))
         except (TypeError, ValueError) as e:
             raise HTTPException(status_code=422, detail={"errors": [str(e)]})
-        from ..bridges import lan_ports
+        from multibus.transports.serial.bridges import lan_ports
         known = {str(b.get("host", "")).strip().lower(): b["id"] for b in config.bridges}
         # a host:port a device only listens to is not knocked on (ADR-0025)
         skipped = [{"host": h, "port": p, "listeners": ids} for h in hosts if h.lower() not in known

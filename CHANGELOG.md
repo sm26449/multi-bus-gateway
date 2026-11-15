@@ -1,5 +1,156 @@
 # Changelog
 
+## 3.101.0-rc1
+
+A release candidate. Everything since 3.98.2. Read the upgrade notes first
+(and [docs/upgrade-guide.md](docs/upgrade-guide.md), "3.98 → 3.101"):
+nothing in `config.yaml` is renamed, but `/metrics` is closed to remote
+scrapers until you allow them, and a restore or an import now locks writes.
+
+**Upgrade notes:**
+- **`/metrics` answers loopback only** unless the scraper is admitted: add
+  its IP or subnet to the new `security.metrics_allowlist` (it opens
+  `/metrics` and nothing else), or admit it with `security.allowlist`. A
+  remote Prometheus gets 403 until then.
+- **A restore or an import locks every write path by default.** The dialog
+  shows what the backup would re-enable and offers *Lock all writes
+  (recommended)* or *Keep the backup's own write states*; the API has
+  `lock_writes` (default `true`) and `dry_run`. Locking also suspends the
+  rules that write until you unlock.
+- **InfluxDB:** enum and bits fields keep their text in the string field
+  they always had, and gain a numeric companion `<field>_code` (float).
+- **The navigation is regrouped** (below); page addresses are unchanged.
+- **Passkey and password logins share one lockout per IP**; a locked-out IP
+  gets 429 from the passkey login too, and a malformed passkey assertion
+  counts as a failure.
+- **Virtual-meter alerts are on by default** (`alerts.signals.vmeter`).
+- A **reload is a clean load**: a section removed from `config.yaml` returns
+  to its default on the next reload.
+
+**Navigation and pages**
+- One row: **Dashboard** · **Assets** (Devices, Virtual Meters, Virtual
+  BMS) · **Configuration** (Rules, Templates) · **System** (Diagnostics,
+  Settings) · **Status**. On a phone it folds into one *Navigation* button.
+  Links are real links (`aria-current`), and a device's dashboard view is
+  its own address, `#/dashboard/<device>`: Back, Forward, a reload and a
+  bookmark land on it.
+- **Status page redesigned:** a verdict, summary cards for devices,
+  installations, outputs, automation and the gateway, a *Needs attention*
+  list that names each problem (a device's alarms included), and tabs —
+  Devices, Installations, Outputs, Automation, Gateway, Events. A failed
+  refresh is said in words.
+- **Templates** has a **Canonical fields** tab: the gateway's dictionary of
+  standard names, and your own fields.
+- UI audit: an honest *Save & Apply* result, last-known values marked as
+  stale, an armed rule whose input is missing says so, the device overview
+  leads with its state and values, the device name stays visible on a phone,
+  a rule's overrides sit in one menu, *Show all N issues*, raw keys shown as
+  readable labels, the device list updated in place without losing focus.
+- Accessibility: the green pills meet 4.5:1 contrast in both themes, the
+  settings title follows the open tab, a bridge row no longer nests its
+  menu inside a button, the mobile navigation keeps accessible names.
+
+**New**
+- **Virtual BMS (experimental — not yet validated on hardware; do not arm
+  it on an inverter in service).** Assets → Virtual BMS aggregates battery
+  packs into one logical BMS and serves it to an inverter over CAN
+  (Pylontech LV): add, edit and delete instances from the UI, a port picker
+  that offers only free CAN interfaces, a live *Show aggregation* preview,
+  an optional cross-check against the inverter it feeds, and arm / disarm
+  with a confirmation. Safety: every instance starts disarmed and is
+  disarmed by an import, a restore, writes switched off or a standby role;
+  an EMS commands its limits over MQTT only within configured bounds; with
+  too few packs the limits go to 0 and then it goes silent; the current
+  limits follow the packs actually admitted, a pack that dropped returns
+  only after `return_after_s` (60 s), a flapping pack is held out until
+  cleared, and the limits ramp up from 0 after every start. A save is
+  refused when the port's bitrate does not match the profile, a pack reads
+  the bus it transmits on, or another device already reads a BMS on its
+  frame ids. Pack alarm flags are not forwarded yet.
+- **Settings → CAN** and the gateway managing a CAN interface: each
+  interface's mode (Transmit / listen-only), bitrate and readers, switched
+  in one click (`POST /api/can-interfaces/{name}`). Opt-in: needs
+  `--cap-add NET_ADMIN` and `MBG_CAN_NET_ADMIN=1`; Transmit needs writes
+  enabled; refused on a port with an armed Virtual BMS, and a bitrate
+  change on a bus devices read needs a confirmation. Listen-only stays the
+  default.
+- **Guided setup:** an action that needs a setting that is off — arming a
+  Virtual BMS needs writes enabled and its CAN port in Transmit mode at the
+  right bitrate — says so and offers *Enable now* or *Later* with where to
+  find it, instead of failing silently (409 with `prerequisites` in the
+  API).
+- **Klopot notifications.** The gateway sends its event alerts (device and
+  sink down/up, InfluxDB auth or dropped points, template alarms, bus
+  health, virtual meters, configuration and gateway events) to
+  [Klopot](https://klopot.dev) as structured events (`{type, context,
+  source}`), and Klopot delivers them on SMS, Telegram, e-mail or any
+  channel set up in it. Settings → Alerts: URL, API key, source; a
+  downloadable Klopot config pack with a template and a route for each
+  event type; the Status page shows the last delivery. Off by default
+  (`alerts.alertd` in `config.yaml`).
+- **Virtual-meter alerts:** a meter not serving, serving held values, or
+  whose consumer stopped polling; limits in `alerts.vmeter`, or per meter
+  (`alerts:` in `virtual_meters.yaml`), e.g. none for a consumer that
+  sleeps at night.
+- **Bridge diagnostics:** the bridge cards on the Devices page refresh every
+  5 s in place. **Line health** gains a *tapped bus* section — the shared
+  reader's counters once for the bus, the last skipped byte runs in hex,
+  and each listening device's own windows, values and implausible drops —
+  and counts a Seplos V2 bus's checksum, frame and timeout errors.
+- **Plausibility bounds:** optional `valid_min` / `valid_max` per template
+  or selection row; a value outside is dropped and counted as
+  `implausible`, and a listen-only window that is mostly implausible is
+  discarded whole. Seplos V3 tap template 1.10.0 uses them.
+- **MQTT rate limits (opt-in):** `mqtt.min_interval_s`, `mqtt.deadband_pct`
+  and `mqtt.throttle_poll_groups` for device and calculated value topics.
+- **Rules:** the steps-rule editor's *Advanced / tuning* section edits
+  `resume_on_boot`, `step_down_margin`, `timing.boot_wait_s`,
+  `timing.urgent_retries` and the new `timing.step_down_hold_s`;
+  `step_down_margin` and `step_down_hold_s` damp flapping between steps.
+- **Add Device:** the Connection step asks the role on the bus (Master or
+  Listen-only) before the protocol, explains each answer, and offers only
+  the protocols that fit it.
+- `/metrics`: a listen-only bus's counters once per bus
+  (`gateway_bus_*_total`).
+
+**Changed**
+- **Import and restore** start added devices and stop removed ones without
+  a restart; the configuration is loaded atomically (no half-loaded state
+  is ever seen) and a file that cannot be read is refused, keeping the
+  running configuration. A device whose connection the bundle moved keeps
+  its old connection and refuses writes until a restart.
+- A rule's "the read-back already matches" needs a read-back taken after
+  its last write.
+- A small counter step back is held, not taken as a reset (a lasting one
+  is adopted after 1 h); installation voltage and frequency averages skip
+  asleep and zero units; UMG 512 template 1.1.0 marks its counters.
+- A unit counts as online only while its fastest values are fresh.
+- InfluxDB dropped points are counted by cause (schema rejection or full
+  buffer), and the alert names it.
+- Logs and audit: successful commands at INFO, repeated no-op commands and
+  refused logins coalesced, the audit at 2 MB per file, successful probe
+  requests out of the access log, the overrun warning less chatty.
+
+**Fixed**
+- **Virtual BMS topics** follow a gateway-scoped topic pattern
+  (`mbg/{gateway}/devices/{device}`); before, its command and telemetry
+  topics failed on such an install.
+- **Home Assistant:** a disabled device announces nothing (its retained
+  discovery is cleared once); a virtual meter's discovery is no longer
+  republished every few minutes; a non-numeric value for a command-backed
+  number answers `rejected` on `cmd/result`.
+- A restore or import that brings back a write lock binds the running
+  devices at once; an import is all or nothing on disk; a merge import
+  keeps a stored URL secret instead of its masked form; `restart_required`
+  is reported for a lone non-primary device.
+- Listen-only taps: a response pairs only with the last complete request
+  within 0.3 s; the bus counters are no longer multiplied by the number of
+  devices on the bus.
+- Power quality: the waveform archive no longer stalls the realtime poll.
+- Enabling MQTT or InfluxDB through *apply* re-points rules and sequences
+  to the new output.
+- The installation page fits a phone; each row's ⋯ menu is fully visible.
+
 ## 3.98.2
 
 A fix release for 3.98.1, whose release images were not published either:

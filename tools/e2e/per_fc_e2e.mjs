@@ -15,6 +15,7 @@ import { execFileSync } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { openDeviceTab, openDeviceEditor } from './lib/device-page.mjs';
+import { openPage } from './lib/nav.mjs';
 
 const BASE = process.env.MBG_URL || 'http://127.0.0.1:8099';
 const CTR = process.env.CTR || 'mbg-ui-sandbox';
@@ -70,7 +71,7 @@ try {
   if (await later.count()) await later.first().click().catch(() => {});
 
   // ═══ 1. the visual editor takes four rows at address 0 ══════════════════
-  await page.click('[data-page="templates"]');
+  await openPage(page, 'templates');
   await page.waitForSelector('#tmNewBtn', { state: 'visible' });
   await page.click('#tmNewBtn');
   await page.waitForSelector('#devTplModal.active');

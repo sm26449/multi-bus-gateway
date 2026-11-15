@@ -229,6 +229,8 @@ def _fingerprint(tmp_path, legacy_defaults=False):
     out["saved_influx_heartbeat"] = (saved.get("influxdb") or {}).pop("heartbeat_interval", "ABSENT")
     # ADR-0031 §5: and the read preview's budget, in its own section
     out["saved_preview_budget"] = saved.pop("preview", "ABSENT")
+    # OBS-PROM-1: and the (empty) metrics allowlist
+    out["saved_metrics_allowlist"] = (saved.get("security") or {}).pop("metrics_allowlist", "ABSENT")
     out["saved"] = saved
     out["selection_untouched"] = (tmp_path / "selected_registers.json").read_bytes() == before
     return json.loads(json.dumps(out, default=str, sort_keys=True))
@@ -250,6 +252,7 @@ def test_prod_config_publishes_exactly_what_it_did(tmp_path, variant):
     # ADR-0029: and the InfluxDB heartbeat's starting value, written in
     assert got.pop("saved_influx_heartbeat") == 600
     assert got.pop("saved_preview_budget") == {"max_requests": 4, "listen_s": 10}
+    assert got.pop("saved_metrics_allowlist") == []
     digests = {k: _digest(v) for k, v in got.items()}
     counts = {"devices": len(got["devices"]), "ha": len(got["ha"]), "meta": len(got["meta"]),
               "primary_topics": len(got["primary_topics"]),
@@ -394,7 +397,7 @@ def test_a_vmeter_without_a_source_says_so_when_there_is_no_primary(caplog):
     mgr = VirtualMeterManager.__new__(VirtualMeterManager)
     mgr.current_values, mgr.device_values, mgr.primary_device_id = {}, {"bms-can": {1: {}}}, ""
     mgr._no_source_warned = set()
-    with caplog.at_level(logging.WARNING, logger="multibus.virtual_meter_manager"):
+    with caplog.at_level(logging.WARNING, logger="multibus.outputs.virtual_meter_manager"):
         assert mgr._store_for({"template": "em24_av53"}) == {}
         mgr._store_for({"template": "em24_av53"})
     said = [r for r in caplog.records if "no primary device" in r.getMessage()]
@@ -474,3 +477,37 @@ def test_the_api_serves_a_gateway_without_a_primary(tmp_path):
     assert not (tmp_path / "selected_registers.json").exists()
     with cl.websocket_connect("/ws") as ws:
         assert ws.receive_json()["device"] == ""
+
+
+@needs_tc
+def test_a_single_nonprimary_import_requests_restart(tmp_path):
+    """REFAC-RESTART-1: a non-primary device materializes only on (re)start — only
+    the legacy primary is hot-applied. So importing a change to a config whose only
+    device is non-primary must report restart_required=True. The old heuristic
+    `len(devices) > 1` reported False for exactly one non-primary device."""
+    import io
+    import zipfile
+    from unittest.mock import Mock
+
+    import yaml as _yaml
+    from fastapi.testclient import TestClient
+    from multibus.api import create_api
+    from tests.test_devices import write_config
+
+    cfg = write_config(tmp_path, extra_yaml='''
+primary_device: false
+devices:
+  - id: ctrl
+    connection: {protocol: tcp, host: 192.168.1.2}
+''')
+    app, _ = create_api(cfg, None, None, None, devices=[(cfg.get_device('ctrl'), Mock())])
+    client = TestClient(app, raise_server_exceptions=False)
+    assert len(cfg.devices) == 1 and not cfg.devices[0].primary
+    doc = _yaml.safe_load(cfg.config_path.read_text())
+    doc['devices'][0]['connection']['host'] = '192.168.1.3'
+    data = io.BytesIO()
+    with zipfile.ZipFile(data, 'w') as z:
+        z.writestr('config.yaml', _yaml.safe_dump(doc))
+    r = client.post('/api/config/import?apply=false', content=data.getvalue())
+    assert r.status_code == 200, r.text
+    assert r.json()['restart_required'] is True, r.json()

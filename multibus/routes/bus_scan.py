@@ -26,7 +26,7 @@ from typing import Any, Dict, Optional
 from fastapi import APIRouter, Body, HTTPException, Request
 from fastapi.responses import JSONResponse
 
-from .. import bus_scan, preview
+from ..commissioning import bus_scan, preview
 from .previews import env_of
 
 logger = logging.getLogger(__name__)

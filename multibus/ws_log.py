@@ -1,6 +1,7 @@
 # Multi-Bus Gateway — multi-protocol Modbus/HTTP/MQTT acquisition gateway.
 # Copyright (C) 2024-2026 Stefan Maldaianu <stefan@multibus.dev>  — AGPL-3.0-or-later
-"""One log line per client per minute for refused WebSocket handshakes (WS-LOG-1).
+"""uvicorn log filters: one line per client per minute for refused WebSocket
+handshakes (WS-LOG-1), and no access line for a successful probe (LOG-ACC-1).
 
 A refused ``/ws`` handshake (the endpoint closes before accepting) makes
 uvicorn log two INFO lines on ``uvicorn.error``::
@@ -85,9 +86,38 @@ class WsRejectFilter(logging.Filter):
             del self._seen[min(self._seen, key=lambda h: self._seen[h][0])]
 
 
+# ── LOG-ACC-1: probe paths out of the access log ─────────────────────────────
+# mbg-ha's keepalived probes GET /api/role every second, plus /health and
+# /metrics scrapes: 48 % of the log's bytes, none of it worth reading while it
+# answers 2xx/3xx. A refusal or an error on those paths (the 403s) still logs.
+_ACCESS_MSG = '%s - "%s %s HTTP/%s" %d'
+ACCESS_LOGGER = "uvicorn.access"
+QUIET_PATHS = frozenset({"/api/role", "/health", "/metrics"})
+
+
+class AccessProbeFilter(logging.Filter):
+    """Drop uvicorn.access lines of a successful probe (2xx/3xx on QUIET_PATHS)."""
+
+    def __init__(self, paths=QUIET_PATHS):
+        super().__init__()
+        self.paths = frozenset(paths)
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        args = record.args
+        if record.msg != _ACCESS_MSG or not isinstance(args, tuple) or len(args) < 5:
+            return True
+        path, status = args[2], args[4]
+        if not isinstance(path, str) or not isinstance(status, int):
+            return True
+        return not (path.split("?", 1)[0] in self.paths and 200 <= status < 400)
+
+
 def install(window_s: float = 60.0) -> None:
-    """Attach the filter to uvicorn's loggers once (idempotent)."""
+    """Attach the filters to uvicorn's loggers once (idempotent)."""
     for name in LOGGERS:
         lg = logging.getLogger(name)
         if not any(isinstance(f, WsRejectFilter) for f in lg.filters):
             lg.addFilter(WsRejectFilter(window_s))
+    acc = logging.getLogger(ACCESS_LOGGER)
+    if not any(isinstance(f, AccessProbeFilter) for f in acc.filters):
+        acc.addFilter(AccessProbeFilter())

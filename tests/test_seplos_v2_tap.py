@@ -11,6 +11,7 @@ import ast
 import json
 import os
 import pathlib
+import re
 import threading
 import time
 from types import SimpleNamespace
@@ -257,7 +258,7 @@ def test_0x5a_is_heard_never_encoded():
 
 def test_the_listener_has_no_transmit_path():
     """As the CAN lot's check: no call in _Listener that could put a byte on a wire."""
-    tree = ast.parse((ROOT / "multibus" / "seplos_v2.py").read_text())
+    tree = ast.parse((ROOT / "multibus" / "vendors" / "seplos_v2.py").read_text())
     cls = next(n for n in tree.body if isinstance(n, ast.ClassDef) and n.name == '_Listener')
     calls = {n.func.attr for n in ast.walk(cls) if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)}
     names = {n.func.id for n in ast.walk(cls) if isinstance(n, ast.Call) and isinstance(n.func, ast.Name)}
@@ -439,3 +440,142 @@ def test_the_api_refuses_a_polled_tap_and_keeps_a_listening_one(tmp_path, monkey
     assert d.connection.mode == "listen" and d.connection.stale_after_s == 10   # freshness kept
     r = client.put("/api/devices/pack-2", json=body("pack-2", unit_id=2, mode="poll"))
     assert r.status_code == 422 and "choose listen" in r.text, r.text
+
+
+
+# ── SV2-BUS-1: a shared listener's bus counters are never summed per pack ────
+#
+# Several listen-mode packs share one _Listener; its frames, bad_frames,
+# orphans, commands_seen, resync_dropped_bytes and summary_unpaired sit in
+# every pack's get_stats()['bus'] (the BUS's, repeated). A pack's own
+# error_counts are only what was charged to it (one awaited answer at a
+# time). The rtu_tap fix (TAP-DIAG-2) dedupes a Modbus tap's bus; these pin
+# that no view sums the V2 bus ×N either: the bridge diagnostics
+# (mbg_counts / tap_bus_view) and /metrics read only the packs' own counters.
+
+def _dirty_bus(fake_port, adrs=(1, 2, 3)):
+    """Packs on one listener, fed junk, a torn answer and a bad checksum."""
+    clients, _got, lst = _listening(fake_port, adrs=adrs)
+    (_t0, q1), (_t1, a1), (_t2, q2), (_t3, a2) = capture()[:4]
+    bad_sum = a1.replace(b'~2001', b'~2002')
+    stream = (b'\x00\xff junk ' + q1 + a1 + q2 + a2[:30] + q1 + a1 + q2 + bad_sum
+              + b'\x11\x22' + q2 + a2)
+    for raw in lst.framer.feed(stream):
+        lst.on_frame(raw, 1.0)
+    assert lst.bad_frames and lst.framer.dropped_bytes        # the bus HAS counters to repeat
+    return clients, lst
+
+
+def test_v2_bus_counters_are_the_listeners_repeated_on_every_pack(fake_port):
+    clients, lst = _dirty_bus(fake_port)
+    for c in clients.values():
+        b = c.get_stats()['bus']
+        assert (b['frames'], b['bad_frames'], b['resync_dropped_bytes']) == \
+               (lst.frames, lst.bad_frames, lst.framer.dropped_bytes)
+    own = [c.get_stats()['error_counts']['checksum_errors'] for c in clients.values()]
+    assert sum(own) == lst.bad_frames                          # charged once, to one pack
+
+
+def test_bridge_diag_never_sums_a_v2_bus_per_pack(fake_port):
+    from multibus import bridge_diag as bd
+    from multibus.transports.modbus.rtu_tap import unique_buses
+    clients, lst = _dirty_bus(fake_port)
+    stats = [c.get_stats() for c in clients.values()]
+    assert unique_buses(stats) == []                          # not a Modbus tap's reader
+    assert bd.tap_bus_view([(c.device_id, s) for c, s in zip(clients.values(), stats)]) is None
+    three, bad3 = bd.mbg_counts(stats), lst.bad_frames
+    # two more packs on the same listener that heard nothing of their own:
+    # the bus counters they repeat add nothing anywhere
+    more, lst5 = _dirty_bus(fake_port, adrs=(1, 2, 3, 4, 5))
+    five = bd.mbg_counts([c.get_stats() for c in more.values()])
+    for k in ('ok', 'timeouts', 'connection', 'exceptions', 'other', 'crc',
+              'exceptions_deduped', 'implausible'):
+        assert five[k] == three[k], (k, three, five)
+    # the bus's bad frames once, never ×packs (SV2-DIAG-1; the listener is
+    # shared by port, so the second feed added its own to the same bus)
+    assert three['crc_deduped'] == bad3 and five['crc_deduped'] == lst5.bad_frames
+    assert three['ok'] == sum(s['successful_reads'] for s in stats)   # each pack's own windows
+    assert three['tap_buses'] == 0 and three['tap_devices'] == 0
+
+
+# ── SV2-DIAG-1: the bridge diagnostics read the V2 driver's own words ───────
+#
+# mbg_counts read only the Modbus words (timeout, crc_errors, exception_*):
+# a V2 pack's timeouts, checksum and frame errors counted 0, so a garbled
+# Seplos line behind a bridge read "ok". A listener's bad frames are the
+# BUS's: counted once per bus, including the ones no pack could be charged.
+
+def test_sv2_diag_1_a_polled_packs_errors_reach_the_line_diagnosis(fake_port):
+    from multibus import bridge_diag as bd
+    fake_port['port'] = FakePack()
+    c = SeplosV2Client(conn(unit_id=1, mode='poll'), [reg(0, 'cell_1', scale=1000)], {},
+                       device_id='p1')
+    s = c.stats
+    s.good, s.timeouts, s.checksum_errors, s.frame_errors = 10, 4, 2, 1
+    s.rtn_errors, s.io_errors, s.decode_errors = 3, 6, 5
+    m = bd.mbg_counts([c.get_stats()])
+    assert (m['ok'], m['timeouts'], m['connection']) == (10, 4, 6), m
+    assert m['crc'] == m['crc_deduped'] == 3, m             # checksum + torn frames: the line's
+    assert m['exceptions'] == m['exceptions_deduped'] == 3, m   # an RTN error is the pack's answer
+    assert m['other'] == 0, m                                # a decode error is content, not the line
+    zero = bd.mbg_counts([SeplosV2Client(conn(unit_id=2, mode='poll'), [reg(0, 'cell_1', scale=1000)], {},
+                                          device_id='p2').get_stats()])
+    w = {"reachable": True, "window_s": 300, "stats_known": True,
+         "mbg": {k: m[k] - zero[k] for k in ('ok', 'timeouts', 'connection', 'exceptions', 'other',
+                                              'crc', 'crc_deduped', 'exceptions_deduped')},
+         "line": None, "bytes": None, "connects": 0, "silent_s": 1}
+    v = bd.diagnose(w)
+    assert v['code'] != 'ok' and v['evidence']['timeouts'] == 4 and v['evidence']['garbled'] == 3, v
+
+
+def test_sv2_diag_1_a_listened_bus_counts_its_bad_frames_once(fake_port):
+    from multibus import bridge_diag as bd
+    clients, lst = _dirty_bus(fake_port)
+    stats = [c.get_stats() for c in clients.values()]
+    m = bd.mbg_counts(stats)
+    assert m['crc_deduped'] == lst.bad_frames > 0, (m, lst.bad_frames)
+    more, lst5 = _dirty_bus(fake_port, adrs=(1, 2, 3, 4, 5))
+    assert bd.mbg_counts([c.get_stats() for c in more.values()])['crc_deduped'] == lst5.bad_frames
+
+
+def test_sv2_diag_1_a_bad_frame_no_pack_was_waiting_for_still_counts(fake_port):
+    from multibus import bridge_diag as bd
+    clients, _got, lst = _listening(fake_port, adrs=(1, 2))
+    (_t0, _q1), (_t1, a1) = capture()[:2]
+    for raw in lst.framer.feed(a1.replace(b'~2001', b'~2002')):   # nothing asked: nobody to charge
+        lst.on_frame(raw, 1.0)
+    stats = [c.get_stats() for c in clients.values()]
+    assert lst.bad_frames == 1 and sum(s['error_counts']['checksum_errors'] for s in stats) == 0
+    assert bd.mbg_counts(stats)['crc_deduped'] == 1
+
+
+def test_metrics_carry_only_each_v2_packs_own_counters(fake_port, tmp_path):
+    pytest.importorskip('fastapi.testclient')
+    from fastapi.testclient import TestClient
+    from multibus.api import create_api
+    from multibus.config import DeviceConfig
+    from tests.test_devices import write_config
+    clients, lst = _dirty_bus(fake_port)
+
+    class _Pack(SimpleNamespace):
+        def get_stats(self):
+            return self.c.get_stats()
+
+        def data_health(self, *a):
+            return {'status': 'ok'}
+
+    cfg = write_config(tmp_path)
+    devs = [(DeviceConfig(id=f'p{a}', name=f'p{a}', template='', protocol='seplos_v2'), _Pack(c=c))
+            for a, c in clients.items()]
+    app, _ = create_api(cfg, None, None, None, devices=[(d, None) for d in cfg.devices] + devs)
+    body = TestClient(app, client=('127.0.0.1', 50000)).get('/metrics').text
+    for k in ('bad_frames', 'resync_dropped_bytes', 'orphans', 'frames', 'commands_seen'):
+        assert f'kind="{k}"' not in body, k
+    # no V2 bus series, so none ×N: every gateway_bus_ series is an rtu_tap reader's
+    # (another test may leave one registered — the suite shares the registry)
+    from multibus.transports.modbus.rtu_tap import bus_stats
+    taps = {b.get('port') or '' for b in bus_stats()}
+    assert set(re.findall(r'^gateway_bus_\w+\{bus="([^"]*)"', body, re.M)) <= taps
+    total = sum(int(line.rsplit(' ', 1)[1]) for line in body.splitlines()
+                if line.startswith('gateway_device_errors_total') and 'kind="checksum_errors"' in line)
+    assert total == lst.bad_frames                             # each pack's own, summing to the bus's once

@@ -12,6 +12,7 @@
  */
 import { chromium } from 'playwright';
 import { watchDialogs } from './lib/dialogs.mjs';
+import { openPage } from './lib/nav.mjs';
 const BASE = process.env.MBG_URL || 'http://127.0.0.1:18090';
 const results = [];
 const check = (name, cond, extra = '') => { results.push({ name, ok: !!cond }); console.log(`${cond ? 'PASS' : 'FAIL'} ${name}${extra ? ' — ' + JSON.stringify(extra) : ''}`); };
@@ -30,7 +31,7 @@ try {
   check('logged in', login.ok());
   await page.goto(BASE + '/'); await page.waitForLoadState('networkidle');
   const later = page.locator('button:has-text("Later")'); if (await later.count()) await later.first().click().catch(() => {});
-  await page.click('[data-page="rules"]'); await page.waitForTimeout(800);
+  await openPage(page, 'rules'); await page.waitForTimeout(800);
   const content = page.locator('#rulesContent');
   // the editor: the Layer field, saved and brought back
   await page.click('#rulesAddBtn'); await page.waitForTimeout(800);
@@ -72,7 +73,7 @@ try {
   // the Romanian page
   await page.evaluate(() => { try { localStorage.setItem('mbg-lang', 'ro'); } catch (e) {} });
   await page.reload(); await page.waitForLoadState('networkidle');
-  await page.click('[data-page="rules"]'); await page.waitForTimeout(1500);
+  await openPage(page, 'rules'); await page.waitForTimeout(1500);
   const ro = (await content.locator('[data-rule="hot-stop"]').innerText()) + (await content.locator('[data-rule="day-run"]').innerText());
   check('in Romanian: the layer and "yields to"', /siguranță/i.test(ro) && /cedează lui hot-stop/i.test(ro) && !/rules\.(layer|yields)/.test(ro), ro.slice(0, 400));
   await page.evaluate(() => { try { localStorage.setItem('mbg-lang', 'en'); } catch (e) {} });

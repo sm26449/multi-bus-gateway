@@ -38,51 +38,53 @@
                 </div>
             </div>
 
-            <!-- Navigation Tabs -->
-            <nav class="nav-tabs" role="tablist" aria-label="Main navigation" data-i18n-aria="a11y.mainNav">
-                <button class="nav-tab active" data-page="dashboard" role="tab"
-                        id="tab-dashboard" aria-controls="dashboardPage" aria-selected="true">
-                    <i class="bi bi-grid-1x2-fill" aria-hidden="true"></i>
-                    <span data-i18n="nav.dashboard">Dashboard</span>
+            <!-- Navigation: ONE row — Dashboard and Status top-level; the rest in three
+                 submenus built with the shared menu component: Assets (Devices/Virtual
+                 Meters/Virtual BMS), Configuration (Rules/Templates) and System
+                 (Diagnostics/Settings). On a phone everything opens flattened behind a
+                 "Navigation" disclosure. -->
+            <div class="nav-group">
+                <button class="nav-disclosure" id="navDisclosure" aria-expanded="false" aria-controls="mainNav"
+                        aria-label="Navigation" data-i18n-aria="a11y.navMenu" hidden>
+                    <i aria-hidden="true" class="bi bi-list"></i>
+                    <span class="nav-current" id="navCurrentLabel" data-i18n="nav.dashboard">Dashboard</span>
+                    <i aria-hidden="true" class="bi bi-chevron-down nav-disclosure-caret"></i>
                 </button>
-                <button class="nav-tab" data-page="devices" role="tab"
-                        id="tab-devices" aria-controls="devicesPage" aria-selected="false">
-                    <i class="bi bi-cpu" aria-hidden="true"></i>
-                    <span data-i18n="nav.devices">Devices</span>
-                </button>
-                <button class="nav-tab" data-page="rules" role="tab"
-                        id="tab-rules" aria-controls="rulesPage" aria-selected="false">
-                    <i class="bi bi-sliders2" aria-hidden="true"></i>
-                    <span data-i18n="nav.rules">Rules</span>
-                </button>
-                <button class="nav-tab" data-page="templates" role="tab"
-                        id="tab-templates" aria-controls="templatesPage" aria-selected="false">
-                    <i class="bi bi-collection" aria-hidden="true"></i>
-                    <span data-i18n="nav.templates">Templates</span>
-                </button>
-                <button class="nav-tab" data-page="status" role="tab"
-                        id="tab-status" aria-controls="statusPage" aria-selected="false">
-                    <i class="bi bi-activity" aria-hidden="true"></i>
-                    <span data-i18n="nav.status">Status</span>
-                </button>
-                <button class="nav-tab" data-page="config" role="tab"
-                        id="tab-config" aria-controls="configPage" aria-selected="false">
-                    <i class="bi bi-gear" aria-hidden="true"></i>
-                    <span data-i18n="nav.config">Settings</span>
-                </button>
-                <button class="nav-tab" data-page="vmeters" role="tab"
-                        id="tab-vmeters" aria-controls="vmetersPage" aria-selected="false">
-                    <i class="bi bi-hdd-network" aria-hidden="true"></i>
-                    <span data-i18n="nav.vmeters">Virtual Meters</span>
-                </button>
-                <button class="nav-tab" data-page="diagnostics" role="tab"
-                        id="tab-diagnostics" aria-controls="diagnosticsPage" aria-selected="false">
-                    <i class="bi bi-ethernet" aria-hidden="true"></i>
-                    <span data-i18n="nav.diagnostics">Diagnostics</span>
-                </button>
-            </nav>
+                <nav class="nav-tabs" id="mainNav" aria-label="Main navigation" data-i18n-aria="a11y.mainNav">
+                    <a class="nav-tab active" href="#/dashboard" data-page="dashboard" aria-current="page"><i class="bi bi-grid-1x2-fill" aria-hidden="true"></i> <span data-i18n="nav.dashboard">Dashboard</span></a>
+                    <span class="mbg-menu-wrap nav-submenu-wrap">
+                        <button type="button" class="nav-tab nav-submenu-btn" id="navAssets" aria-haspopup="menu" aria-expanded="false" aria-controls="navAssetsMenu" data-action="_menuToggle" data-with-el>
+                            <i class="bi bi-box-seam" aria-hidden="true"></i> <span class="nav-group-label" data-i18n="nav.group.assets">Assets</span> <i class="bi bi-chevron-down nav-disclosure-caret" aria-hidden="true"></i>
+                        </button>
+                        <div class="mbg-menu nav-submenu" role="menu" id="navAssetsMenu" aria-labelledby="navAssets" hidden>
+                            <a role="menuitem" class="nav-tab" href="#/devices" data-page="devices" title="Physical hardware devices" data-i18n-title="nav.devices.desc"><i class="bi bi-cpu" aria-hidden="true"></i> <span data-i18n="nav.devices">Devices</span></a>
+                            <a role="menuitem" class="nav-tab" href="#/vmeters" data-page="vmeters" title="Virtual meters / consumption aggregates" data-i18n-title="nav.vmeters.desc"><i class="bi bi-hdd-network" aria-hidden="true"></i> <span data-i18n="nav.vmeters">Virtual Meters</span></a>
+                            <a role="menuitem" class="nav-tab" href="#/vbms" data-page="vbms" title="Virtual battery management systems" data-i18n-title="nav.vbms.desc"><i class="bi bi-battery-charging" aria-hidden="true"></i> <span data-i18n="nav.vbms">Virtual BMS</span> <span class="badge-exp" data-i18n="vbms.experimental">Experimental</span></a>
+                        </div>
+                    </span>
+                    <span class="mbg-menu-wrap nav-submenu-wrap">
+                        <button type="button" class="nav-tab nav-submenu-btn" id="navCfg" aria-haspopup="menu" aria-expanded="false" aria-controls="navCfgMenu" data-action="_menuToggle" data-with-el>
+                            <i class="bi bi-sliders2" aria-hidden="true"></i> <span class="nav-group-label" data-i18n="nav.group.config">Configuration</span> <i class="bi bi-chevron-down nav-disclosure-caret" aria-hidden="true"></i>
+                        </button>
+                        <div class="mbg-menu nav-submenu" role="menu" id="navCfgMenu" aria-labelledby="navCfg" hidden>
+                            <a role="menuitem" class="nav-tab" href="#/rules" data-page="rules"><i class="bi bi-sliders2" aria-hidden="true"></i> <span data-i18n="nav.rules">Rules</span></a>
+                            <a role="menuitem" class="nav-tab" href="#/templates" data-page="templates"><i class="bi bi-collection" aria-hidden="true"></i> <span data-i18n="nav.templates">Templates</span></a>
+                        </div>
+                    </span>
+                    <span class="mbg-menu-wrap nav-submenu-wrap">
+                        <button type="button" class="nav-tab nav-submenu-btn" id="navSys" aria-haspopup="menu" aria-expanded="false" aria-controls="navSysMenu" data-action="_menuToggle" data-with-el>
+                            <i class="bi bi-gear" aria-hidden="true"></i> <span class="nav-group-label" data-i18n="nav.group.system">System</span> <i class="bi bi-chevron-down nav-disclosure-caret" aria-hidden="true"></i>
+                        </button>
+                        <div class="mbg-menu nav-submenu" role="menu" id="navSysMenu" aria-labelledby="navSys" hidden>
+                            <a role="menuitem" class="nav-tab" href="#/diagnostics" data-page="diagnostics"><i class="bi bi-ethernet" aria-hidden="true"></i> <span data-i18n="nav.diagnostics">Diagnostics</span></a>
+                            <a role="menuitem" class="nav-tab" href="#/config" data-page="config"><i class="bi bi-gear" aria-hidden="true"></i> <span data-i18n="nav.config">Settings</span></a>
+                        </div>
+                    </span>
+                    <a class="nav-tab" href="#/status" data-page="status"><i class="bi bi-activity" aria-hidden="true"></i> <span data-i18n="nav.status">Status</span></a>
+                </nav>
+            </div>
 
-            <!-- Status Indicators -->
+            <!-- Status Indicators / utilities -->
             <div class="titlebar-right">
                 <div class="status-indicators">
                     <button class="status-item clickable" id="statusDevices" title="Devices online / total — click to open" data-i18n-title="status.devicesTip" aria-label="Devices online" data-i18n-aria="a11y.devicesOnline">
@@ -117,7 +119,7 @@
             <div id="roleBanner" class="role-banner" role="status" hidden></div>
             <div id="buildBanner" class="role-banner build-banner" role="status" hidden></div>
             <!-- Dashboard Page -->
-            <div class="page active" id="dashboardPage" role="tabpanel" aria-labelledby="tab-dashboard" tabindex="0">
+            <div class="page active" id="dashboardPage" tabindex="0">
                 <!-- Site strip: the ENERGY story first — one card per
                      installation (live aggregate) + devices pinned to the
                      overview. The gateway's own pipeline numbers live on the
@@ -380,7 +382,7 @@
             <!-- Registers Page -->
             <!-- Config Page -->
             <!-- Devices Page (top-level; device workspace) -->
-            <div class="page" id="devicesPage" role="tabpanel" aria-labelledby="tab-devices" tabindex="0">
+            <div class="page" id="devicesPage" tabindex="0">
                     <!-- device list (default) -->
                     <div id="devicesListView">
                         <div class="section-header page-head">
@@ -493,7 +495,7 @@
                 </div>
             </div>
 
-            <div class="page" id="statusPage" role="tabpanel" aria-labelledby="tab-status" tabindex="0">
+            <div class="page" id="statusPage" tabindex="0">
                 <div class="section-header">
                     <h2><i aria-hidden="true" class="bi bi-activity"></i> <span data-i18n="status.title">System Status</span></h2>
                     <div class="header-actions" style="display:flex;align-items:center;gap:10px;">
@@ -504,7 +506,7 @@
                 <div id="statusContent"><div class="field-hint" data-i18n="common.loading">Loading…</div></div>
             </div>
 
-            <div class="page" id="diagnosticsPage" role="tabpanel" aria-labelledby="tab-diagnostics" tabindex="0">
+            <div class="page" id="diagnosticsPage" tabindex="0">
                 <div class="section-header">
                     <h2><i aria-hidden="true" class="bi bi-ethernet"></i> <span data-i18n="diag.title">Bus Monitor</span></h2>
                     <div class="header-actions">
@@ -591,13 +593,14 @@
                 <div id="ssResult"></div>
             </div>
 
-            <div class="page" id="configPage" role="tabpanel" aria-labelledby="tab-config" tabindex="0">
+            <div class="page" id="configPage" tabindex="0">
                 <!-- Config sub-tabs: Devices / MQTT / InfluxDB / Backup / Security -->
                 <div class="config-main-tabs" id="configSubtabs">
                     <button class="config-main-tab active" data-cfgtab="mqtt"><i aria-hidden="true" class="bi bi-broadcast"></i> MQTT</button>
                     <button class="config-main-tab" data-cfgtab="influxdb"><i aria-hidden="true" class="bi bi-database"></i> InfluxDB</button>
                     <button class="config-main-tab" data-cfgtab="opcua"><i aria-hidden="true" class="bi bi-diagram-3"></i> OPC UA</button>
                     <button class="config-main-tab" data-cfgtab="modbus"><i aria-hidden="true" class="bi bi-hdd-network"></i> Modbus</button>
+                    <button class="config-main-tab" data-cfgtab="can"><i aria-hidden="true" class="bi bi-diagram-2"></i> CAN</button>
                     <button class="config-main-tab" data-cfgtab="backup"><i aria-hidden="true" class="bi bi-archive"></i> <span data-i18n="backup.title">Backup &amp; Restore</span></button>
                     <button class="config-main-tab" data-cfgtab="security"><i aria-hidden="true" class="bi bi-shield-lock"></i> <span data-i18n="security.title">Security</span></button>
                     <button class="config-main-tab" data-cfgtab="alerts"><i aria-hidden="true" class="bi bi-bell"></i> <span data-i18n="alerts.title">Alerts</span></button>
@@ -939,6 +942,13 @@
                         </div>
                 </div>
                 <!-- ── Modbus tab: gateway-wide Modbus settings (a device's connection lives on the device) ── -->
+                <div class="config-tab-content cfg-panel" data-cfgpanel="can" style="display:none;">
+                    <div class="section-header"><div>
+                        <h3><i aria-hidden="true" class="bi bi-diagram-2"></i> <span data-i18n="can.title">CAN interfaces</span></h3>
+                        <p class="page-lead" data-i18n="can.lead">Each CAN interface's mode. A Virtual BMS transmits only on a port in Transmit mode; Listen-only is for monitoring what another device sends. Switching the mode needs the CAN-admin capability on the gateway.</p>
+                    </div><div class="header-actions"><button class="btn btn-ghost btn-sm" id="cfgCanRefresh"><i aria-hidden="true" class="bi bi-arrow-clockwise"></i> <span data-i18n="common.refresh">Refresh</span></button></div></div>
+                    <div id="cfgCanContent"></div>
+                </div>
                 <div class="config-tab-content cfg-panel" data-cfgpanel="modbus" style="display:none;">
                         <div class="settings-card">
                             <div class="settings-card-header">
@@ -1263,7 +1273,7 @@
                             <h3><i aria-hidden="true" class="bi bi-bell"></i> <span data-i18n="alerts.title">Alerts</span></h3>
                         </div>
                         <div class="settings-card-body">
-                            <p class="field-hint" data-i18n="alerts.intro" style="margin-bottom:12px;">Alerts delivered over MQTT and/or an HTTP webhook: infrastructure health (a device or sink drops, latency spikes, the InfluxDB buffer backs up), the alarms a device's template declares (an error code, a fault word), and optionally the per-register value thresholds. Applied live on save.</p>
+                            <p class="field-hint" data-i18n="alerts.intro" style="margin-bottom:12px;">The gateway raises alerts — infrastructure health (a device or sink drops, latency spikes, the InfluxDB buffer backs up), the alarms a device's template declares (an error code, a fault word), bus health, virtual meters, and optionally the per-register value thresholds — and sends them to Klopot for notifications on SMS, Telegram, e-mail or any other channel, and to MQTT and a webhook for your own automation. Applied live on save.</p>
                             <label class="checkbox-label" style="margin-bottom:10px;">
                                 <input type="checkbox" id="cfgAlertsEnabled" aria-label="Enable alerts" data-i18n-aria="a11y.enableAlerts">
                                 <span data-i18n="alerts.enable">Enable alerting</span>
@@ -1280,8 +1290,8 @@
                                     <label class="checkbox-label"><input type="checkbox" id="cfgAlertSigThreshold"> <span data-i18n="alerts.sigThreshold">Value thresholds (warning / danger)</span></label>
                                     <label class="checkbox-label"><input type="checkbox" id="cfgAlertSigBridge"> <span data-i18n="alerts.sigBridge">Serial bus health (line errors, silent bus, reconnects)</span></label>
                                 </div>
-                                <div class="form-row" style="margin-top:8px;" role="group" aria-labelledby="cfgAlertBridgeLead">
-                                    <p class="field-hint" id="cfgAlertBridgeLead" data-i18n="alerts.bridgeLead" style="flex-basis:100%;margin:0;">Limits for every bus on our serial bridges; a bridge or one of its buses may set its own (alerts: in config.yaml).</p>
+                                <p class="field-hint" id="cfgAlertBridgeLead" data-i18n="alerts.bridgeLead" style="margin:8px 0 0;">Limits for every bus on our serial bridges; a bridge or one of its buses may set its own (alerts: in config.yaml).</p>
+                                <div class="form-row" style="margin-top:4px;" role="group" aria-labelledby="cfgAlertBridgeLead">
                                     <div class="form-group"><label class="form-label" data-i18n="alerts.bridgeLine" for="cfgAlertBridgeLine">Line errors per minute</label><input type="number" id="cfgAlertBridgeLine" class="input" min="0.1" step="0.1" placeholder="10"></div>
                                     <div class="form-group"><label class="form-label" data-i18n="alerts.bridgeSilent" for="cfgAlertBridgeSilent">Bus silent for (s)</label><input type="number" id="cfgAlertBridgeSilent" class="input" min="1" placeholder="120"></div>
                                     <div class="form-group"><label class="form-label" data-i18n="alerts.bridgeReconnects" for="cfgAlertBridgeReconnects">Reconnects per 10 min</label><input type="number" id="cfgAlertBridgeReconnects" class="input" min="1" placeholder="6"></div>
@@ -1298,8 +1308,8 @@
                                 <label class="checkbox-label"><input type="checkbox" id="cfgAlertMqtt"> <span data-i18n="alerts.mqtt">Publish to MQTT (&lt;prefix&gt;/alert)</span></label>
                                 <div class="form-group" style="margin-top:8px;">
                                     <label class="form-label" data-i18n="alerts.webhookUrl" for="cfgAlertWebhookUrl">Webhook URL</label>
-                                    <input type="text" id="cfgAlertWebhookUrl" class="input" placeholder="http://sms-gateway:5080/api/sms/send">
-                                    <p class="field-hint" data-i18n="alerts.webhookUrlHint">Empty = webhook off. POSTs the alert JSON here (no LAN restriction — meant for external notifiers).</p>
+                                    <input type="text" id="cfgAlertWebhookUrl" class="input" placeholder="https://automation.example/hooks/gateway">
+                                    <p class="field-hint" data-i18n="alerts.webhookUrlHint">Empty = webhook off. POSTs the raw alert JSON here, for your own automation (no LAN restriction). For SMS, Telegram or e-mail, use Klopot below.</p>
                                 </div>
                                 <div class="form-row">
                                     <div class="form-group flex-2"><label class="form-label" data-i18n="alerts.webhookHeaders" for="cfgAlertWebhookHeaders">Webhook headers (JSON)</label>
@@ -1308,8 +1318,24 @@
                                         <textarea id="cfgAlertWebhookBody" class="input" rows="2" style="font-family:monospace;" placeholder='{"message": "{severity} {source}: {message}"}'></textarea>
                                         <p class="field-hint" data-i18n="alerts.webhookBodyHint">Placeholders: {severity} {source} {message} {key} {host} {ts}. Empty = raw alert JSON.</p></div>
                                 </div>
+                                <div class="settings-divider" role="separator" style="margin:14px 0;"></div>
+                                <label class="checkbox-label"><input type="checkbox" id="cfgAlertdEnabled"> <span data-i18n="alerts.alertd.enable">Send to the Klopot notification service</span></label>
+                                <p class="field-hint" data-i18n="alerts.alertd.intro" style="margin:4px 0 8px;">Klopot (klopot.dev) delivers the gateway's event alerts on SMS, Telegram, e-mail or any channel you set up in it, and owns routing, throttling, retries and escalation — the recommended way to get notified. Condition alerts (latency, buffer, value thresholds) are evaluated by Klopot rules over the MQTT values, so they are not sent here.</p>
+                                <div class="form-row">
+                                    <div class="form-group flex-2"><label class="form-label" data-i18n="alerts.alertd.url" for="cfgAlertdUrl">Klopot fire URL</label>
+                                        <input type="text" id="cfgAlertdUrl" class="input" placeholder="http://klopot:5090/v1/fire"></div>
+                                    <div class="form-group"><label class="form-label" data-i18n="alerts.alertd.key" for="cfgAlertdKey">API key</label>
+                                        <input type="password" id="cfgAlertdKey" class="input" autocomplete="off" placeholder="API key"></div>
+                                    <div class="form-group"><label class="form-label" data-i18n="alerts.alertd.source" for="cfgAlertdSource">Source</label>
+                                        <input type="text" id="cfgAlertdSource" class="input" placeholder="multi-bus-gateway"></div>
+                                </div>
+                                <p class="field-hint" style="margin:2px 0 0;">
+                                    <a href="/api/alerts/alertd-pack" download id="cfgAlertdPackLink"><i aria-hidden="true" class="bi bi-download"></i> <span data-i18n="alerts.alertd.pack">Download Klopot config pack</span></a>
+                                    <span data-i18n="alerts.alertd.packHint">— import it into Klopot (Config → Import) so these alert types have templates + routing.</span>
+                                </p>
                                 <button data-live class="btn btn-ghost btn-sm" data-action="testAlert" data-with-el style="margin-top:4px;"><i aria-hidden="true" class="bi bi-send"></i> <span data-i18n="status.testAlert">Test</span></button>
                                 <span id="alertTestResult" style="font-size:12px;margin-left:8px;"></span>
+                                <p class="field-hint" data-i18n="alerts.testHint" style="margin-top:6px;">Test sends a sample alert over every enabled channel (MQTT, webhook, Klopot) and reports each result.</p>
                             </div>
                         </div>
                         <div class="settings-card-footer">
@@ -1322,7 +1348,7 @@
             </div>
 
             <!-- Virtual Meters page -->
-            <div class="page" id="rulesPage" role="tabpanel" aria-labelledby="tab-rules" tabindex="0">
+            <div class="page" id="rulesPage" tabindex="0">
                 <div class="section-header page-head">
                     <div>
                         <h2 tabindex="-1"><i aria-hidden="true" class="bi bi-sliders2"></i> <span data-i18n="nav.rules">Rules</span></h2>
@@ -1352,7 +1378,7 @@
                 </div>
                 <div id="sequencesContent" style="padding-bottom:24px;"></div>
             </div>
-            <div class="page" id="vmetersPage" role="tabpanel" aria-labelledby="tab-vmeters" tabindex="0">
+            <div class="page" id="vmetersPage" tabindex="0">
                 <div class="section-header page-head">
                     <div>
                         <h2 tabindex="-1"><i aria-hidden="true" class="bi bi-hdd-network"></i> <span data-i18n="vmeter.title">Virtual Meters</span></h2>
@@ -1366,8 +1392,24 @@
                 <div id="vmetersContent"></div>
             </div>
 
+            <!-- Virtual BMS Page (ADR-0037): list instances, arm/disarm -->
+            <div class="page" id="vbmsPage" tabindex="0">
+                <div class="section-header page-head">
+                    <div>
+                        <h2 tabindex="-1"><i aria-hidden="true" class="bi bi-battery-charging"></i> <span data-i18n="vbms.title">Virtual BMS</span> <span class="badge-exp" data-i18n="vbms.experimental">Experimental</span></h2>
+                        <p class="page-lead" data-i18n="vbms.pageIntro">Virtual battery-management systems — aggregate several battery packs into one logical BMS and serve it to an inverter over CAN.</p>
+                        <p class="vbms-exp-note" role="note" data-i18n="vbms.experimentalNote">Experimental: the Virtual BMS is not yet validated on hardware. Do not arm it on an inverter in service — a wrong limit can stop or harm a battery.</p>
+                    </div>
+                    <div class="header-actions">
+                        <button class="btn btn-primary btn-sm" data-admin data-action="openVbmsModal" data-args='[""]'><i aria-hidden="true" class="bi bi-plus-lg"></i> <span data-i18n="vbms.add">Add Virtual BMS</span></button>
+                        <button class="btn btn-ghost btn-sm" id="vbmsRefreshBtn"><i aria-hidden="true" class="bi bi-arrow-clockwise"></i> <span data-i18n="common.refresh">Refresh</span></button>
+                    </div>
+                </div>
+                <div id="vbmsContent"></div>
+            </div>
+
             <!-- Templates Page (device maps + meter emulations) -->
-            <div class="page" id="templatesPage" role="tabpanel" aria-labelledby="tab-templates" tabindex="0">
+            <div class="page" id="templatesPage" tabindex="0">
                 <div class="section-header page-head">
                     <div>
                         <h2 tabindex="-1"><i aria-hidden="true" class="bi bi-collection"></i> <span data-i18n="templates.title">Templates</span></h2>
@@ -1626,6 +1668,22 @@
                 <span class="save-feedback" id="vmAddFeedback"></span>
                 <button class="btn btn-ghost" data-action="closeModal" data-args='["vmAddInstanceModal"]' data-i18n="common.cancel">Cancel</button>
                 <button class="btn btn-primary" data-action="submitAddInstance" data-with-el><i aria-hidden="true" class="bi bi-plus-lg"></i> <span data-i18n="common.add">Add</span></button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Virtual BMS add/edit (ADR-0045); body filled by app-vbms.js -->
+    <div class="modal" id="vbmsModal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3><i aria-hidden="true" class="bi bi-battery-charging"></i> <span id="vbmsModalTitle" data-i18n="vbms.add">Add Virtual BMS</span></h3>
+                <button class="modal-close" aria-label="Close" data-i18n-aria="common.close" data-action="closeModal" data-args='["vbmsModal"]'>&times;</button>
+            </div>
+            <div class="modal-body" id="vbmsModalBody"></div>
+            <div class="modal-footer">
+                <span class="save-feedback" id="vbmsModalFeedback" style="white-space:pre-line;"></span>
+                <button class="btn btn-secondary btn-sm" data-action="closeModal" data-args='["vbmsModal"]'><span data-i18n="common.cancel">Cancel</span></button>
+                <button class="btn btn-primary btn-sm" data-admin data-action="saveVbmsModal"><i aria-hidden="true" class="bi bi-check-lg"></i> <span data-i18n="common.save">Save</span></button>
             </div>
         </div>
     </div>
@@ -2526,6 +2584,7 @@
     <script src="/static/js/app-types.js?v=0"></script>
     <script src="/static/js/app-pickers.js?v=0"></script>
     <script src="/static/js/app-meters.js?v=0"></script>
+    <script src="/static/js/app-vbms.js?v=0"></script>
     <script src="/static/js/adddev-model.js?v=0"></script>
     <script src="/static/js/app-preview.js?v=0"></script>
     <script src="/static/js/app-add-device.js?v=0"></script>

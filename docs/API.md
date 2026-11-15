@@ -13,7 +13,9 @@ the API key are opt-in; **login is enabled automatically on a fresh install**
 (the first run generates an admin password and prints it once to the log):
 
 1. **IP allowlist** (`security.allowlist`) — applies to every request,
-   including `/health` and `/metrics`.
+   including `/health`. `/metrics` has its own rule: loopback always, a peer
+   in `security.metrics_allowlist`, or one a set `allowlist` admits; with
+   both lists empty, loopback only (others get 403).
 2. **API key** (`API_KEY` env, honoured as `JANITZA_API_KEY` for
    back-compat) — when set, every state-changing request
    (POST/PUT/PATCH/DELETE) must send `X-API-Key: <key>`. The exempt POSTs
@@ -25,7 +27,14 @@ the API key are opt-in; **login is enabled automatically on a fresh install**
    HttpOnly, SameSite=Lax, 7-day sliding TTL, 30-day absolute cap). Passwords are PBKDF2-SHA256
    (600 000 iterations). Login is rate-limited per client IP
    (`lockout_threshold` / `lockout_minutes`). Passkey (WebAuthn) login is an
-   alternative to the password.
+   alternative to the password and shares the same per-IP lockout: every
+   `login/finish` that does not authenticate (unknown credential, stale or
+   missing challenge, bad assertion, malformed body, account gone) counts as
+   a failure, password and passkey failures add up, and a success clears the
+   streak. A locked IP gets `429 {"error": "locked_out", "retry_after_s": N}`
+   from `/api/auth/login`, passkey `login/begin` and `login/finish` alike —
+   even a correct password or a valid assertion is refused until the lock
+   ends. Refused logins are coalesced per client IP in the audit.
 
 **Programs** (a companion service, a script) sign in with a **service
 token** instead of a person's password: `Authorization: Bearer mbgst_…`.
@@ -54,7 +63,7 @@ what the operator role withholds (3.83.0).
 | `viewer` | read-only: any GET/HEAD, plus the two read-only query POSTs |
 | `operator` | viewer + live commissioning actions: bus trace, diagnostics probe, discovery, on-demand queries, device tests, payload samples, Modbus **writes** (within template bounds), alert test-fire, register reload, own passkey enrollment |
 | `admin` | everything, including anything that lands in a config file (devices, registers, templates, virtual meters, settings, snapshots) and the audit trail |
-| `—` (open) | reachable without a session even when login is on: login endpoints, `/api/auth/status`, `/api/auth/forward` (checks the session itself), `/health`, `/metrics`, `/static/*`, `/favicon.ico` |
+| `—` (open) | reachable without a session even when login is on: login endpoints, `/api/auth/status`, `/api/auth/forward` (checks the session itself), `/health`, `/metrics` (by client IP, see gate 1), `/static/*`, `/favicon.ico` |
 
 Cross-site browser requests are rejected (Sec-Fetch-Site / Origin checks) on
 all mutating endpoints and on `/ws`.
@@ -78,8 +87,8 @@ conventional status codes (401 unauthenticated, 403 forbidden, 404 not found,
 | POST | `/api/auth/passkey/register/finish` | Verify and store the new passkey | operator |
 | GET | `/api/auth/passkeys` | List passkeys (admin sees all users', others their own) | viewer |
 | DELETE | `/api/auth/passkeys/{cred_id}` | Delete a passkey (own; admin: any) | operator |
-| POST | `/api/auth/passkey/login/begin` | Start a passkey login ceremony (shares the password lockout) | — |
-| POST | `/api/auth/passkey/login/finish` | Verify the assertion; sets the session cookie | — |
+| POST | `/api/auth/passkey/login/begin` | Start a passkey login ceremony (takes no username; 429 `locked_out` while the IP is locked) | — |
+| POST | `/api/auth/passkey/login/finish` | Verify the assertion; sets the session cookie. 401 `invalid_passkey` counts toward the shared per-IP lockout; 429 `locked_out` while locked | — |
 | GET | `/api/auth/service-tokens` | The service tokens: name, role, made, last used (never the token) | admin |
 | POST | `/api/auth/service-tokens` | Make one: `{name, role}` → `{name, token}`; the only time the token is shown. A token cannot call this | admin |
 | DELETE | `/api/auth/service-tokens/{name}` | Revoke one: the program using it is refused at once | admin |
@@ -120,6 +129,7 @@ conventional status codes (401 unauthenticated, 403 forbidden, 404 not found,
 | GET | `/api/buses` | Every bus the gateway knows, one read model each: `{buses: [{id, kind, where, path, host, port, bridge, protocols, framing, devices, pollers, listeners, units_in_use, role, role_conflict, line, line_conflict, lines, load}]}`. `id` is the bus claims' key (`chr:major:minor` or the real path of a serial line, the lower-cased `host:port`, `can:<interface>`); `kind` `serial` (a port here), `bridge` (a declared port of a bridge record; a converter reached at the same host:port is the same bus), `address` (any other host:port) or `can`. `devices`: every device on it, enabled or not (`{id, name, enabled, installation, component_of, unit, protocol, role: master\|listen-only, line}`; `installation` / `component_of` name who sets its line when not itself); `pollers` / `listeners`: the enabled ones that transmit / only listen; `units_in_use`: `[{unit, device}]` sorted, every device counted (a save refuses a unit taken by a disabled one too); `role`: `listen-only` when anyone listens, `master` when someone polls, else null; `role_conflict`: true when the bus is both polled and listened to (a save refuses it now; a stored config may hold it). `line` (`{baud, parity, bytesize, stopbits}`) only for a serial bus whose devices agree; when they do not, `line: null`, `line_conflict: true` and `lines: [{line, devices}]`. `framing`: the bridge type's (`rtu`, `ascii`, `mbap`) or the devices' protocol's. `load`: the measured wire time of the last minute as on the bridge cards (`{pct, level: ok\|high\|full, over_capacity, busy_s, window_s, missed_turns, devices, capacity_left_pct}`; `devices` counts every device that polls the bus, enabled or not, the bridge cards' rule), null before anything was measured. A device that cannot be read out is skipped and logged, never fails the list. `bridge`: `{id, name, type, framing, port, client}` — `client` is the address the MBG serial bridge reports as connected to that port (null when it says nothing). Read only | viewer |
 | GET | `/api/buses/{bus}/line` | The line a bus has now, for Edit bus line…: `{bus, kind, line: {baudrate, parity, bytesize, stopbits}\|null, source: devices\|bridge\|unknown}` — its devices' line when they agree, the MBG serial bridge port's (asked from the bridge), else `unknown` (never a guess) | viewer |
 | PATCH | `/api/buses/{bus}/line` | **Edit bus line…**: one line for every device on a serial bus, `{baudrate, parity, bytesize, stopbits}` (all four; parity `N`/`E`/`O`, data bits 5–8, stop bits 1–2, baud 300–4000000). `{bus}` is the bus's `id` from `GET /api/buses`, URL-encoded (`%2Fdev%2FttySC1`, `chr%3A4%3A65`, `10.0.0.5%3A7001`). `?dry_run=true` stores nothing and answers `{status: valid\|unchanged, bus, kind, where, line: {from, to}, bridge, devices: [{id, name, from, to, changed, restart}], restart: [ids]}`. Applied: `{…, status: updated\|unchanged, restarted: [ids], restart_failed: [ids]}` (a restart that fails after the write is named there; the line is stored). On our bridge the port's current line is asked first (never under a lock): already that line → `unchanged`, nothing restarts. Units of one installation share one entry lock; a device that joined the bus between the check and the locks → `409`. Snapshotted like a device change. A serial port of this host: every device's entry on it gets the line in **one config write** (all or nothing), then they restart. A port of the MBG serial bridge (`serial_config: api`): the bridge port's line is set through the bridge's `POST /adapters/{key}/serial` in the same operation (`{baud, parity, databits, stopbits}`; the adapter recorded for the port, else the one serving it now), then its devices restart; the bridge unreachable or refusing → `502`/its 4xx and nothing restarts. Refused `422`: a converter, a transparent bridge or a Modbus TCP gateway (*the line is set on the box*), a bus with no serial line (Ethernet, CAN), a unit of an installation (set on the installation's connection), a component. `409` while a write to one of its devices is in flight (each device's entry lock is tried, never waited for); nothing changed. `404` for an unknown bus. One audit record. No `If-Match`: the devices' ETags change | admin |
+| POST | `/api/can-interfaces/{name}` | Change a CAN interface: `{mode: "transmit"\|"listen_only", bitrate, up}` (any subset; `bitrate` one of 10000, 20000, 50000, 100000, 125000, 250000, 500000, 800000, 1000000). `422` on a bad value (the link is not touched); `409` when `mode: transmit` is asked with `security.allow_writes` off, when the port carries an armed Virtual BMS (disarm first), or when the bitrate of a bus that devices read would change without `force: true` (`{code: "bus_has_readers", readers, bitrate}`). Needs `CAP_NET_ADMIN`: run the container with `--cap-add NET_ADMIN` **and** `MBG_CAN_NET_ADMIN=1` (MANUAL §5.5); without it `409` *MBG cannot change CAN interfaces*. `404` for a name that is not a CAN interface of this host. Every change takes the link down and up. Answer: `{status: "applied", interface}` | admin |
 | GET | `/api/can-interfaces` | The CAN interfaces of this host: `{interfaces: [{name, kind, up, operstate, bitrate, listen_only, state, devices}]}`, from sysfs (`/sys/class/net/*/type` = 280) and rtnetlink (`kind` `can`/`vcan`; `bitrate`, `listen_only` and `state` — `error-active`, `error-warning`, `error-passive`, `bus-off`, `stopped`, `sleeping` — null for a vcan or when the kernel does not say). `devices`: the CAN devices reading it. Nothing is opened on the bus. Read only | viewer |
 | GET | `/api/bridge/adapters` | Live USB-adapter inventory from the serial bridge (RTU-over-network Scan); `available:false` with an `error` when the bridge is unreachable | viewer |
 | GET | `/api/devices/{id}/events` | This device's acquisition log, newest first: unreachable / recovered / forced reopen / bus busy / failed batch (with the address and register count) / poll-group overrun episodes. `?limit=1..500`, `?level=error,warn` to narrow to the problems. Returns the live per-group state (interval, last sweep, reads, overruns, age) and the read counters alongside, because "what happened" and "what it is doing now" are the same question when an endpoint is struggling. 404 when the device is not running | viewer |
@@ -415,7 +425,7 @@ rather than silently reading the primary's bucket.
 | GET | `/api/bridges/{id}/scan` | Buses: asked of our bridge (`port, key, label, dev, serial_params, serial_text, available, excluded`), declared for a converter | viewer |
 | POST | `/api/bridges/{id}/ports/{key}/serial` | `{baud, parity, databits, stopbits}` for one bus of our bridge | admin |
 | POST | `/api/bridges/{id}/ports/{key}/enable` | `{enabled: true\|false}` — serve (or stop serving) one of the board's own UARTs on our bridge (opt-in: a program using it without a lock cannot be seen); 422 when `enabled` is not a boolean | admin |
-| GET | `/api/bridges/{id}/diagnostics` | Line health of every bus of our bridge, from the gateway's cache (never a fetch): the bridge's line and transport counters, the gateway's own counters over the same window, the diagnosis (`ok`, `line_noise`, `timeouts`, `network`, `device_silent`, `wiring`, `host_overrun`, `collecting`, `no_data`, `unsupported`), the bridge's recent events (`{fetched_ts, error, supported, ports, events, poll_s}`). 422 for a kind of bridge with no API | viewer |
+| GET | `/api/bridges/{id}/diagnostics` | Line health of every bus of our bridge, from the gateway's cache (never a fetch): the bridge's line and transport counters, the gateway's own counters over the same window, the diagnosis (`ok`, `line_noise`, `timeouts`, `network`, `device_silent`, `wiring`, `host_overrun`, `collecting`, `no_data`, `unsupported`), the bridge's recent events (`{fetched_ts, error, supported, ports, events, poll_s}`). Each port's `mbg` (the gateway's counters over the window) also carries `crc_deduped` and `exceptions_deduped` — a listen-only tap's CRC errors and exception responses are the bus's (one reader for every unit on it), so they count **once per bus** there, plus every polled device's own; the diagnosis reads these. `crc` / `exceptions` stay the plain per-device sums (on a bus of N taps, N × the bus's count) and are kept only for older readers. Also `implausible` (tap units' dropped implausible values, summed — those are per device). A tapped port adds **`tap_bus`** (null otherwise): the shared reader's counters once, latest (not a window) — `{port, open_error, frames, writes_seen, crc_errors, orphan_frames, exception_responses, resync_dropped_bytes, inferred_windows, paired_across_junk, unpaired_responses, junk_samples: [{ts, bytes, hex}] (the resync's last discarded runs, newest last), devices: [{id, windows, updates, implausible, implausible_windows, staleness_age_s, connected}]}` — per device only what is its own (TAP-DIAG-2). 422 for a kind of bridge with no API | viewer |
 | GET | `/api/bridge-guard` | `{problems}` — every bus the gateway keeps off the wire because its adapter moved to another port of the bridge or is missing, with where the adapter went | viewer |
 | POST | `/api/bridge-guard/follow` | `{host}` — follow the adapters of one bridge: every bus whose adapter is now on another port moves there at once (two swapped buses swap), and its devices restart. `{moved, devices}`; 409 when nothing is to follow | admin |
 | GET | `/api/bridges/{id}/setup` | What to set on the box; for our bridge the `docker run` command with its token (the token only to an admin when login or an API key is on) | viewer |
@@ -436,7 +446,9 @@ that shared connection (`shared_with`).
 bridge_port, unit_id}` taps the bus behind a transparent bridge or our serial
 bridge (a Modbus TCP gateway is refused: it only answers questions). A bus is
 polled or tapped, never both; on a tapped bus `ports[].tapped` is true,
-`ports[].wire` is `{frames, crc_errors, error}`, devices carry `tap: true`,
+`ports[].wire` is `{frames, crc_errors, error, orphan_frames, exception_responses,
+resync_dropped_bytes, unpaired_responses, paired_across_junk}` — the shared reader's counters,
+once for the bus (never summed over its taps), devices carry `tap: true`,
 and Scan / Check mode answer 409 `{errors, listeners, bus}` while a listener
 is enabled. A tap stays a tap whatever the bridge frames: on a Modbus TCP
 gateway it hears nothing, but it never polls.
@@ -489,7 +501,7 @@ Installation group roles are checked against the catalog when they change: a bui
 | DELETE | `/api/canonical-fields/user/{name}` | Remove one of your own canonical fields | admin |
 | POST | `/api/canonical-fields/guess` | Batch canonical-name inference for the editor's **Auto-canonicalize** button: `{registers: [{name, label, unit, description}]}` → `{guesses: [name\|null]}`, index-aligned (null where not confident) | admin |
 | GET | `/api/values?device=` | All current values of a device's live store, keyed by **store key**: the address in its table — holding as is, input + 100000, coil + 200000, discrete + 300000 (calculated fields from 8000000). Each entry carries its `address` and `register_type`; the register lists (`/api/registers/selected`) give each register's `key` | viewer |
-| GET | `/api/values/{key}` | One current value (primary), by store key | viewer |
+| GET | `/api/values/{address}` | One current value (primary), by store key (the path param is the store key, not a Modbus address) | viewer |
 | GET | `/api/meters` | Devices exposed as JSON feeds (http_output enabled) | viewer |
 | GET | `/api/meters/{id}` | Live values of one device as JSON, keyed by register name, with a `stale` flag | viewer |
 | GET | `/api/history/registers?device=` | Influx-enabled registers (+ calculated) for the history picker | viewer |
@@ -631,6 +643,57 @@ and is listed in Settings → Modules (`ui.nodes_url` or a `modules:` entry). LA
 | POST | `/api/virtual-meters/templates/import` | Import a template from YAML (validated; 409 on conflict) | admin |
 | GET | `/api/virtual-meters/template/{id}/export` | Export a template's raw YAML | viewer |
 
+## Virtual BMS (experimental)
+
+Experimental — not yet validated on hardware; do not arm one on an inverter
+in service. Guide: [MANUAL.md §11e](MANUAL.md#11e-virtual-bms--experimental);
+the keys: [config-reference.md](config-reference.md#virtual_bms--virtual-bms-instances-experimental).
+Writes are admin only and audited; arming is a hardware write.
+
+| Method | Path | Description | Role |
+|---|---|---|---|
+| GET | `/api/vbms` | Every instance: `{<id>: {armed, running, channel, packs, packs_live, admission, min_packs, data_state, last_error}}`. `data_state`: `ok`, `hold` (too few packs: zero limits for `fallback.hold_s`), `silent` (nothing sent). `admission`: each pack's state (`new`, `in`, `out`, `returning`, `held`) | viewer |
+| GET | `/api/vbms/ports?editing=` | The CAN ports for the picker: `{ports: [{name, up, listen_only, bitrate, state, readers, publisher, availability}]}`; `availability` `available`, `available_shared` (devices read it) or `reserved` (another Virtual BMS publishes there). `editing=<id>` keeps that instance's own port selectable | viewer |
+| GET | `/api/vbms/sources` | Devices eligible as packs (kind `battery`, not a bank aggregate): `{sources: [{id, name, channel}]}` | viewer |
+| GET | `/api/vbms/profiles` | Emulation profiles (templates with CAN rows): `{profiles: [{id, name}]}` | viewer |
+| GET | `/api/vbms/{id}` | One instance's stored configuration | viewer |
+| GET | `/api/vbms/{id}/preview` | The live aggregation, armed or not: each pack's values and eligibility, the values that would be sent (control fields included), the frames, `data_state`, and with `inverter` set an `inverter_check` (SOC and voltage sent vs what that inverter reports) | viewer |
+| POST | `/api/vbms` | Create an instance (body: the `virtual_bms` keys). Validated (422 `{errors}`): id slug and unique (not a device id), an emulation profile, a CAN port of this host not reserved, eligible packs listed once, port bitrate = profile bitrate, no pack on the transmit bus, no other reader of the profile's frame ids on that bus, `bounds`/`floor`/ranges as in config-reference; then built once before anything is stored. Starts **disarmed** | admin |
+| PATCH | `/api/vbms/{id}` | Edit. Top-level keys replace; `bounds`, `floor`, `fields`, `fallback`, `recovery`, `pack_limits` merge key by key (a key sent as `null` is removed). Rebuilt disarmed. **409** while armed | admin |
+| DELETE | `/api/vbms/{id}` | Delete. **409** while armed | admin |
+| POST | `/api/vbms/{id}/arm` | Start transmitting. **409 with `prerequisites`** when a precondition is unmet (below); **409** `{errors}` when the transmit gate is closed (writes off, standby gateway, an import/restore running) | admin |
+| POST | `/api/vbms/{id}/disarm` | Stop transmitting; never refused | admin |
+| POST | `/api/vbms/{id}/packs/{pack}/clear` | Readmit a pack held out for flapping; it still waits `recovery.return_after_s` and comes back through the ramp. 404 for a pack not in the instance, 409 when it is not held | admin |
+
+An EMS commands the control fields over MQTT on `<base>/cmd/<field>`
+(`charge_current_limit`, `discharge_current_limit`, `charge_voltage_limit`,
+`discharge_voltage_limit`, `charge_enable`, `discharge_enable`), where
+`<base>` is `mqtt.default_topic_pattern` with the instance id (default
+`mbg/devices/<id>`). A command is clamped to `bounds`; a field without finite
+bounds is refused; a retained message is ignored; a command older than
+`command_max_age_s` falls back to the `floor`. The values sent are published
+retained on `<base>/<field>`.
+
+### Guided prerequisites (409)
+
+An action that needs a setting that is off answers **409** with:
+
+```json
+{"detail": {"prerequisites": [
+  {"id": "can_transmit", "title": "Transmit on can0", "where": "Settings → CAN", "met": false,
+   "fix": {"method": "POST", "url": "/api/can-interfaces/can0", "body": {"mode": "transmit", "up": true}},
+   "params": {"channel": "can0"}}
+]}}
+```
+
+Only unmet entries are listed. `id` is one of `allow_writes` (fix:
+`POST /api/config/security {"allow_writes": true}`), `can_transmit`,
+`can_bitrate` (fix body `{"bitrate": <profile bitrate>, "up": true}`,
+`params.bitrate`). `fix` is the call that would meet it — the UI runs it on
+*Enable now* and then retries the action; nothing is enabled by itself.
+`title` and `where` are English; the UI localizes by `id`. Arming a Virtual
+BMS is the first action that uses it.
+
 ## Configuration
 
 | Method | Path | Description | Role |
@@ -643,9 +706,9 @@ and is listed in Settings → Modules (`ui.nodes_url` or a `modules:` entry). LA
 | GET / POST | `/api/config/influxdb` | Global InfluxDB sink settings (token never echoed). `default_bucket_pattern` as the MQTT pattern. `heartbeat_interval`: in `changed` mode an unchanged value is written again once it has not been written for this many seconds (whole seconds 0..86400, 0 = off, default 600 — written into `config.yaml` on first load; anything else 422); a device, an installation or a group may set its own (`/api/devices/{id}/publishing`) | viewer / admin |
 | GET / POST | `/api/config/general` | Report timezone (IANA-validated) + default widget colors | viewer / admin |
 | GET / POST | `/api/config/identity` | `{gateway_id, identity_scope}` — this gateway's id (`^[a-z0-9][a-z0-9-]{1,31}$`) and how **new** devices are named: `gateway` (`mbg/<gateway>/devices/<device>`, bucket `<gateway>-<device>`) or `legacy` (`mbg/devices/<device>`, bucket `<device>`). GET adds `defaults`, the effective `default_topic_pattern` / `default_bucket_pattern`, `explicit` (the patterns chosen, `''` = the scope's) and `example` (what a device created now gets). 422 with `fields` for a bad or reserved id (`gateway`, or one whose topics would sit under `mqtt.topic_prefix`), a bad scope, the `gateway` scope without an id, or clearing an id a chosen pattern uses. Only devices created afterwards are named the new way — topic, bucket and HA node (`mqtt.ha_node`, stored per device); existing devices keep all three, nothing is re-announced. Audited | viewer / admin |
-| GET / POST | `/api/config/alerts` | Alert/webhook settings (header values masked, preserved on save); applied live | viewer / admin |
+| GET / POST | `/api/config/alerts` | Alert settings: MQTT, the webhook (header values masked, preserved on save), signals and limits, and `alertd: {enabled, url, api_key, source}` — the [Klopot](https://klopot.dev) integration (the key keeps its older name for compatibility; `api_key` masked, a masked value round-trips unchanged; `url` must be `http(s)://`, else 422); applied live | viewer / admin |
 | GET / POST | `/api/config/ui-security` | HTTPS + login/roles/lockout settings, `canonical_url`, `nodes_url` (a path like `/nodes/` or an `http(s)://` URL, empty = no link; anything else 422); passwords hashed on write, blank keeps current; enabling login requires a non-default admin password. A password change revokes ALL sessions but re-issues the caller's own cookie in the response — rotating your own password never logs you out | viewer / admin |
-| GET / POST | `/api/config/security` | IP allowlist (+ caller's own IP), `allow_writes`, `allow_nonlan_http_devices` | viewer / admin |
+| GET / POST | `/api/config/security` | IP allowlist (+ caller's own IP), `metrics_allowlist` (IPs/CIDRs that may scrape `/metrics` only), `allow_writes`, `allow_nonlan_http_devices` | viewer / admin |
 | POST | `/api/config/apply` | Reconnect all services with the saved config (creates publishers enabled after boot) | admin |
 | POST | `/api/config/reload-registers` | Reload the register selection without a full reconnect | operator |
 
@@ -654,26 +717,27 @@ and is listed in Settings → Modules (`ui.nodes_url` or a `modules:` entry). LA
 | Method | Path | Description | Role |
 |---|---|---|---|
 | GET | `/api/config/export?include_secrets=&include_identity=` | Download a ZIP backup (config.yaml, per-device registers, user templates, virtual_meters.yaml). Secrets and host/port identity are **stripped by default** — wherever they sit: device connection/http/mqtt_in/rest_push blocks, every source, every installation source; including them requires the admin role (the API key stands in only while login is off), and is audit-logged | viewer (sanitized) / admin (with secrets) |
-| POST | `/api/config/import?apply=&restore_identity=` | Restore a ZIP backup (the live `gateway.id` and `identity_scope` are kept unless `restore_identity=true`) (raw body, ≤25 MB, ZIP-bomb guarded, path-traversal safe). Sanitized backups are **merged** over the live config so stripped secrets survive. Takes a `pre-import` snapshot first. A bundle that rotates identity revokes every session (the calling admin's is re-issued in the response cookie) and prunes passkeys of gone accounts | admin |
+| POST | `/api/config/import?apply=&restore_identity=&lock_writes=&dry_run=` | Restore a ZIP backup (the live `gateway.id` and `identity_scope` are kept unless `restore_identity=true`) (raw body, ≤25 MB, ZIP-bomb guarded, path-traversal safe). Sanitized backups are **merged** over the live config so stripped secrets survive. Takes a `pre-import` snapshot first. **`lock_writes`** (default `true`) locks every write path (devices, components, installations) as the configuration loads; `false` keeps the bundle's own lock states. **`dry_run=true`** applies nothing and answers `{status: "dry-run", would_unlock, lock_writes_default: true}`; `would_unlock` = `{devices, components, units, bindings, rules, total, nothing}` — write paths the bundle has unlocked and enabled command bindings on them (`rules` is always 0 for an import: the bundle carries no `rules.yaml`). The applied answer adds `would_unlock`, `write_locked_forced`, `restart_required`, `note` and `dangling`. Added devices are started and removed ones stopped (with `apply=true`); a device whose connection moved refuses writes until a restart. `restart_required` is true whenever any non-primary device exists or the primary changed (conservative). Every armed Virtual BMS is disarmed. A bundle that rotates identity revokes every session (the calling admin's is re-issued in the response cookie) and prunes passkeys of gone accounts | admin |
 | GET | `/api/config/snapshots` | Automatic + manual snapshots, newest first (LKG on top) | viewer |
 | POST | `/api/config/snapshots` | Take a manual snapshot (`{note}`) | admin |
 | GET | `/api/config/snapshots/{sid}/download` | Download a snapshot ZIP (full-fidelity, secrets included → admin; the API key stands in only while login is off) | admin |
 | GET | `/api/config/snapshots/{sid}/diff?against=live` | Semantic, secrets-masked diff vs live or another snapshot | viewer |
-| POST | `/api/config/snapshots/{sid}/restore?apply=&restore_identity=` | Roll back to a snapshot (the live `gateway.id` and `identity_scope` are kept unless `restore_identity=true`) (takes a `pre-restore` snapshot first; config.yaml replaced verbatim). Identity rotation revokes every session (caller re-issued), reloads the passkey registry from the restored file and prunes gone accounts | admin |
+| POST | `/api/config/snapshots/{sid}/restore?apply=&restore_identity=&lock_writes=&dry_run=` | Roll back to a snapshot (the live `gateway.id` and `identity_scope` are kept unless `restore_identity=true`) (takes a `pre-restore` snapshot first; config.yaml replaced verbatim). `lock_writes` (default `true`) and `dry_run` as for the import; here `would_unlock.rules` counts the snapshot's armed rules (locking writes suspends them until you unlock). The answer adds `restored`, `restart_required` (same conservative rule), `write_locked_forced`, `would_unlock` and `dangling`. Identity rotation revokes every session (caller re-issued), reloads the passkey registry from the restored file and prunes gone accounts | admin |
 | DELETE | `/api/config/snapshots/{sid}` | Delete a snapshot (`lkg` is protected) | admin |
 
 ## Status & observability
 
 | Method | Path | Description | Role |
 |---|---|---|---|
-| GET | `/api/status` | System status: version, `ui_build`, primary Modbus/MQTT/InfluxDB stats, `config` (whether the file loaded and saves are allowed), per-device health (connected, reads, poll rate, error taxonomy, staleness, latency, `health`, `up_since_s`; a CAN device adds `can`: frames, unknown ids, decode errors, error frames, listen-only), `endpoints` (each installation's units online and total power), `writes: {enabled, credential}` (below), `rules_drift_held` (rules whose correction the channel's pace has held for more than 5 minutes now) and `command_lanes` (a wire whose oldest waiting command is older than half its `max_age_s`). `rules_recheck` and `raw_lanes` are gone (their switches were removed in 3.97) | viewer |
+| GET | `/api/status` | System status: version, `ui_build`, primary Modbus/MQTT/InfluxDB stats, `config` (whether the file loaded and saves are allowed), per-device health (connected, reads, poll rate, error taxonomy, staleness, latency, `health`, `up_since_s`; a CAN device adds `can`: frames, unknown ids, decode errors, error frames, listen-only; a listen-only `rtu_tap` device adds `device_error_counts` `{implausible, implausible_windows}` — its own errors, while its `error_counts` also repeat the bus's CRC/orphan/exception/resync counters shared by every unit on that bus), `endpoints` (each installation's units online and total power), `writes: {enabled, credential}` (below), `rules_drift_held` (rules whose correction the channel's pace has held for more than 5 minutes now) and `command_lanes` (a wire whose oldest waiting command is older than half its `max_age_s`). `rules_recheck` and `raw_lanes` are gone (their switches were removed in 3.97) | viewer |
 | GET | `/api/status/resources` | Process footprint: CPU %, RSS, threads, FDs, TCP connections, uptime | viewer |
 | GET | `/api/fleet` | Fleet overview: one row per device — health, staleness, explicit-threshold alarm counts, up to three hero metrics (first dashboard registers) — plus the endpoint name map | viewer |
 | GET | `/health` | Container/monitor probe. HTTP 503 only when an enabled virtual meter is genuinely `down`; a stale Modbus source degrades the body only (a restart can't fix an unreachable meter) | — |
-| GET | `/metrics` | Prometheus exposition (text 0.0.4): `gateway_device_*`, `gateway_mqtt_*`, `gateway_influx_*`, `gateway_vmeter_*` series | — |
+| GET | `/metrics` | Prometheus exposition (text 0.0.4): `gateway_device_*`, `gateway_mqtt_*`, `gateway_influx_*`, `gateway_vmeter_*`, `gateway_bus_*_total` (a listen-only bus's counters, once per bus) series. Served to loopback, to a peer in `security.metrics_allowlist`, or to one a set `security.allowlist` admits; anyone else gets **403** (with both lists empty: loopback only) | — (by IP) |
 | GET | `/api/events?limit=` | Recent events (persisted across restarts) | viewer |
 | GET | `/api/alerts?limit=` | Alerting config/status + recently fired alerts | viewer |
-| POST | `/api/alerts/test` | Fire a synthetic alert over the configured channels. Requires login or API key; ~10 s cooldown; webhook redirects refused | operator |
+| POST | `/api/alerts/test` | Fire a synthetic alert over the configured channels (MQTT, webhook, Klopot). Requires login or API key; ~10 s cooldown; redirects refused | operator |
+| GET | `/api/alerts/alertd-pack?channels=` | The Klopot config pack for this gateway's events, as a YAML download (`mbg-alertd-pack.yaml`; the route keeps its older name): one template per event type and routes to the given Klopot channels (comma-separated, default `ui_default,banner_default`, which must exist in Klopot). No secrets. Import it into Klopot | viewer |
 | GET | `/api/audit?limit=&q=&user=` | The audit trail (who changed what). **Admin-only** when auth is on | admin |
 | GET | `/api/audit/export.csv` | Full audit trail as CSV | admin |
 | GET | `/api/languages` | Available UI languages (scans `ui/languages/*.json`) | viewer |
@@ -743,7 +807,8 @@ New rules are **shadow** (they decide and say so, never write); arming needs
 | POST / DELETE | `/api/rules/{id}/clamp` | `{max, expires_s}` — a ceiling on the numeric want; never expires *into* a step (holds until the signal is under `release_below`) | admin |
 | POST | `/api/rules/{id}/override` | `{seconds}` — pause the rule so another face may command its target; 0 lifts it | admin |
 | GET / POST | `/api/sequences` | Every sequence with its live run and the last ones; create one (JSON, or `{yaml: "..."}`): steps `command` / `wait_s` / `wait_until`+`timeout_s` / `check`, `on_abort`, `params`, `max_duration_s` — validated in words (devices and their enabled commands exist, expressions parse) | viewer / admin |
-| GET / PUT / DELETE | `/api/sequences/{id}` (`/yaml` for the text) | One sequence; edit; delete (refused while it runs) | viewer / admin |
+| GET / PUT / DELETE | `/api/sequences/{id}` | One sequence; edit (JSON or `{yaml: "..."}`); delete (refused while it runs) | viewer / admin |
+| GET | `/api/sequences/{id}/yaml` | The sequence as YAML text: `{yaml: "..."}` — what the editor loads | viewer |
 | POST | `/api/sequences/{id}/run` | `{params, dry_run}` — starts a run (one per sequence, one per device); a dry run returns the whole plan, nothing written. Each command goes through the command write path (gates, audit, the channel's referee and protection); a safety rule holding a channel aborts it | operator |
 | POST | `/api/sequences/{id}/cancel` | Cancels the run; `on_abort` runs | operator |
 | GET | `/api/channels/{device}` | The device's channels (commands that control the same registers, or a channel the template names): `combine`, the template's protection, the rules on each (winner first: `layer`, `priority`, `forced`, `want`, `yielding_to`), the `winner`, and the motor's state (`on`, `on_for_s`, `off_for_s`, `starts_last_h`) | viewer |

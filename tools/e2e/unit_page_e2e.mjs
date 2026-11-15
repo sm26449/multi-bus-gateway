@@ -13,6 +13,7 @@
  */
 import { chromium } from 'playwright';
 import { openDeviceTab, editorSection, saveDeviceEditor, closeDeviceEditor } from './lib/device-page.mjs';
+import { openPage } from './lib/nav.mjs';
 
 const BASE = process.env.MBG_URL || 'http://localhost:18087';
 const EP = process.env.ENDPOINT || 'sunfield';
@@ -39,7 +40,7 @@ try {
   await page.waitForLoadState('networkidle');
   const later = page.locator('button:has-text("Later")');
   if (await later.count()) await later.first().click().catch(() => {});
-  await page.click('[data-page="devices"]');
+  await openPage(page, 'devices');
   await page.waitForTimeout(1200);
 
   // ---- 1. the list row says how the unit is read, not the fallback ----------

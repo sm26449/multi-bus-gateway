@@ -118,7 +118,8 @@ try {
     check(`${role}: no "Add rule"`, !(await p.locator('#rulesAddBtn').isVisible()));
     await p.evaluate(() => window.app.navigateTo('devices'));
     await p.waitForTimeout(800);
-    const test = p.locator('[data-action="testDevice"]').first();
+    // (7642a1c, ADR-0032 §1) a row's Test is the shortcut to its ⋯ item: ddvAct('test', …)
+    const test = p.locator(`#devicesListView [data-action="ddvAct"][data-args^='["test"']`).first();
     const sees = (await test.count()) && await test.isVisible();
     check(`${role}: device Test ${role === 'operator' ? 'shown' : 'hidden'}`, role === 'operator' ? sees : !sees);
     check(`${role}: no Delete device`, !(await p.locator('#devicesListView [data-action="deleteDevice"]:visible').count()));

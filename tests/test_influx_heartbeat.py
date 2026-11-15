@@ -127,7 +127,7 @@ def test_the_quiet_time_is_measured_on_the_monotonic_clock():
 # ── the configuration ────────────────────────────────────────────────────────
 
 def test_a_file_without_the_key_gets_the_starting_value_written_once(tmp_path, caplog):
-    caplog.set_level(logging.INFO, logger="multibus.config")
+    caplog.set_level(logging.INFO, logger="multibus.core.config")
     cfg = write_config(tmp_path)
     assert cfg.influxdb.heartbeat_interval == 600
     doc = yaml.safe_load((tmp_path / "config.yaml").read_text())
@@ -284,7 +284,7 @@ def test_one_validator_for_the_gateway_the_device_and_the_api():
 
 
 def test_a_device_value_that_is_not_whole_seconds_falls_back_to_the_gateways(tmp_path, caplog):
-    caplog.set_level(logging.WARNING, logger="multibus.config")
+    caplog.set_level(logging.WARNING, logger="multibus.core.config")
     cfg = write_config(tmp_path, extra_yaml="""
 devices:
   - id: frac
@@ -319,3 +319,31 @@ def test_settings_refuse_nan_and_a_fraction(tmp_path):
         assert r.status_code == 422, (bad, r.text)
     assert client.post("/api/config/influxdb", json={"heartbeat_interval": 30.0}).status_code == 200
     assert cfg.influxdb.heartbeat_interval == 30
+
+
+def test_an_enum_field_keeps_its_string_series_and_adds_a_numeric_code():
+    """INFLUX-ENUM-2 (prod regression 2026-11-08): every enum/bits field has been a
+    STRING in InfluxDB for months, so build_point must keep writing the human text
+    under the historical field name — a numeric write there is dropped on a float-vs-
+    string conflict — and expose the raw code under a distinct <field>_code companion."""
+    from multibus.outputs.influxdb_publisher import build_point
+    from multibus.config import SelectedRegister
+    reg = SelectedRegister(address=86, name='outdoor_error_code', label='', unit='',
+                           data_type='uint16', poll_group='normal',
+                           enum={'0': 'No error / OK (0)', '911': 'Low water flow (911)'})
+    lp = build_point(reg, 'Low water flow (911)', 1000.0).to_line_protocol()
+    assert 'outdoor_error_code="Low water flow (911)"' in lp    # text stays in the historical string field
+    assert 'outdoor_error_code_code=911' in lp                  # numeric companion, no conflict
+    assert 'outdoor_error_code=911,' not in lp                  # the historical field is NEVER a float now
+    # an unmapped "unknown (n)" still recovers the code from the (n) suffix the decoder adds
+    assert 'outdoor_error_code_code=905' in build_point(reg, 'unknown (905)', 1000.0).to_line_protocol()
+    # a bits-style join with no single code -> string field only, no numeric companion
+    reg_bits = SelectedRegister(address=90, name='status_bits', label='', unit='',
+                                data_type='uint16', poll_group='normal',
+                                bits={'0': 'LowFlow', '1': 'HighTemp'})
+    lp_bits = build_point(reg_bits, 'LowFlow, HighTemp', 1000.0).to_line_protocol()
+    assert 'status_bits="LowFlow, HighTemp"' in lp_bits
+    assert 'status_bits_code=' not in lp_bits                   # no recoverable code -> no companion
+    # a real number is unchanged (numeric field + shared 'value')
+    lp_num = build_point(reg, 55, 1000.0).to_line_protocol()
+    assert 'outdoor_error_code=55,' in lp_num and 'value=55' in lp_num

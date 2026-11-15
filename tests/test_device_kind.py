@@ -337,6 +337,10 @@ CHANGED_TEMPLATE_VALUES = {tid: {"vendor": "Fronius"} for tid in
                            ("fronius_solar_api_inverter", "fronius_solar_api_inverter_3p", "fronius_solar_api_site")}
 # Delta VFD-EL 0.4.0: its alarm reads a calculated igbt_hot (ALM-1)
 CHANGED_TEMPLATE_VALUES["delta_vfd_el"] = {"version": "0.4.0"}
+# Seplos V3 tap 1.10.0: valid_min/valid_max on its telemetry rows (TAP-PLAUS-1)
+CHANGED_TEMPLATE_VALUES["seplos_bms_v3_rtu_tap"] = {"version": "1.10.0"}
+# Janitza UMG 512 PRO 1.1.0: monotonic energy counters + net-counter labels (CNT-FLAGS-1)
+CHANGED_TEMPLATE_VALUES["janitza_umg512_pro"] = {"version": "1.1.0"}
 # ADR-0027 (L2): every bundled template declares its kind — the four that did
 # not now say what their device kind always was (generic maps: other)
 for _tid, _k in (("delta_vfd_el", "drive"), ("samsung_mim_b19n", "heat_pump"),

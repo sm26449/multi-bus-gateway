@@ -279,9 +279,10 @@ compose override) is the alternative — full comparison in
   and reboot when you want limits or memory figures (capacity tests need it).
 - Keep sub-second polling for the one register that drives a control loop;
   put counters and diagnostics in the `normal`/`slow` groups.
-- **CAN (listen-only).** A CAN interface (a USB adapter, an MCP2515 HAT such
-  as the Waveshare RS485 CAN HAT) is set up **on the host**, listen-only, at
-  the bus's bitrate — the gateway never changes it and never transmits:
+- **CAN.** A CAN interface (a USB adapter, an MCP2515 HAT such as the
+  Waveshare RS485 CAN HAT) is set up **on the host**, listen-only for a bus
+  the gateway only reads, at the bus's bitrate (the gateway changes it only
+  when you ask in Settings → CAN, with `CAP_NET_ADMIN` granted — MANUAL §5.5):
 
   ```sh
   ip link set can0 down

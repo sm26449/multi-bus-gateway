@@ -89,7 +89,10 @@ def test_mbg_counts_sum_the_bus():
     c = bd.mbg_counts([_stats(10, 2, 1, 1), _stats(5, 1), None,
                        {"successful_reads": 3, "error_counts": {"crc_errors": 4}}])
     assert c == {"ok": 18, "timeouts": 3, "connection": 1, "exceptions": 1, "other": 0,
-                 "crc": 4, "devices": 3, "max_interval_s": None}
+                 "crc": 4, "devices": 3, "max_interval_s": None,
+                 # TAP-DIAG-2: no tap here, so the deduped counts equal the sums
+                 "crc_deduped": 4, "exceptions_deduped": 1, "implausible": 0,
+                 "tap_devices": 0, "tap_buses": 0}
     slow = {**_stats(1), "poll_groups_detail": [{"interval": 5}, {"interval": 240}, {"interval": "x"}]}
     assert bd.mbg_counts([slow, _stats(1)])["max_interval_s"] == 240.0
 

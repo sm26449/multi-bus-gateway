@@ -8,6 +8,7 @@
  *   MBG_URL=http://localhost:18090 MBG_USER=admin MBG_PASS=… node csp_smoke.mjs
  */
 import { chromium } from 'playwright';
+import { openPage } from './lib/nav.mjs';
 
 const BASE = process.env.MBG_URL || 'http://localhost:18090';
 const USER = process.env.MBG_USER || 'admin';
@@ -42,14 +43,14 @@ if (await later.count()) await later.first().click().catch(() => {});
 
 // ---- 2. every top-level page ---------------------------------------------
 for (const pg of ['dashboard', 'devices', 'templates', 'rules', 'vmeters', 'status', 'config', 'diagnostics']) {
-    await page.click(`[data-page="${pg}"]`);
+    await openPage(page, pg);
     await page.waitForTimeout(700);
     const active = await page.evaluate(p => !!document.querySelector(`.page.active#${p}Page, .page.active[data-page-id="${p}"], #page-${p}.active, .page.active`), pg);
     check(`page ${pg} renders`, active);
 }
 
 // ---- 3. modals through data-action (open + close by delegated closeModal) --
-await page.click('[data-page="devices"]'); await page.waitForTimeout(500);
+await openPage(page, 'devices'); await page.waitForTimeout(500);
 for (const [btn, modal] of [['openPlantWizard', 'plantWizardModal'], ['openDeviceWizard', 'addDeviceModal']]) {
     await page.locator(`[data-action="${btn}"]`).first().click();
     await page.waitForTimeout(400);
@@ -63,7 +64,7 @@ for (const [btn, modal] of [['openPlantWizard', 'plantWizardModal'], ['openDevic
 }
 
 // ---- 4. change dispatch (data-on="change") in the rule editor --------------
-await page.click('[data-page="rules"]'); await page.waitForTimeout(500);
+await openPage(page, 'rules'); await page.waitForTimeout(500);
 await page.click('#rulesAddBtn'); await page.waitForTimeout(500);
 const kinds = await page.$$eval('#rlKind option', o => o.map(x => x.value));
 if (kinds.length > 1) {
@@ -88,7 +89,7 @@ await page.locator('#ruleModal [data-action="closeModal"]').first().click().catc
 await page.waitForTimeout(200);
 
 // ---- 5. input dispatch (data-on="input") + the audit export link -------------
-await page.click('[data-page="config"]'); await page.waitForTimeout(500);
+await openPage(page, 'config'); await page.waitForTimeout(500);
 const secTab = page.locator('[data-cfgtab="security"]');
 if (await secTab.count()) { await secTab.first().click(); await page.waitForTimeout(400); }
 // the audit log is its own panel inside Security (secTab-audit)

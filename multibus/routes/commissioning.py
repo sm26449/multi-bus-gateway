@@ -33,7 +33,7 @@ from urllib.parse import urlparse
 
 from fastapi import APIRouter
 
-from ..redact import redact_url
+from ..core.redact import redact_url
 
 logger = logging.getLogger(__name__)
 _BRIDGE_URL = os.environ.get("SERIAL_BRIDGE_URL", "http://mbg-serial-bridge:7000")
@@ -50,7 +50,7 @@ def build(ctx) -> APIRouter:
         only with ``?all=1``). Read-only: sysfs, /dev and /proc, no port is
         opened. The keys it answered with before (dev, vendor_id, …) stay.
         Never raises; a failure is logged, the answer says no internals."""
-        from .. import serial_inventory
+        from multibus.transports.serial import serial_inventory
         try:
             return serial_inventory.inventory(ctx.config, getattr(ctx, "template_registry", None),
                                               show_all=all)

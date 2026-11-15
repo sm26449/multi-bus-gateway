@@ -136,7 +136,7 @@ Object.assign(JanitzaMonitor.prototype, {
                                      data-description="${this._esc(item.label || item.description || item.name)}"
                                      data-unit="${this._esc(item.unit || '')}"
                                      data-datatype="${this._esc(item.data_type || 'float')}">
-                                    <span class="item-name">${this._esc(item.label || item.description || item.name)}</span>
+                                    <span class="item-name" title="${this._esc(item.name)}">${this._esc(item.label || item.description || this._humanizeKey(item.name))}</span>
                                     <span class="item-unit">${this._esc(item.unit || '')}</span>
                                 </div>
                             `;

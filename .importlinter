@@ -1,0 +1,108 @@
+# .importlinter — MBG package layers.
+#
+# Phase 0 refactor: packages are created one move step at a time (P0.4–P0.8). A
+# package that does not exist yet is an OPTIONAL layer (parenthesised) and is
+# skipped until it appears; each move step un-parenthesises its layer. On the
+# flat tree this contract is near-vacuous by design and bites as packages land.
+#
+# The 24 layer crossings of S0a §3.2 are ignore_imports below, one per module
+# pair (several statements between the same pair collapse to one edge). Owning
+# phase-1 section that removes each (then also deletes the ignore):
+#   §4 config DONE (#1-9,16): config.py / expressions.py no longer import
+#     catalog, devices or transports — the lookups go through the core ports
+#     (multibus.core.catalog_port — C2; multibus.core.host_port — C3). The two
+#     ports lazy-bootstrap their implementations on first use (MBG runs a fixed
+#     image main.py over a mounted multibus/, so there is no single startup to
+#     wire them from); those two bootstrap edges are the only catalog/devices
+#     imports left in core, isolated to the port modules and allowlisted below.
+#   NOTE 2026-11-07: §5/§2/§7 CLOSED without removing edges #17-20,#22-24; the
+#   ADR-0034 "post-refactor remediation" addendum REASSIGNS each (it is the
+#   owner-of-record now, not the sections named below):
+#     #17 device_template -> mqtt_input ..... catalog-decoupling lot (deferred)
+#     #18-20 device_template -> rules/commands  catalog-decoupling lot (deferred)
+#     #22 bus_claims -> device_template ..... catalog-decoupling lot (deferred)
+#     #23 mqtt_input -> http_client ......... accept until the transports sub-layer lands
+#     #24 backfill -> influxdb_publisher .... accept-forever (offline CLI owns its write)
+#   §1 devices DONE (#21): template_speaks + the family maps moved to
+#     catalog.device_template, so template_facts no longer imports up into
+#     devices.connection_spec.
+# unmatched_ignore_imports_alerting was `none` while packages were absent (an
+# ignore whose layers do not exist yet does not match). Phase 0 has landed every
+# package, so it is now `error`: a stale ignore (one that matches no real import)
+# fails the gate and must be removed — the same discipline tools/check_imports.py
+# applies to KNOWN_UNRESOLVED. The forbidden contracts (only the web layer speaks
+# FastAPI; bms isolated) are in place; transports sub-layering is still a move
+# step away (see ADR-0034).
+
+[importlinter]
+root_package = multibus
+unmatched_ignore_imports_alerting = error
+# Needed by the fastapi-web-only contract below: pull external packages into the
+# graph (squashed — fastapi.responses etc. collapse to `fastapi`) so an import of
+# FastAPI from a non-web layer is a visible, forbiddable edge.
+include_external_packages = True
+
+[importlinter:contract:layers]
+name = MBG layers (a higher layer may import a lower one, never the reverse)
+type = layers
+layers =
+    multibus.api
+    multibus.routes
+    multibus.lifecycle
+    multibus.commissioning
+    multibus.control | multibus.outputs | multibus.devices
+    multibus.vendors
+    multibus.transports | multibus.catalog
+    multibus.core
+    multibus.codec
+    multibus.bms
+ignore_imports =
+    # §4: the core ports' lazy-bootstrap imports (the only up-edges left in
+    # core; config.py/expressions.py themselves are catalog/devices/transports-free).
+    multibus.core.catalog_port -> multibus.catalog._port_impl
+    multibus.core.host_port -> multibus.devices._host_port_impl
+    multibus.catalog.device_template -> multibus.transports.mqtt.mqtt_input
+    multibus.catalog.device_template -> multibus.control.rules
+    multibus.catalog.device_template -> multibus.control.commands
+    multibus.transports.serial.bus_claims -> multibus.catalog.device_template
+    multibus.transports.mqtt.mqtt_input -> multibus.transports.http.http_client
+    # routes sits just below api (api composes route build()s; routes never
+    # import api) EXCEPT status_routes, which reaches up for two leaf helpers
+    # (ui_build version string, _read_self_resources /proc reader). The one
+    # remaining routes↔api cycle edge — owned by a follow-up that relocates both
+    # helpers to core (ADR-0034 addendum 2026-11-07, H8). Adding the layer still
+    # direction-checks the other 42 route modules against any NEW up-import.
+    multibus.routes.status_routes -> multibus.api
+    multibus.vendors.backfill -> multibus.outputs.influxdb_publisher
+
+[importlinter:contract:bms-isolated]
+name = The virtual BMS reaches the bus only through transports and codec
+type = forbidden
+source_modules =
+    multibus.bms
+forbidden_modules =
+    multibus.api
+
+# ADR-0038: FastAPI/Starlette is the web layer's vocabulary alone. Only
+# multibus.api (composition + services) and multibus.routes (HTTP shape) may
+# import it; every other layer stays framework-free so the same service can be
+# driven from MQTT/OPC UA. Named exceptions: payload.py and write_guard.py are
+# flat helpers that still raise HTTPException / touch Request — phase-0
+# intermediate, to be decoupled in phase 1 §2 (domain exceptions via
+# api/errors.py). include_external_packages squashes fastapi.* to `fastapi`, so
+# one ignore per web subtree covers all of its submodules.
+[importlinter:contract:fastapi-web-only]
+name = Only the web layer (api, routes) speaks FastAPI/Starlette
+type = forbidden
+source_modules =
+    multibus
+forbidden_modules =
+    fastapi
+    starlette
+ignore_imports =
+    multibus.api -> fastapi
+    multibus.api -> starlette
+    multibus.api.* -> fastapi
+    multibus.routes.* -> fastapi
+    multibus.payload -> fastapi
+    multibus.write_guard -> fastapi

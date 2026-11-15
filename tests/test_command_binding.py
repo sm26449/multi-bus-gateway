@@ -120,6 +120,17 @@ def _put(h, path, body):
     return h.client.put(path, json=body)
 
 
+def test_faces_opcua_toggle_saves(tmp_path, gx):          # CMD-8 (§2 L1)
+    """A binding can switch a command off for OPC UA: the shared validator now
+    accepts 'opcua' in faces (admission and the OPC UA lister already honoured
+    it). Before the fix this save was a 422."""
+    h = _Gx(tmp_path, gx)
+    r = _put(h, "/api/devices/gx/commands/ess_setpoint",
+             {'enabled': True, 'faces': {'api': True, 'mqtt': True, 'ha': True, 'opcua': False}})
+    assert r.status_code == 200, r.text
+    assert h.listing()['ess_setpoint']['faces'].get('opcua') is False
+
+
 # ── the EMS acceptance (pv-stack-ems mbg-command-binding-2026-10-25) ─────────
 
 def test_the_ems_acceptance(tmp_path, gx):
@@ -529,14 +540,18 @@ def test_turning_a_command_off_is_never_refused_by_what_is_stored(tmp_path, gx):
 
 def test_the_execution_timeout_counts_the_recipe(tmp_path, gx):
     """CR2-3: three transactions was the assumption; a recipe with more
-    reads and frames ran past it and was answered 504 while it still ran."""
+    reads and frames ran past it and was answered 504 while it still ran.
+    The Modbus timeout formula now lives on the transport (ADR-0036 §2 L0);
+    app.state.exec_timeout delegates to ctx['transport']."""
     from types import SimpleNamespace
     from multibus.commands import parse_command_def
+    from multibus.control.command_transport import ModbusCommandTransport
     h = _Gx(tmp_path, gx)
     cmd = parse_command_def('x', {'guard': [{'read': 'a'}] * 2, 'writes': [{'register': 'a', 'value': 1}] * 5,
                                   'verify': [{'read': 'a'}] * 3, 'settle_s': 1})
     drv = SimpleNamespace(connection=SimpleNamespace(config=SimpleNamespace(timeout=1, retry_attempts=0)))
-    assert h.app.state.exec_timeout({'cmd': cmd, 'mq': None, 'drv': drv}) == 16 * 1 + 1.0
+    ctx = {'cmd': cmd, 'transport': ModbusCommandTransport(drv, None)}
+    assert h.app.state.exec_timeout(ctx) == 16 * 1 + 1.0
 
 
 @needs_tc
@@ -835,3 +850,37 @@ def test_a_rules_write_ends_every_lease_on_its_channel(tmp_path, monkeypatch):
     app.state.run_command(cfg.get_device('pv-u1'), app.state.registry.find('pv-u1')[2], 'power_limit',
                           {'value': 60}, who='rule', via='rule:ov-u1')
     assert ('pv-u1', 'command', int(other.address)) not in mgr._leases
+
+
+def test_a_command_locked_while_it_waits_is_not_written(tmp_path, gx):   # M5 / REFAC-SAFE-1
+    """The per-device write lock is re-checked at the HEAD of the lane, as the
+    raw head does (mirror of test_raw_dispatch): a command admitted then queued
+    behind a held lane must NOT write to a device locked while it waited."""
+    h = _Gx(tmp_path, gx)
+    release = h.block_lane('gx')
+    try:
+        h.mqtt('gx', 'ess_setpoint', value=-100, id='m5')   # admitted + queued behind the held lane
+        time.sleep(0.2)
+        h.app.state.registry.find('gx')[1].write_locked = True   # locked while it waits
+    finally:
+        release.set()
+    res = h.result('m5', 'gx')
+    assert res['status'] == 'rejected' and 'write-locked' in res['reason'], res
+    assert -100 not in h.writes('gx')                   # nothing went out
+
+
+def test_a_command_whose_device_vanished_while_it_waited_is_not_written(tmp_path, gx):
+    """The head's re-resolve (REFAC-SAFE-1) finds no running device: a device
+    removed while the command waited is answered 409 'not running', as the raw
+    head answers, instead of being written through the stale client."""
+    h = _Gx(tmp_path, gx)
+    release = h.block_lane('gx')
+    try:
+        h.mqtt('gx', 'ess_setpoint', value=-100, id='gone')
+        time.sleep(0.2)
+        h.app.state.registry.remove('gx')
+    finally:
+        release.set()
+    res = h.result('gone', 'gx')
+    assert res['status'] == 'error' and 'not running' in res['reason'], res
+    assert -100 not in h.writes('gx')

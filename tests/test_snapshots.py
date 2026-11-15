@@ -100,6 +100,59 @@ def test_write_bundle_replace_vs_merge(store, tmp_path):
     assert replaced["modbus"]["host"] == "1.2.3.4" and "new_section" not in replaced
 
 
+def test_merge_import_keeps_a_top_level_url_secret(tmp_path):
+    """REFAC-URL-1: a sanitized export redacts secrets inside top-level URLs
+    (rest_push.url, influxdb.url) to ``token=***``. A merge-import of that bundle
+    must KEEP the live secret, not overwrite it with the mask — the same
+    keep-what-it-was-not-told contract (ADR-0003) the device-level merge honours.
+    Regression for the _deep_merge aliasing bug: merged IS the mutated live dict,
+    so the top-level re-inject compared the already-overwritten url to itself."""
+    from multibus.core.redact import redact_url
+    original = 'http://192.168.1.2/ingest?token=private-value'
+    (tmp_path / 'config.yaml').write_text(yaml.safe_dump({'rest_push': {'url': original}}))
+    data = io.BytesIO()
+    with zipfile.ZipFile(data, 'w') as z:
+        z.writestr('config.yaml', yaml.safe_dump({'rest_push': {'url': redact_url(original)}}))
+    with zipfile.ZipFile(io.BytesIO(data.getvalue())) as z:
+        write_bundle_files(z, cfg_dir=tmp_path, user_tpl_dir=tmp_path / 'tpl',
+                           registers_path_for=lambda d: tmp_path / d, replace_config=False)
+    kept = yaml.safe_load((tmp_path / 'config.yaml').read_text())['rest_push']['url']
+    assert kept == original
+
+
+def test_apply_bundle_rolls_back_on_a_mid_write_failure(tmp_path, monkeypatch):
+    """REFAC-TXN-1: apply_bundle/write_bundle_files is all-or-nothing. If a file's
+    swap fails partway, every file already swapped in is rolled back, so a failed
+    apply never leaves a half-written bundle. Here config.yaml must stay original
+    after attributes.yaml's swap is made to fail."""
+    import multibus.lifecycle.snapshots as snapshots
+    from unittest.mock import Mock
+
+    (tmp_path / 'config.yaml').write_text('mqtt: {topic_prefix: original}\n')
+    (tmp_path / 'attributes.yaml').write_text('original attributes')
+    data = io.BytesIO()
+    with zipfile.ZipFile(data, 'w') as z:
+        z.writestr('config.yaml', 'mqtt: {topic_prefix: changed}\n')
+        z.writestr('attributes.yaml', '{}')
+    original_replace = snapshots.os.replace
+
+    def fail_on_attributes(src, dst):
+        if str(dst).endswith('attributes.yaml'):
+            raise OSError('simulated second-file failure')
+        return original_replace(src, dst)
+
+    monkeypatch.setattr(snapshots.os, 'replace', fail_on_attributes)
+    reload = Mock()
+    with zipfile.ZipFile(io.BytesIO(data.getvalue())) as z:
+        with pytest.raises(OSError, match='second-file failure'):
+            snapshots.apply_bundle(z, cfg_dir=tmp_path, user_tpl_dir=tmp_path / 'tpl',
+                                   registers_path_for=lambda d: tmp_path / d, replace_config=True,
+                                   allow_nonlan=False, snapshot_store=Mock(), pre_label='pre-restore',
+                                   user='t', reload_from_disk=reload, apply=False, restore_identity=False)
+    reload.assert_not_called()                                   # no reload after a failed write
+    assert 'original' in (tmp_path / 'config.yaml').read_text()  # first file rolled back
+
+
 def test_bundle_includes_and_restores_tombstones(store):
     """3.4.1: a deleted device's tombstone (devices/<id>/device.json) is in the
     bundle and restores, so export→restore keeps delete→restore recovery."""
@@ -341,3 +394,224 @@ def test_boot_seatbelt_does_not_roll_back_on_a_non_file_error(store):
     with pytest.raises(OSError):
         boot_seatbelt(str(cfg), lambda: (_ for _ in ()).throw(OSError("read-only file system")))
     assert "9.9.9.9" in cfg.read_text()            # untouched
+
+
+def test_apply_bundle_reload_failure_is_500_not_422(monkeypatch, tmp_path):
+    """H1 / REFAC-S6-1: a bundle whose files are WRITTEN but whose reload then
+    fails (e.g. a restored register file with a bad value) is a half-applied
+    config → BundleAppliedReloadFailed (the routes map it to 500), NOT a
+    BundleInvalid/ValueError (→422 'nothing happened'). The pre-op snapshot is
+    taken first and its label travels on the exception for rollback."""
+    from multibus.lifecycle import snapshots as S
+    monkeypatch.setattr(S, "validate_bundle", lambda zf, allow_nonlan=False, **kw: [])
+    monkeypatch.setattr(S, "write_bundle_files", lambda zf, **k: {"files": 1})
+    created = []
+
+    class _Store:
+        def create(self, label, user=""):
+            created.append(label)
+
+    def _reload_boom(apply, restore_identity=False):
+        raise ValueError("register iu0: interval 'x' is not a number")
+
+    with pytest.raises(S.BundleAppliedReloadFailed) as ei:
+        S.apply_bundle(None, cfg_dir=tmp_path, user_tpl_dir=tmp_path,
+                       registers_path_for=lambda d: tmp_path, replace_config=True,
+                       allow_nonlan=False, snapshot_store=_Store(), pre_label="pre-restore",
+                       user="t", reload_from_disk=_reload_boom, apply=True, restore_identity=False)
+    assert ei.value.pre_label == "pre-restore"
+    assert created == ["pre-restore"]                 # pre-op snapshot taken before the write
+    assert not isinstance(ei.value, ValueError)       # routes' `except ValueError` must not 422 it
+
+
+def test_apply_bundle_validation_failure_writes_nothing(monkeypatch, tmp_path):
+    """The other side: a bundle that fails validation raises BundleInvalid BEFORE
+    any pre-op snapshot or write — 422, nothing on disk."""
+    from multibus.lifecycle import snapshots as S
+    monkeypatch.setattr(S, "validate_bundle", lambda zf, allow_nonlan=False, **kw: ["bad thing"])
+    wrote = []
+    monkeypatch.setattr(S, "write_bundle_files", lambda zf, **k: wrote.append(1))
+    created = []
+
+    class _Store:
+        def create(self, label, user=""):
+            created.append(label)
+
+    with pytest.raises(S.BundleInvalid) as ei:
+        S.apply_bundle(None, cfg_dir=tmp_path, user_tpl_dir=tmp_path,
+                       registers_path_for=lambda d: tmp_path, replace_config=True,
+                       allow_nonlan=False, snapshot_store=_Store(), pre_label="pre-restore",
+                       user="t", reload_from_disk=lambda *a, **k: False, apply=True, restore_identity=False)
+    assert ei.value.errors == ["bad thing"] and created == [] and wrote == []
+
+
+def test_apply_bundle_fails_closed_when_preop_snapshot_fails(monkeypatch, tmp_path):
+    """C3: if the pre-op (undo) snapshot cannot be taken, the apply ABORTS before
+    any write — nothing on disk — raising PreopSnapshotFailed (routes → 500). A
+    half-applied bundle with no way back is never acceptable."""
+    from multibus.lifecycle import snapshots as S
+    monkeypatch.setattr(S, "validate_bundle", lambda zf, allow_nonlan=False, **kw: [])
+    wrote = []
+    monkeypatch.setattr(S, "write_bundle_files", lambda zf, **k: (wrote.append(1), {"files": 1})[1])
+
+    class _Store:
+        def create(self, label, user=""):
+            raise OSError("snapshots dir is read-only")
+
+    with pytest.raises(S.PreopSnapshotFailed) as ei:
+        S.apply_bundle(None, cfg_dir=tmp_path, user_tpl_dir=tmp_path,
+                       registers_path_for=lambda d: tmp_path, replace_config=True,
+                       allow_nonlan=False, snapshot_store=_Store(), pre_label="pre-restore",
+                       user="t", reload_from_disk=lambda *a, **k: False, apply=True, restore_identity=False)
+    assert ei.value.pre_label == "pre-restore"
+    assert wrote == []                               # fail-closed: nothing written
+    assert not isinstance(ei.value, ValueError)      # routes must not 422 it
+
+
+# ── F20 (ADR-0041 L2): the write-lock disclosure walker ──────────────────────
+from multibus.snapshots import write_lock_disclosure
+from types import SimpleNamespace
+
+
+def _dev(**kw):
+    kw.setdefault('write_locked', False); kw.setdefault('component_of', '')
+    kw.setdefault('endpoint_id', ''); kw.setdefault('commands', [])
+    return kw
+
+
+def test_disclosure_counts_unlocked_write_paths_by_kind():
+    devices = [
+        _dev(id='a'),                                   # unlocked top-level device
+        _dev(id='b', write_locked=True),                # locked → not counted
+        _dev(id='c', component_of='a'),                 # unlocked component
+        _dev(id='u1', endpoint_id='plant'),             # unlocked endpoint unit
+        _dev(id='u2', endpoint_id='plant', write_locked=True),  # locked unit → not counted
+    ]
+    d = write_lock_disclosure(devices, is_restore=False)
+    assert (d['devices'], d['components'], d['units']) == (1, 1, 1)
+    assert d['nothing'] is False
+
+
+def test_disclosure_counts_enabled_bindings_only_on_unlocked_paths():
+    devices = [
+        _dev(id='a', commands=[{'name': 'x', 'enabled': True}, {'name': 'y', 'enabled': False}]),
+        _dev(id='b', write_locked=True, commands=[{'name': 'z', 'enabled': True}]),  # locked: binding moot
+    ]
+    d = write_lock_disclosure(devices, is_restore=False)
+    assert d['bindings'] == 1            # only the enabled binding on the UNLOCKED device
+
+
+def test_disclosure_armed_rules_are_restore_only():
+    rules = [SimpleNamespace(mode='armed', enabled=True),
+             SimpleNamespace(mode='armed', enabled=False),   # disabled → not counted
+             SimpleNamespace(mode='shadow', enabled=True)]   # shadow → not counted
+    # import: rules.yaml is never in the bundle → R is 0 even if rules are passed
+    assert write_lock_disclosure([], rules, is_restore=False)['rules'] == 0
+    # restore: one armed+enabled rule
+    assert write_lock_disclosure([], rules, is_restore=True)['rules'] == 1
+
+
+def test_disclosure_nothing_unlocked_is_reassuring():
+    devices = [_dev(id='a', write_locked=True),
+               _dev(id='b', write_locked=True, commands=[{'name': 'z', 'enabled': True}])]
+    d = write_lock_disclosure(devices, is_restore=True)
+    assert d == {'devices': 0, 'components': 0, 'units': 0, 'bindings': 0,
+                 'rules': 0, 'total': 0, 'nothing': True}
+
+
+def test_force_lock_all_writes_locks_every_path(tmp_path):
+    """F20 L2b: a bundle with unlocked write paths restores LOCKED — the config
+    setter forces write_locked on the primary and every devices[] entry, idempotent."""
+    from multibus.config import Config
+    write_config(tmp_path, extra_yaml="""
+security:
+  primary_write_locked: false
+devices:
+  - id: extra
+    name: Extra
+    protocol: tcp
+    connection: {host: 192.168.1.50, port: 502, unit_id: 2}
+    write_locked: false
+""")
+    cfg = Config(str(tmp_path / "config.yaml"))
+    assert any(not d.write_locked for d in cfg.devices)        # unlocked before
+    n = cfg.force_lock_all_writes()
+    assert n >= 1
+    assert all(d.write_locked for d in cfg.devices)            # every path locked after
+    assert cfg.security.primary_write_locked is True
+    assert cfg.force_lock_all_writes() == 0                    # idempotent
+    # and it persisted: a fresh load reads locked
+    cfg2 = Config(str(tmp_path / "config.yaml"))
+    assert all(d.write_locked for d in cfg2.devices)
+
+
+def _bundle_bytes(config_yaml, rules_yaml=None):
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as z:
+        z.writestr("config.yaml", config_yaml)
+        if rules_yaml is not None:
+            z.writestr("rules.yaml", rules_yaml)
+    return buf.getvalue()
+
+
+def test_bundle_write_disclosure_counts_from_the_bundle_without_applying():
+    from multibus.snapshots import bundle_write_disclosure
+    cfg_yaml = """
+modbus: {host: 192.168.1.207, port: 502, unit_id: 1}
+mqtt: {enabled: false, broker: m, topic_prefix: a}
+influxdb: {enabled: false, url: 'http://x', bucket: b}
+security: {primary_write_locked: false}
+devices:
+  - id: extra
+    name: Extra
+    protocol: tcp
+    connection: {host: 192.168.1.50, port: 502, unit_id: 2}
+    write_locked: false
+"""
+    rules_yaml = "rules:\n  - {id: r1, mode: armed, enabled: true, kind: steps}\n  - {id: r2, mode: shadow, enabled: true, kind: steps}\n"
+    # restore: config unlocked paths counted + the one armed rule
+    d = bundle_write_disclosure(_bundle_bytes(cfg_yaml, rules_yaml), is_restore=True)
+    assert d['devices'] >= 1 and d['rules'] == 1 and d['nothing'] is False
+    # import: same config, but rules.yaml is never in an import bundle -> R omitted
+    d2 = bundle_write_disclosure(_bundle_bytes(cfg_yaml), is_restore=False)
+    assert d2['devices'] >= 1 and d2['rules'] == 0
+
+
+@needs_tc
+def test_f20_restore_forces_the_write_lock_on_the_running_devices(tmp_path):
+    """F20 L2 (the blocker): restoring a snapshot whose primary is UNLOCKED brings
+    it back LOCKED by default, and the RUNNING registry reads locked at once (no
+    restart) — GET /api/devices reflects it. The disclosure says what would unlock.
+    lock_writes=false keeps the snapshot's own states; dry_run applies nothing."""
+    from fastapi.testclient import TestClient
+    from multibus.api import create_api
+    cfg = write_config(tmp_path, extra_yaml="security:\n  primary_write_locked: false\n")
+    fake = SimpleNamespace(publish_callback=None)
+    app, _ = create_api(cfg, fake, None, None, devices=[(d, fake) for d in cfg.devices])
+    client = TestClient(app, raise_server_exceptions=False)
+
+    def primary_locked():
+        # read the RUNNING registry copy (what the write gate reads) — not just config
+        _i, c, _cl = app.state.registry.find(cfg.primary_id)
+        return c.write_locked
+
+    assert primary_locked() is False                       # unlocked to begin with
+    snap = client.post("/api/config/snapshots", json={"note": "unlocked"}).json()["snapshot"]
+
+    # dry-run: discloses what would unlock, changes nothing
+    dr = client.post(f"/api/config/snapshots/{snap['id']}/restore?dry_run=true").json()
+    assert dr["status"] == "dry-run" and dr["would_unlock"]["devices"] >= 1
+    assert primary_locked() is False                       # not applied
+
+    # real restore, default lock_writes=true → comes back LOCKED on the running device
+    r = client.post(f"/api/config/snapshots/{snap['id']}/restore?apply=false")
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["write_locked_forced"] is True and body["would_unlock"]["devices"] >= 1
+    assert primary_locked() is True                        # the running registry reads LOCKED now
+
+    # opt out → the snapshot's own (unlocked) state is restored
+    r = client.post(f"/api/config/snapshots/{snap['id']}/restore?apply=false&lock_writes=false")
+    assert r.status_code == 200, r.text
+    assert r.json()["write_locked_forced"] is False
+    assert primary_locked() is False

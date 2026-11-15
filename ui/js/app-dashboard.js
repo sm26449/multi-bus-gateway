@@ -309,7 +309,7 @@ Object.assign(JanitzaMonitor.prototype, {
         this._vhReg = reg;
         this._vhRange = this._vhRange || '-1h';
         const title = document.getElementById('valHistTitle');
-        if (title) title.textContent = reg.label || reg.name;
+        if (title) title.textContent = reg.label || this._humanizeKey(reg.name);
         const ranges = document.querySelectorAll('#valueHistoryModal .vh-range');
         if (!this._vhWired) {
             this._vhWired = true;
@@ -726,7 +726,7 @@ Object.assign(JanitzaMonitor.prototype, {
                     const widget = secCfg.widget || '';
                     const rowHtml = r => `
                         <tr data-address="${this._rk(r)}" tabindex="0">
-                            <td class="ds-label" title="${this._esc(r.name)}">${this._esc(r.label || r.name)}</td>
+                            <td class="ds-label" title="${this._esc(r.name)}">${this._esc(r.label || this._humanizeKey(r.name))}</td>
                             <td class="ds-value"><span class="table-value value-normal">--</span></td>
                             <td class="ds-unit"></td>
                         </tr>`;
@@ -750,7 +750,7 @@ Object.assign(JanitzaMonitor.prototype, {
                         others.forEach(r => { if (tileUnits.has(r.unit || '')) fine.add(String(this._rk(r))); });
                         body = `<div class="cell-grid">${tiles.map(r => `
                             <div class="cell-tile" data-address="${this._rk(r)}" data-grid="${this._esc(id)}" data-fine="1" tabindex="0" role="button" title="${this._esc(r.name)}">
-                                <div class="ct-label">${this._esc(r.label || r.name)}</div>
+                                <div class="ct-label" title="${this._esc(r.name)}">${this._esc(r.label || this._humanizeKey(r.name))}</div>
                                 <div class="ct-val"><span class="table-value value-normal">--</span> <span class="ds-unit"></span></div>
                             </div>`).join('')}</div>`
                             + (others.length ? `<table class="dev-sec-table"><tbody>${others.map(rowHtml).join('')}</tbody></table>` : '');
@@ -1335,7 +1335,7 @@ Object.assign(JanitzaMonitor.prototype, {
         });
 
         if (this._dashRegs().length === 0) {
-            html = `<div class="empty-state">${this.t('msg.noMonitoredAdd', "No measurements monitored. Add measurements first.")}</div>`;
+            html = this._stateBlock({ kind: 'empty', live: true, reason: this.t('msg.noMonitoredAdd', 'No measurements monitored. Add measurements first.') });
         }
 
         list.innerHTML = html;

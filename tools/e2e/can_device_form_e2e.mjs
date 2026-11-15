@@ -16,6 +16,7 @@
 import { chromium } from 'playwright';
 import { openDeviceTab, saveDeviceEditor } from './lib/device-page.mjs';
 import { watchDialogs } from './lib/dialogs.mjs';
+import { openPage } from './lib/nav.mjs';
 
 const BASE = process.env.MBG_URL || 'http://127.0.0.1:18133';
 const OUT = process.env.OUT || '';
@@ -146,7 +147,7 @@ try {
   check('the device exists as CAN', dev?.protocol === 'can' && dev?.connection?.channel === 'can0', JSON.stringify(dev?.connection));
 
   // ── the list row ──
-  await page.click('[data-page="devices"]');
+  await openPage(page, 'devices');
   if (!(await page.isVisible('#devicesListView')))
     await page.click('#deviceRegistersView [data-action="closeDeviceRegisters"]');
   await page.waitForSelector('#devicesListView', { state: 'visible' });

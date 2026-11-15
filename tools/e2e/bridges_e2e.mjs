@@ -29,6 +29,7 @@ import { watchDialogs } from './lib/dialogs.mjs';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
+import { freshPage } from './lib/nav.mjs';
 
 const BASE = process.env.MBG_URL || 'http://127.0.0.1:8099';
 const CTR = process.env.CTR || 'mbg-ui-sandbox';
@@ -158,7 +159,7 @@ async function lastToast() {
   return (await page.locator('.toast').last().innerText()).replace(/\s+/g, ' ');
 }
 async function goDevices() {
-  await page.click('[data-page="devices"]');
+  await freshPage(page, 'devices');
   if (!(await page.isVisible('#devicesListView')))
     await page.click('#deviceRegistersView [data-action="closeDeviceRegisters"]');
   await page.waitForSelector('#devicesListView', { state: 'visible' });

@@ -12,6 +12,7 @@
  */
 import { chromium } from 'playwright';
 import { watchDialogs } from './lib/dialogs.mjs';
+import { openPage } from './lib/nav.mjs';
 const BASE = process.env.MBG_URL || 'http://127.0.0.1:18090';
 const results = [];
 const check = (name, cond, extra = '') => { results.push({ name, ok: !!cond }); console.log(`${cond ? 'PASS' : 'FAIL'} ${name}${extra ? ' — ' + JSON.stringify(extra) : ''}`); };
@@ -45,7 +46,7 @@ try {
   }
   await page.goto(BASE + '/'); await page.waitForLoadState('networkidle');
   const later = page.locator('button:has-text("Later")'); if (await later.count()) await later.first().click().catch(() => {});
-  await page.click('[data-page="rules"]'); await page.waitForTimeout(1000);
+  await openPage(page, 'rules'); await page.waitForTimeout(1000);
   check('the Rules page has a Sequences section that says what one is', /undone in reverse/i.test(await page.locator('#rulesPage').innerText())
         && /No sequences yet/i.test(await page.locator('#sequencesContent').innerText()));
   // write one: the example refers to a valve this installation does not have
@@ -86,7 +87,7 @@ try {
   // Romanian
   await page.evaluate(() => { try { localStorage.setItem('mbg-lang', 'ro'); } catch (e) {} });
   await page.reload(); await page.waitForLoadState('networkidle');
-  await page.click('[data-page="rules"]'); await page.waitForTimeout(1500);
+  await openPage(page, 'rules'); await page.waitForTimeout(1500);
   const ro = await page.locator('#rulesPage').innerText();
   check('in Romanian', /Secvențe/.test(ro) && /Rulează…/.test(ro) && /Simulare/.test(ro) && /abandonată|oprită/i.test(ro) && !/seq\./.test(ro), ro.slice(-600));
   await page.evaluate(() => { try { localStorage.setItem('mbg-lang', 'en'); } catch (e) {} });

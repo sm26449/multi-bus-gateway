@@ -104,6 +104,7 @@ Object.assign(JanitzaMonitor.prototype, {
         if (!devices.length && !endpoints.length && !bridges.length) {
             el.innerHTML = `<span class="field-hint">${this.t('devices.none', 'No devices configured.')}</span>`;
             if (findHost) findHost.hidden = true;
+            if (this._bridgesLiveStop) this._bridgesLiveStop();   // nothing left to follow
             return;
         }
         if (findHost) findHost.hidden = false;
@@ -125,6 +126,8 @@ Object.assign(JanitzaMonitor.prototype, {
             + endpoints.map(p => this._endpointGroupHtml(p, byEndpoint[p.id] || [], healthColor)).join('');
         el.innerHTML = html;
         this._wireComponentToggles(el);
+        // the bridge cards follow the gateway while the list is open (UI-LIVE-1)
+        if (this._bridgesLiveStart) this._bridgesLiveStart();
         // search, filters and the list view (app-find.js) over what was drawn
         if (this._devFindIndex) {
             this._devFindIndex(devices, endpoints, bridges);
@@ -1170,6 +1173,7 @@ Object.assign(JanitzaMonitor.prototype, {
         <div class="settings-card">
             <div class="settings-card-header"><h3><i aria-hidden="true" class="bi bi-send"></i> ${t('commands.tab', 'Commands')}</h3></div>
             <div class="settings-card-body">
+                ${this._cmdOwnershipLead(chans)}
                 <p class="field-hint" style="margin:0 0 12px;">${t('commands.unitIntro',
                     'What this unit can be told. Each command writes what its template declares — Modbus registers, or a value published over MQTT — then reads back and says whether it took. The same commands are accepted over MQTT and from Home Assistant; every run is audited.')}</p>
                 ${cmds.length ? '' : `<div class="field-hint">${t('commands.none', 'This unit\'s template declares no commands.')}</div>`}
@@ -1886,31 +1890,39 @@ Object.assign(JanitzaMonitor.prototype, {
         const fact = (label, val) => `<div><div style="color:var(--text-secondary);font-size:11.5px;">${label}</div><div style="font-weight:600;font-size:13.5px;">${val}</div></div>`;
         const mp = this._sinkStatusPill(this._devDetail.sinks?.mqtt, d.mqtt_enabled, entry.connected);
         const ip = this._sinkStatusPill(this._devDetail.sinks?.influxdb, d.influxdb_enabled, entry.connected);
+        // UX-05: describe the DEVICE first — its plain state, then the live values —
+        // and move the transport/template/topic engineering facts into a collapsed
+        // technical summary below, so the overview answers "what is it doing?" before
+        // "how is it wired?".
         return `
         <div class="settings-card">
             <div class="settings-card-body">
-                <div style="display:flex;align-items:center;gap:10px;margin-bottom:16px;">
+                <div style="display:flex;align-items:center;gap:10px;margin-bottom:4px;">
                     <span class="status-dot" style="width:12px;height:12px;border-radius:50%;--dot:${hColor[health]};background:var(--dot);box-shadow:0 0 0 3px color-mix(in srgb, var(--dot) 16%, transparent);"></span>
                     <span style="font-weight:600;font-size:15px;" data-verdict="${this._esc(entry.enabled === false ? 'disabled' : health)}">${this._esc(this._verdictWord(entry))}</span>
                 </div>
-                <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:16px 24px;margin-bottom:8px;">
-                    ${fact(t('devices.overview.source', 'Source'), `${proto}<br><span style="font-weight:400;font-size:12px;color:var(--text-secondary);word-break:break-all;">${src}</span>`)}
-                    ${fact(t('devices.overview.template', 'Template'), this._esc(d.template || '—'))}
-                    ${this._kindLabel ? fact(t('find.facet.kind', 'Type'), `${this._kindCellHtml(entry.type || entry.kind)}<br><span style="font-weight:400;font-size:12px;color:var(--text-secondary);" data-kind-source="${this._esc(entry.kind_source || '')}">${this._esc(this._kindSourceWords(entry.kind_source))}</span>`) : ''}
-                    ${fact(t('devices.overview.registers', 'Measurements polled'), d.selected_registers)}
-                    ${reach.link ? fact(t('devices.overview.link', 'Link'), entry.connected ? t('devices.connected', 'Connected') : t('devices.verdict.notConnected', 'Not connected')) : ''}
-                    ${reach.pushed ? '' : fact(t('devices.overview.pollRate', 'Poll rate'), entry.poll_rate != null ? entry.poll_rate + '/s' : '—')}
-                    ${fact(t('devices.overview.lastRead', 'Last read'), entry.staleness_age_s != null ? entry.staleness_age_s + 's ago' : '—')}
-                    ${entry.can ? fact('CAN', `<span style="font-weight:400;font-size:12.5px;">${this._canCountersHtml(entry.can)}</span>`) : ''}
-                    ${fact('MQTT', `${mp} <code style="font-size:11px;">${this._esc(d.topic_prefix || '')}</code>`)}
-                    ${fact('InfluxDB', `${ip} <code style="font-size:11px;">${this._esc(d.bucket || '')}</code>`)}
-                </div>
+                <div style="color:var(--text-secondary);font-size:12px;margin-bottom:14px;">${t('devices.overview.lastRead', 'Last read')} ${entry.staleness_age_s != null ? entry.staleness_age_s + 's ago' : '—'}</div>
+                <div id="ddvSnapshot"><span class="field-hint">${t('common.loading', 'Loading…')}</span></div>
             </div>
         </div>
-        <div class="settings-card">
-            <div class="settings-card-header"><h3><i aria-hidden="true" class="bi bi-activity"></i> ${t('devices.overview.live', 'Live values')}</h3></div>
-            <div class="settings-card-body"><div id="ddvSnapshot"><span class="field-hint">${t('common.loading', 'Loading…')}</span></div></div>
-        </div>`;
+        <details class="ddv-tech">
+            <summary>${t('devices.overview.technical', 'Technical details')}</summary>
+            <div class="settings-card" style="margin-top:8px;">
+                <div class="settings-card-body">
+                    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:16px 24px;">
+                        ${fact(t('devices.overview.source', 'Source'), `${proto}<br><span style="font-weight:400;font-size:12px;color:var(--text-secondary);word-break:break-all;">${src}</span>`)}
+                        ${fact(t('devices.overview.template', 'Template'), this._esc(d.template || '—'))}
+                        ${this._kindLabel ? fact(t('find.facet.kind', 'Type'), `${this._kindCellHtml(entry.type || entry.kind)}<br><span style="font-weight:400;font-size:12px;color:var(--text-secondary);" data-kind-source="${this._esc(entry.kind_source || '')}">${this._esc(this._kindSourceWords(entry.kind_source))}</span>`) : ''}
+                        ${fact(t('devices.overview.registers', 'Measurements polled'), d.selected_registers)}
+                        ${reach.link ? fact(t('devices.overview.link', 'Link'), entry.connected ? t('devices.connected', 'Connected') : t('devices.verdict.notConnected', 'Not connected')) : ''}
+                        ${reach.pushed ? '' : fact(t('devices.overview.pollRate', 'Poll rate'), entry.poll_rate != null ? entry.poll_rate + '/s' : '—')}
+                        ${entry.can ? fact('CAN', `<span style="font-weight:400;font-size:12.5px;">${this._canCountersHtml(entry.can)}</span>`) : ''}
+                        ${fact('MQTT', `${mp} <code style="font-size:11px;">${this._esc(d.topic_prefix || '')}</code>`)}
+                        ${fact('InfluxDB', `${ip} <code style="font-size:11px;">${this._esc(d.bucket || '')}</code>`)}
+                    </div>
+                </div>
+            </div>
+        </details>`;
     },
 
     async _loadDeviceSnapshot(id) {
@@ -1929,7 +1941,8 @@ Object.assign(JanitzaMonitor.prototype, {
                 const r = catBy[v.name] || {};
                 return { ...v, category: v.category || r.category, category_label: r.category_label };
             });
-            if (!vals.length) { box.innerHTML = `<span class="field-hint">${this.t('devices.overview.noValues', 'No values yet — the device may not be polling.')}</span>`; return; }
+            if (!vals.length) { box.innerHTML = this._stateBlock({ kind: 'nosample', live: true,
+                reason: this.t('devices.overview.noValues', 'No values yet — the device may not be polling.') }); return; }
             const bitmasks = (sel.display || {}).bitmasks || {};
             // a mask says what is set; a number goes through the one value
             // formatter the dashboard uses (unit scaling, separators, durations)
@@ -1944,9 +1957,11 @@ Object.assign(JanitzaMonitor.prototype, {
             const catOf = v => this._catName(v.category, v.category_label);
             const groups = new Map();
             vals.slice(0, 120).forEach(v => { const k = catOf(v); if (!groups.has(k)) groups.set(k, []); groups.get(k).push(v); });
-            const row = v => `<tr>
-                <td style="padding:2px 12px 2px 0;color:var(--text-secondary);">${this._esc(v.label || v.name || '')}${v.label && v.name && v.label !== v.name ? ` <span style="color:var(--text-tertiary,#9aa4af);font-size:11px;">${this._esc(v.name)}</span>` : ''}</td>
-                <td style="padding:2px 0;text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap;">${(f => `${f.text} <span style="color:var(--text-secondary);">${this._esc(f.unit)}</span>`)(fmt(v))}${manySources && v.source ? ` <span class="dev-chip" style="margin-left:6px;" title="${this.t('devices.valueSource', 'Source of this value')}">${this._esc(v.source)}</span>` : ''}</td></tr>`;
+            const row = v => { const primary = v.label || this._humanizeKey(v.name) || v.name || '';
+                const rawDiffers = v.name && primary !== v.name;
+                return `<tr>
+                <td style="padding:2px 12px 2px 0;color:var(--text-secondary);">${this._esc(primary)}${rawDiffers ? ` <span style="color:var(--text-tertiary,#9aa4af);font-size:11px;" title="${this.t('devices.rawKey', 'Raw register key')}">${this._esc(v.name)}</span>` : ''}</td>
+                <td style="padding:2px 0;text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap;">${(f => `${f.text} <span style="color:var(--text-secondary);">${this._esc(f.unit)}</span>`)(fmt(v))}${manySources && v.source ? ` <span class="dev-chip" style="margin-left:6px;" title="${this.t('devices.valueSource', 'Source of this value')}">${this._esc(v.source)}</span>` : ''}</td></tr>`; };
             box.innerHTML = [...groups.entries()].map(([cat, items]) => `
                 <div style="color:var(--text-secondary);font-size:11.5px;text-transform:uppercase;letter-spacing:.4px;margin:10px 0 2px;">${this._esc(cat)}</div>
                 <table style="width:100%;font-size:13px;">${items.map(row).join('')}</table>`).join('');
@@ -2016,13 +2031,6 @@ Object.assign(JanitzaMonitor.prototype, {
     _intOrNull(v) {
         const s = String(v ?? '').trim();
         return /^-?\d+$/.test(s) ? parseInt(s, 10) : null;
-    },
-
-    // the one Unit ID rule of every device form: a whole number 0–255
-    _unitIdError(v) {
-        return (v === null || v < 0 || v > 255)
-            ? this.t('devices.unitIdNeeded', 'Unit ID: a whole number 0–255 (most devices answer on 1).')
-            : null;
     },
 
     // Test on the Connection tab: the form's (the saved device when nothing
@@ -2121,13 +2129,6 @@ Object.assign(JanitzaMonitor.prototype, {
         this._initDeviceCommands(id);
     },
 
-    // sends an enabled, stopped device's settings again: the gateway starts
-    // its acquisition (update_device saves a stalled device even unchanged)
-    // (the stored device, never the form: ddvReconnect)
-    reconnectDevice() {
-        return this.ddvReconnect(this._devDetail?.id);
-    },
-
     // the PUT a device page sends: its name, template, enabled and outputs as
     // shown, and the connection as the connection form says it — only what
     // was changed ({} keeps it whole: the server's rule)
@@ -2177,6 +2178,32 @@ Object.assign(JanitzaMonitor.prototype, {
     // "Who drives it": one row per channel these commands control — the rule
     // in charge (its layer, mode, what it asks for), the others on it, and
     // the motor's state. Nothing when no channel is known.
+    // UX-08: a compact, honest ownership sentence that LEADS the commands tab, before
+    // the full "Who drives it" table — "Controlled by <rule(s)> · manual control
+    // available / blocked". Derived from the same channel data, never invented.
+    _cmdOwnershipLead(chans) {
+        if (!(chans || []).length) return '';
+        const t = (k, d, p) => this.t(k, d, p);
+        const leads = []; let safety = null;
+        chans.forEach(ch => {
+            const lead = ch.winner || ch.safety_holder || ch.owner;
+            if (ch.safety_holder) safety = ch.safety_holder;
+            if (lead && !leads.includes(lead)) leads.push(lead);
+        });
+        let icon, who, manual;
+        if (!leads.length) {
+            icon = 'bi-hand-index'; who = t('commands.own.manual', 'Manual control');
+            manual = t('commands.own.noRule', 'no rule drives this unit — commands come from here, the API or MQTT');
+        } else {
+            icon = safety ? 'bi-shield-lock' : 'bi-robot';
+            who = t('commands.own.by', 'Controlled by {who}', { who: leads.join(', ') });
+            manual = safety
+                ? t('commands.own.blocked', 'manual control blocked — safety rule {rule} holds it now', { rule: safety })
+                : t('commands.own.available', 'manual control available (use the overrides below)');
+        }
+        return `<p class="cmd-owner-lead"><i aria-hidden="true" class="bi ${icon}"></i> <b>${this._esc(who)}</b> · ${this._esc(manual)}</p>`;
+    },
+
     _channelsCardHtml(chans) {
         if (!(chans || []).length) return '';
         const t = (k, d, p) => this.t(k, d, p);

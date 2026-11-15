@@ -1198,9 +1198,9 @@ Object.assign(JanitzaMonitor.prototype, {
         });
         this._updateRegTabCounts();
         if (filtered.length === 0) {
-            container.innerHTML = `<div class="empty-state">${this.selectedRegisters.length === 0
-                ? t('registers.noneSelected', 'Nothing is read yet — tick measurements under "All available".')
-                : t('registers.noneMatch', 'No measurements match the current filter.')}</div>`;
+            container.innerHTML = this.selectedRegisters.length === 0
+                ? this._stateBlock({ kind: 'empty', live: true, reason: t('registers.noneSelected', 'Nothing is read yet — tick measurements under "All available".') })
+                : this._stateBlock({ kind: 'search', live: true, reason: t('registers.noneMatch', 'No measurements match the current filter.') });
             return;
         }
         // grouped by what they measure, in the catalog's order
@@ -1270,14 +1270,6 @@ Object.assign(JanitzaMonitor.prototype, {
             tbody.appendChild(tr);
         });
         this._startRegLive();
-    },
-
-    editRegisterByAddress(key) {                  // key: address in its table (_rk)
-        // dashboard context: the widget list is the DASH device's own — the
-        // shared modal must read/save that list, not the Measurements page's.
-        const reg = this._dashRegs().find(r => this._rk(r) === Number(key));
-        this._editFromDash = true;
-        if (reg) this.editRegister(reg);
     },
 
     editRegister(reg) {

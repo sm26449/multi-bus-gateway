@@ -515,6 +515,20 @@
 .save-feedback { font-size: 12.5px; }
 .save-feedback.ok { color: var(--success, #3fb950); }
 .save-feedback.err { color: var(--danger, #f85149); }
+/* saved to config but the running service was NOT updated (UX-01): a distinct
+   amber state between full success (green) and a save failure (red). */
+.save-feedback.warn { color: var(--warning, #d29922); }
+
+/* UX-08: the ownership sentence that leads the commands tab — a clear, compact
+   line above the full "Who drives it" table. */
+.cmd-owner-lead { margin: 0 0 10px; font-size: 13.5px; display: flex; align-items: baseline; gap: 6px;
+    padding: 8px 10px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--bg-tertiary); }
+.cmd-owner-lead .bi { color: var(--accent-text); }
+
+/* UX-05: the device overview's collapsed technical summary. */
+.ddv-tech > summary { cursor: pointer; color: var(--text-secondary); font-size: 12.5px; font-weight: 600;
+    padding: 6px 2px; list-style-position: inside; }
+.ddv-tech > summary:hover { color: var(--text-primary); }
 
 /* ── Devices (Tier 2) ──────────────────────────────────────────────────── */
 .devices-card { grid-column: 1 / -1; }
@@ -539,7 +553,10 @@
     font-size: 10.5px; font-weight: 600; border-radius: 10px; padding: 2px 8px;
     margin-left: 8px; vertical-align: middle; text-transform: uppercase; letter-spacing: .03em;
 }
-.sink-pill.ok   { color: var(--on-success, #08260f); background: var(--success, #22c55e); }
+/* A-LOW-8: the solid green pill gave ~4.0:1 (#08260f on #2f8f55, below 4.5:1).
+   Use the accessible badge pattern — a light translucent green ground with the
+   theme-aware strong text token — which clears 4.5:1 in both themes. */
+.sink-pill.ok   { color: var(--success-text); background: rgba(50, 215, 75, 0.2); }
 .sink-pill.warn { color: var(--on-warning, #2a1c00); background: var(--warning, #f59e0b); }
 .sink-pill.off  { color: var(--text-secondary, #8a94a0); background: var(--bg-tertiary, rgba(128,128,128,.14)); }
 .sink-pill.bad  { color: #fff; background: var(--danger, #d4635d); }
@@ -734,6 +751,9 @@
 .cs-src { font-weight: 600; color: var(--accent-text); }
 .cs-src:empty { display: none; }
 .cs-role-note, .cs-hint { margin: -2px 0 8px; }
+/* what each role means, under the role question */
+.cs-means { list-style: none; margin: -2px 0 8px; padding: 0; display: flex; flex-direction: column; gap: 2px; }
+.cs-means b { color: var(--text-primary); font-weight: 600; }
 .cs-busfacts { margin: 2px 0 8px; }
 .cs-warn { color: var(--warning-text, #b45309); }
 .cs-links { display: flex; gap: 6px; flex-wrap: wrap; margin: 2px 0 8px; }
@@ -894,6 +914,8 @@ body.role-viewer .tpl-update-viewer { display: inline; }
 
 /* ── bridges on the Devices page ─────────────────────────────────────────── */
 .bridge-card { border: 1px solid var(--border); border-radius: var(--radius-sm, 6px); margin-bottom: 10px; background: var(--bg-card, transparent); }
+/* a live part of a bridge card (UI-LIVE-1): a hook for the refresh, no box of its own */
+.bridge-live { display: contents; }
 .bridge-head { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; padding: 10px 12px; }
 .bridge-head > .bi { color: var(--accent); font-size: 16px; }
 .bridge-actions, .bridge-port-actions { margin-left: auto; display: inline-flex; gap: 4px; flex-wrap: wrap; }
@@ -909,8 +931,12 @@ body.role-viewer .tpl-update-viewer { display: inline; }
 .bus-meter.warn .bus-meter-fill { background: var(--warning, #f59e0b); }
 .bus-meter.bad .bus-meter-fill { background: var(--danger, #d4635d); }
 .bus-meter.bad .bus-meter-text { color: var(--danger, #d4635d); font-weight: 600; }
-.bridge-dev { display: flex; align-items: center; gap: 8px; padding: 3px 0 3px 22px; cursor: pointer; font-size: 13px; }
-.bridge-dev:hover { color: var(--accent); }
+.bridge-dev { display: flex; align-items: center; gap: 8px; padding: 3px 0 3px 22px; font-size: 13px; }
+/* A-MED-7: the open action is a dedicated button that fills the row; the ⋯ menu
+   is its sibling. Reset button chrome so it reads as the former row. */
+.bridge-dev-open { flex: 1; min-width: 0; display: flex; align-items: center; gap: 8px;
+    padding: 0; border: 0; background: none; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+.bridge-dev-open:hover { color: var(--accent); }
 .bridge-types { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 8px; margin-bottom: 12px; }
 .bridge-type { border: 1px solid var(--border); border-radius: var(--radius-sm, 6px); padding: 8px 10px; display: flex; flex-direction: column; gap: 4px; cursor: pointer; }
 .bridge-type.on { border-color: var(--accent); background: var(--accent-tint, rgba(18,163,178,.08)); }
@@ -1492,9 +1518,11 @@ th[aria-sort="ascending"] .find-sort, th[aria-sort="descending"] .find-sort { co
     .setup-dl { grid-template-columns: minmax(0, 1fr); gap: 0 0; }
     .setup-dl dd { margin-bottom: 8px; }
     .ddv-crumbs .ddv-crumb-far { display: none; }
-    /* name and actions share the first line, health the second */
-    .ddv-head h2 { flex: 1 1 0; min-width: 0; }
-    .ddv-head .header-actions { flex: 0 0 auto; margin-left: auto; gap: 6px; }
+    /* UX-06: the device name owns the whole first line (its identity must stay
+       visible on a phone); the actions wrap to their own row below instead of
+       competing with — and squeezing out — the name. */
+    .ddv-head h2 { flex: 1 1 100%; min-width: 0; }
+    .ddv-head .header-actions { flex: 1 1 100%; margin-left: 0; justify-content: flex-start; gap: 6px; }
     .ddv-head h2 .dev-chip { display: none; }
     .ddv-meta-id { display: inline-flex; }
     .dgroups { max-width: none; }
@@ -1532,6 +1560,7 @@ th[aria-sort="ascending"] .find-sort, th[aria-sort="descending"] .find-sort { co
     margin: 0 0 8px; font-size: 13px; }
 .br-diag-dl dt { color: var(--text-secondary); }
 .br-diag-dl dd { margin: 0; overflow-wrap: anywhere; }
+.br-junk-hex { font-size: 12px; overflow-wrap: anywhere; word-break: break-all; }
 .br-diag-events { list-style: none; padding: 0; margin: 0; font-size: 13px; }
 .br-diag-events li { padding: 4px 0; border-bottom: 1px solid var(--border); overflow-wrap: anywhere; }
 .br-diag-events time { color: var(--text-secondary); margin-right: 6px; }
@@ -1817,3 +1846,10 @@ th[aria-sort="ascending"] .find-sort, th[aria-sort="descending"] .find-sort { co
 }
 .ad-tpl-acts { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; margin: 8px 0 0; }
 .ad-tpl-acts .field-hint { margin: 0 0 0 6px; }
+
+/* Virtual BMS is experimental until validated on hardware */
+.badge-exp { display: inline-block; font-size: 10px; font-weight: 600; letter-spacing: .02em;
+    text-transform: uppercase; padding: 1px 6px; border-radius: 999px; vertical-align: middle;
+    color: var(--warning); border: 1px solid currentColor; line-height: 1.5; }
+.vbms-exp-note { margin: 6px 0 0; padding: 6px 10px; border-left: 3px solid var(--warning);
+    background: var(--bg-hover); color: var(--text-secondary); font-size: 12.5px; border-radius: 4px; }

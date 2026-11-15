@@ -16,6 +16,7 @@
 import { chromium } from 'playwright';
 import { openDeviceTab, saveDeviceEditor } from './lib/device-page.mjs';
 import { watchDialogs } from './lib/dialogs.mjs';
+import { openPage } from './lib/nav.mjs';
 const BASE = process.env.MBG_URL || 'http://127.0.0.1:18090';
 const results = [];
 const check = (name, cond, extra = '') => { results.push({ name, ok: !!cond }); console.log(`${cond ? 'PASS' : 'FAIL'} ${name}${extra ? ' — ' + JSON.stringify(extra) : ''}`); };
@@ -30,7 +31,7 @@ const sink = async id => (await (await ctx.request.get(BASE + '/api/devices')).j
 async function openOutputs(id) {
   await page.goto(BASE + '/'); await page.waitForLoadState('networkidle');
   const later = page.locator('button:has-text("Later")'); if (await later.count()) await later.first().click().catch(() => {});
-  await page.click('[data-page="devices"]'); await page.waitForTimeout(1200);
+  await openPage(page, 'devices'); await page.waitForTimeout(1200);
   await page.locator(`button[data-action="openDeviceDetail"][data-args*='"${id}"']`).first().click();
   await page.waitForTimeout(1800);
   await openDeviceTab(page, 'outputs');

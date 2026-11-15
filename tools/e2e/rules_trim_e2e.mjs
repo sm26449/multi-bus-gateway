@@ -12,6 +12,7 @@
  */
 import { chromium } from 'playwright';
 import { watchDialogs } from './lib/dialogs.mjs';
+import { openPage } from './lib/nav.mjs';
 const BASE = process.env.MBG_URL || 'http://127.0.0.1:18090';
 const results = [];
 const check = (name, cond, extra = '') => { results.push({ name, ok: !!cond }); console.log(`${cond ? 'PASS' : 'FAIL'} ${name}${extra ? ' — ' + extra : ''}`); };
@@ -23,7 +24,7 @@ const errs = []; page.on('console', m => { if (m.type() === 'error' && !/40[39]|
 try {
   await page.goto(BASE + '/'); await page.waitForLoadState('networkidle');
   const later = page.locator('button:has-text("Later")'); if (await later.count()) await later.first().click().catch(() => {});
-  await page.click('[data-page="rules"]'); await page.waitForTimeout(800);
+  await openPage(page, 'rules'); await page.waitForTimeout(800);
   const content = page.locator('#rulesContent');
   await page.click('#rulesAddBtn'); await page.waitForTimeout(800);
   const m = page.locator('#ruleModal');
@@ -65,7 +66,7 @@ try {
   // the Romanian page
   await page.evaluate(() => { try { localStorage.setItem('mbg-lang', 'ro'); } catch (e) {} });
   await page.reload(); await page.waitForLoadState('networkidle');
-  await page.click('[data-page="rules"]'); await page.waitForTimeout(800);
+  await openPage(page, 'rules'); await page.waitForTimeout(800);
   await page.click('#rulesAddBtn'); await page.waitForTimeout(800);
   await m.locator('#rlKind').selectOption('trim'); await page.waitForTimeout(200);
   const ro = await m.innerText();

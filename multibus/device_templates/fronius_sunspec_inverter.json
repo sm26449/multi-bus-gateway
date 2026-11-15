@@ -11,8 +11,7 @@
     "source_document": "SunSpec Information Models (int+SF); register map verified live against a production Fronius fleet (raw-frame decode parity, 2026-09-11)",
     "protocol": {
       "sunspec": true,
-      "byte_order": "big",
-      "default_register_type": "holding"
+      "byte_order": "big"
     },
     "poll_groups": {
       "normal": {

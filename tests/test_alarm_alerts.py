@@ -31,7 +31,10 @@ def test_an_error_code_fires_once_again_on_a_new_code_and_clears():
     t.update("hp", "Heat pump", DECL, [])
     sev = [(a[0], a[3]) for a, _k in fired]
     assert sev == [("error", "ERR: 101"), ("error", "ERR: 201"), ("info", "ERR: cleared")]
-    assert all(k == {"transition": True} for _a, k in fired)
+    assert all(k.get("transition") is True for _a, k in fired)
+    # structured context for alertd (ADR-0043 C): device_id + field on every fire
+    assert all(k["context"]["device_id"] == "hp" and k["context"]["field"] == "err" for _a, k in fired)
+    assert fired[0][1]["context"]["code"] == 101        # active fire carries the code
     assert fired[0][0][1] == "alarm:hp:err" and fired[0][0][2] == "Heat pump"
 
 

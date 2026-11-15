@@ -250,7 +250,7 @@ def test_sv2_13_nothing_reachable_from_the_listener_can_transmit():
     """Every function the listener can reach in the module (by name, by
     self./cl. method, by constructor), walked transitively; and no dynamic
     getattr dispatch on that path."""
-    tree = ast.parse((ROOT / "multibus" / "seplos_v2.py").read_text())
+    tree = ast.parse((ROOT / "multibus" / "vendors" / "seplos_v2.py").read_text())
     funcs, classes = {}, {}
     for n in tree.body:
         if isinstance(n, ast.FunctionDef):

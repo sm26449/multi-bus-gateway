@@ -80,7 +80,7 @@ These map 1:1 onto `config.yaml` keys and override them at each boot.
 | `UI_PORT` | `ui.port` | |
 | `UI_HOST` | `ui.host` | container image sets `0.0.0.0`; bare-metal default is loopback |
 
-Active overrides are reported by `GET /api/config` (`env_overrides`), with
+Active overrides are reported by `GET /api/config/env-overrides`, with
 secret values masked.
 
 ### Process-only variables (never stored in config.yaml)
@@ -194,6 +194,9 @@ its interval — the two numbers an interval is chosen from.
 | `tls_enabled` | `false` (opt-in) | broker TLS (8883) |
 | `tls_ca_cert` / `tls_client_cert` / `tls_client_key` | `""` | container-local paths; client pair adds mutual TLS |
 | `tls_insecure` | `false` | skip hostname/cert checks (test only) |
+| `min_interval_s` | `0` (off) | rate limit per device/calculated **value** topic: a changed value is published at most every N seconds; one held back is sent once the interval has passed (the latest wins, the last one is never lost). Applies only to the poll groups in `throttle_poll_groups`. In-process readers (virtual meters, rules) are not affected |
+| `deadband_pct` | `0` (off) | a numeric change smaller than this % of the last **published** value is not published; the heartbeat (`heartbeat_interval`) still republishes it |
+| `throttle_poll_groups` | `[]` (every group) | the poll groups `min_interval_s` and `deadband_pct` apply to, e.g. `[realtime]`. Both off = exactly the unthrottled behaviour |
 
 ### `influxdb:`
 
@@ -237,6 +240,7 @@ its interval — the two numbers an interval is chosen from.
 | Key | Default | Notes |
 |-----|---------|-------|
 | `allowlist` | `[]` (open) | IPs/CIDRs allowed to reach the HTTP API/UI. Loopback and the docker gateway are always allowed. An entry that does not parse **denies every client** until it is fixed (3.83.0) — the API refuses such an entry, so this only happens to a hand-edited file. |
+| `metrics_allowlist` | `[]` (loopback only) | IPs/CIDRs allowed to scrape `GET /metrics` (Prometheus). Opens `/metrics` **only** — not the API/UI — so a scraper can be admitted without setting `allowlist`. Loopback is always admitted; with `allowlist` set, the peers it admits may scrape too. Same parsing as `allowlist` (an entry that does not parse admits nobody through this list). Client IP = the socket peer, or the `X-Forwarded-For` client when the hop is in `ui.trusted_proxies`. |
 | `allow_nonlan_http_devices` | `false` (opt-in) | SSRF guard: HTTP/JSON device URLs must point at a private LAN host unless this is true |
 | `allow_writes` | `false` (opt-in) | master **arming** switch for Modbus writes (FC5/6/15/16). When armed, any device that is not `write_locked` can be written — declared registers with their template encoding + whatever guards were declared; undeclared registers via the raw path (`unguarded: true` in the payload). Every write is authenticated, rate-limited and audited. |
 | `primary_write_locked` | `true` | per-device write LOCK for the primary. Read-only used to be hardcoded; it is now this flag, defaulting to locked so the historical behavior survives upgrades. Unlock deliberately. Non-primary devices carry `write_locked` in their `devices[]`/`endpoints:` entry. A device, installation or adopted device made from the UI or the API is stored locked (`write_locked: true`), and a restored one comes back locked with its command bindings off; an entry written by hand without the key stays unlocked, as before. Switch it from the device's ⋯ menu: **Unlock writes…** (it asks first) / **Lock writes**. |
@@ -341,6 +345,15 @@ pq_recorder:
                            # decouples forensically-precious PQ data from the
                            # telemetry bucket's retention. Default: the
                            # device's normal bucket.
+  # Waveform archive pacing (PQ-STALL-1). Each trace request makes the meter
+  # rebuild it from recording memory, work its Modbus TCP server shares — so
+  # the archive runs one request at a time, off the event poll, and holds off
+  # while this device's realtime poll lags.
+  archive_settle_s: 60          # wait after an event is seen before the first request
+  archive_gap_s: 5              # pause between two archive requests
+  archive_defer_stale_s: 5      # hold off while the realtime poll is older than this...
+  archive_defer_latency_ms: 2000  # ...or its last read took longer than this (0 = off)
+  archive_max_defer_s: 600      # then proceed anyway: the meter keeps only its newest window
 ```
 
 See [pq-recorder.md](pq-recorder.md) for the endpoints, the data model and
@@ -716,10 +729,83 @@ file, and its devices fall back to their derived kind.
 | `signals.latency` | `true` | |
 | `signals.buffer` | `true` | |
 | `signals.threshold` | `false` (opt-in) | value alerts from the dashboard's per-register thresholds |
+| `signals.alarm` | `true` | the alarm fields a device's template declares |
+| `signals.bridge` | `false` (opt-in) | serial bus health on our serial bridges; limits in `bridge.line_errors_per_min` (10), `bridge.silent_s` (120), `bridge.reconnects_per_10min` (6) — see [alerts-webhooks.md](alerts-webhooks.md) |
+| `signals.vmeter` | `true` | virtual-meter alerts (below); fired once when a condition has lasted its limit, cleared once when it ends; key `vmeter:<id>:<condition>`, Klopot event type `mbg_vmeter` |
+| `vmeter.not_serving_s` | `30` | a virtual meter gives its consumers no live answer (server stopped after the hold, or only exceptions/sentinels left) for this long. `0` = off |
+| `vmeter.held_s` | `20` | a virtual meter serves at least one row from hold (`on_stale: hold`, or a pinned counter) for this long. `0` = off |
+| `vmeter.consumer_idle_s` | `120` | a virtual meter that has been polled got no request for this long (its consumer lost it). Not judged while the meter is not serving, nor before its first request. `0` = off |
+| per meter: `alerts:` on an instance in `virtual_meters.yaml` | — | the same three keys for that meter alone, over `alerts.vmeter` — e.g. `alerts: {consumer_idle_s: 0}` for a consumer that is switched off at night. Invalid keys are ignored. Read when the meter starts |
 | `threshold_deadband_pct` | `2.0` | hysteresis around a threshold before re-alerting |
 | `threshold_alert_on_start` | `true` | evaluate thresholds immediately at startup |
+| `alertd.enabled` | `false` | send **event** alerts to [Klopot](https://klopot.dev), the notification service that delivers them on SMS, Telegram, e-mail and other channels. `alertd` is the Klopot integration; the key keeps its older name for compatibility. Needs `enabled: true` above |
+| `alertd.url` | `""` | Klopot's fire endpoint, e.g. `http://klopot:5090/v1/fire`; must be `http(s)://`; redirects are refused |
+| `alertd.api_key` | `""` | sent as `X-API-Key`; masked in the UI and the API |
+| `alertd.source` | `multi-bus-gateway` | the `source` of every event; also used in the config pack (`GET /api/alerts/alertd-pack`) |
+| `alertd.timeout_s` | `8` | seconds per post (no retry: Klopot owns delivery once it accepted the event). File only: a save from Settings → Alerts rewrites the block without it |
 
-See [alerts-webhooks.md](alerts-webhooks.md) for payloads and examples.
+See [alerts-webhooks.md](alerts-webhooks.md) for payloads, the event types sent to Klopot and examples.
+
+### `virtual_bms:` — Virtual BMS instances (experimental)
+
+> **Experimental** — not yet validated on hardware; do not arm one on an
+> inverter in service. Normally created from **Assets → Virtual BMS**; the
+> same checks apply to a hand edit, an import and a restore (an instance
+> that fails them is not built). `armed` is never read from the file: every
+> instance starts disarmed. Guide: [MANUAL.md §11e](MANUAL.md#11e-virtual-bms--experimental).
+
+```yaml
+virtual_bms:
+  - id: bank1                       # slug; not a device id
+    name: Battery bank
+    profile: pylontech_can_inverter # an emulation (CAN) template
+    channel: can0                   # the CAN port it transmits on
+    packs: [pack1, pack2, pack3]    # battery devices, each once
+    bounds:                         # the envelope an EMS may command within
+      charge_current_limit: [0, 80]
+      discharge_current_limit: [0, 180]
+    floor:                          # sent when no fresh command
+      charge_current_limit: 0
+      discharge_current_limit: 0
+      charge_voltage_limit: 57.6
+      discharge_voltage_limit: 46.4
+      charge_enable: 0
+      discharge_enable: 0
+    inverter: deye                  # optional: the device it feeds (preview cross-check)
+    fields: { send_optional: true }
+    min_packs: 2
+    fallback: { hold_s: 5 }
+    recovery: { return_after_s: 60, flap_drops: 3, flap_window_s: 600, slew_a_per_s: 2 }
+    pack_limits: { charge_current_limit: 50, discharge_current_limit: 100, share_factor: 0.9 }
+```
+
+| Key | Default | Notes |
+|---|---|---|
+| `id` | required | `^[a-z0-9][a-z0-9-]{0,62}$`, unique, not a device's id, not one of its own packs |
+| `name` | — | text |
+| `profile` | required | a template with CAN rows (`GET /api/vbms/profiles`); its `protocol.bitrate` must match the port's |
+| `channel` | `can0` | one Virtual BMS per port; no pack may read this bus; no other device on it may read the profile's frame ids |
+| `packs` | required (≥ 1) | device ids of kind `battery` that are not bank aggregates |
+| `bounds` | — | `{field: [lo, hi]}` for the control fields `charge_current_limit`, `discharge_current_limit`, `charge_voltage_limit`, `discharge_voltage_limit`, `charge_enable`, `discharge_enable`: finite, `0 ≤ lo ≤ hi`, an enable 0 or 1. A field without bounds cannot be commanded |
+| `floor` | — | `{field: value}`, the value sent with no fresh command: finite, ≥ 0, inside its bounds, an enable 0 or 1 (clamped to the bounds like a command) |
+| `command_max_age_s` | `60` | 1–3600 s; an older EMS command falls back to the floor |
+| `period_s` | `1.0` | 0.05–60 s between frame sets |
+| `min_packs` | all but one (`max(1, N−1)`) | 1–N; with fewer admitted packs: limits and enables 0 for `fallback.hold_s`, then silence |
+| `fallback.hold_s` | `5` | 0–60 s |
+| `recovery.return_after_s` | `60` | 5–3600 s a dropped pack must stay eligible without a break before it counts again |
+| `recovery.flap_drops` | `3` | 1–20 drops … |
+| `recovery.flap_window_s` | `600` | 60–86400 s … within this window hold the pack out until `POST /api/vbms/{id}/packs/{pack}/clear` |
+| `recovery.slew_a_per_s` | `2` | 0.1–100 A/s: the current limits rise from 0 at this rate after a start, a re-arm or a data failure; a decrease is immediate |
+| `pack_limits.charge_current_limit` / `.discharge_current_limit` | — | 0–10000 A, one pack's capability; caps the bank at `min(n × min Lᵢ × share_factor, Σ Lᵢ)` over the admitted packs. Without it (and without per-pack `ccl`/`dcl` readings) the bank limit is scaled by admitted / configured packs |
+| `pack_limits.share_factor` | `0.9` | 0.5–1.0 |
+| `field_map` | the Seplos map (`soc`, `soh`, `pack_voltage`→`voltage`, `battery_current`→`current`, `max_cell_voltage`/`min_cell_voltage`, `temp_max`/`temp_min`, `total_capacity`→`capacity_total`) | `{pack field: bank field}`; replaces the default whole. Map a pack's own limit fields to `ccl` / `dcl` to use them per pack |
+| `fields.send_optional` | `true` | `false` sends only the frames the inverter needs (limits, SOC, V/I/T, enables) |
+| `manufacturer` | `SHEnergy` | the name sent in the manufacturer frame |
+| `inverter` | — | a device id; the preview compares SOC and voltage sent with what it reports |
+
+A `null` inside `recovery` or `pack_limits`, an unknown key in them, or a
+value out of range is refused. Flap drops and held packs are kept in
+`vbms_admission.json` beside `config.yaml`.
 
 ### `esphome:` (removed)
 

@@ -423,7 +423,7 @@ def test_a_template_http_path_is_checked():
 # ── the read preview's budget, written out (its own `preview:` section) ────
 
 def test_a_file_without_the_preview_budget_gets_it_written_once(tmp_path, caplog):
-    caplog.set_level(logging.INFO, logger="multibus.config")
+    caplog.set_level(logging.INFO, logger="multibus.core.config")
     cfg = write_config(tmp_path)
     modbus_before = yaml.safe_load((tmp_path / "config.yaml").read_text()).get('modbus')
     assert (cfg.preview_max_requests, cfg.preview_listen_s) == (4, 10)

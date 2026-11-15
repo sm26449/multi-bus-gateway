@@ -4,6 +4,7 @@
  */
 import { chromium } from 'playwright';
 import { openDeviceTab, openDeviceEditor } from './lib/device-page.mjs';
+import { openPage } from './lib/nav.mjs';
 
 const BASE = process.env.MBG_URL || 'http://localhost:8080';
 const USER = process.env.MBG_USER || 'admin';
@@ -46,7 +47,7 @@ try {
 
   // ---- 2. devices list + gating -----------------------------------------
   await dismissOnboarding();
-  await page.click('.nav-tab[data-page="devices"]');
+  await openPage(page, 'devices');
   await page.waitForTimeout(1500);
   await page.screenshot({ path: SHOT('02-devices') });
 

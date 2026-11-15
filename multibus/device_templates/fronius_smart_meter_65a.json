@@ -11,8 +11,7 @@
     "kind": "meter",
     "source_document": "Field-verified against a physical Fronius Smart Meter 65A-3 over Modbus RTU (2026-08-11): |P|<=S per phase, S^2~=P^2+Q^2, PF=P/S, Freq=50Hz.",
     "protocol": {
-      "byte_order": "little",
-      "default_register_type": "holding"
+      "byte_order": "little"
     },
     "poll_groups": {
       "realtime": {

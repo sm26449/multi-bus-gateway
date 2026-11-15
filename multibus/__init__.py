@@ -16,19 +16,13 @@
 #
 """Multi-Bus Gateway package."""
 
-__version__ = "3.98.2"
+__version__ = "3.101.0-rc1"
 __author__ = "sm26449"
 
-from .config import Config
-from .modbus_client import ModbusClient
-from .mqtt_publisher import MQTTPublisher
-from .influxdb_publisher import InfluxDBPublisher
-from .register_parser import RegisterParser
-
-__all__ = [
-    "Config",
-    "ModbusClient",
-    "MQTTPublisher",
-    "InfluxDBPublisher",
-    "RegisterParser",
-]
+# No eager re-exports. Importing ``multibus`` (or any ``multibus.x``) must not
+# drag in pymodbus / paho / influxdb_client, and ``from multibus import Config``
+# etc. were used nowhere (grep: 0). Removing them breaks the only top-level
+# import cycle.
+# Import from the defining module instead: ``from multibus.core.config import Config``.
+# ``__version__`` stays a plain literal — tools/demo/demo_up.sh seds this line
+# and docs/releasing.md reads it with ``import multibus``.

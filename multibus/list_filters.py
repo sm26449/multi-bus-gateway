@@ -13,8 +13,8 @@ from __future__ import annotations
 
 from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
-from .config import CAN_PROTOCOLS, MODBUS_PROTOCOLS, VIRTUAL_MAP_FAMILY, VIRTUAL_MAP_PROTOCOLS
-from .device_kind import KINDS, normalize
+from .core.config import CAN_PROTOCOLS, MODBUS_PROTOCOLS, VIRTUAL_MAP_FAMILY, VIRTUAL_MAP_PROTOCOLS
+from .catalog.device_kind import KINDS, normalize
 
 DEVICE_STATES = ('online', 'offline', 'disabled')
 DEVICE_SORTS = ('name', 'id', 'kind', 'state', 'protocol')
@@ -66,7 +66,7 @@ def _kinds(raw: Optional[str], errors: Dict[str, str]) -> List[str]:
 def _types(raw: Optional[str], errors: Dict[str, str]) -> List[str]:
     """A device-type list (ADR-0027): built-ins (aliases read as their kind)
     and the user types held now."""
-    from .device_types import is_user_type, type_ids
+    from .catalog.device_types import is_user_type, type_ids
     got = _list('type', raw, errors)
     out = [v if is_user_type(v) else (normalize(v) or v) for v in got]
     _check('type', out, type_ids(), errors)
@@ -133,7 +133,7 @@ def device_search_text(dev, entry: Dict, templates=None, *, redact: bool = False
     """What ``q`` looks through for a device: its names and ids, every
     template it reads with (and their vendor, model and name), every address
     it is read from, its installation and its kind."""
-    from .redact import redact_url
+    from .core.redact import redact_url
     parts: List[Any] = [entry.get('id'), entry.get('name'), entry.get('endpoint_id'),
                         entry.get('component_of'), entry.get('kind'), entry.get('type'),
                         entry.get('type_label'), *(entry.get('labels') or []), entry.get('host'),
@@ -231,7 +231,7 @@ def filter_templates(rows: List[Tuple[Dict, str]], *, q: Optional[str] = None,
     """``rows`` = [(summary, device kind)] in library order. ``type``: the
     templates for a device type — its built-in kind's, and the ones that
     list it (ADR-0027)."""
-    from .device_types import template_matches
+    from .catalog.device_types import template_matches
     errors: Dict[str, str] = {}
     kinds = _kinds(kind, errors)
     types = _types(type, errors)

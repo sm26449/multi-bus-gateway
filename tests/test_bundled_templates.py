@@ -179,11 +179,13 @@ def test_boot_and_runtime_build_devices_the_same_way():
     order through the single TemplateRegistry.byte_order_for."""
     import inspect
     import main as _main
-    import multibus.api as _api
     from multibus import device_runtime
+    from multibus.api.read_model import DeviceReadModel
 
     assert "build_device_client" in inspect.getsource(_main.GatewayApp.setup)
-    assert "build_device_client" in inspect.getsource(_api.create_api)
+    # runtime device-start now lives in DeviceReadModel._start_device_client
+    # (extracted from create_api in the P0.8b squeeze); same builder, same path.
+    assert "build_device_client" in inspect.getsource(DeviceReadModel)
     # and the one builder resolves the order through the one resolver
     assert "byte_order_for(" in inspect.getsource(device_runtime.driver_for)
 

@@ -130,3 +130,36 @@ def test_behind_a_load_balancer_the_standby_takes_the_partners_opc_ua_certificat
     assert r.status_code == 200 and r.json()['status'] == 'applied'
     assert (b_dir / 'opcua' / 'server_cert.der').read_bytes() == b'\x30A-cert'
     assert oct((b_dir / 'opcua' / 'server_key.pem').stat().st_mode)[-3:] == '600'
+
+
+def test_the_id_namespace_is_judged_on_the_merged_partner_configuration(tmp_path, monkeypatch):
+    """R2D-NAMESPACE-1 review L4: the partner's config alone has a Virtual BMS under a device id;
+    the standby keeps its own `virtual_bms` (none), so the merge holds no collision — taken. The
+    same bundle without that key kept is refused."""
+    from multibus.routes import role_routes
+    from tests.test_operator_role import _build_clients
+    a_dir, b_dir = tmp_path / 'a', tmp_path / 'b'
+    a_dir.mkdir()
+    b_dir.mkdir()
+    a, b = _build_clients(a_dir), _build_clients(b_dir)
+    monkeypatch.setattr(role_routes.threading, 'Timer', lambda s, fn: type('T', (), {'start': lambda self: None})())
+    tok = {}
+    for name, c in (('a', a), ('b', b)):
+        tok[name] = {"Authorization": f"Bearer {c.admin.post('/api/auth/service-tokens', json={'name': 'mbg-ha', 'role': 'ha'}).json()['token']}"}
+    sa, sb = TestClient(a.app, raise_server_exceptions=False), TestClient(b.app, raise_server_exceptions=False)
+    theirs = yaml.safe_load((a_dir / 'config.yaml').read_text())
+    theirs['devices'] = list(theirs.get('devices') or []) + [
+        {'id': 'bank', 'enabled': False, 'connection': {'protocol': 'tcp', 'host': '192.0.2.5'}}]
+    theirs['virtual_bms'] = [{'id': 'bank', 'profile': 'pylontech_can_inverter', 'packs': ['x']}]
+    (a_dir / 'config.yaml').write_text(yaml.safe_dump(theirs))
+    got = sa.get('/api/state/config', headers=tok['a']).json()
+    sb.put('/api/role', json={'role': 'standby', 'epoch': 1}, headers=tok['b'])
+    own = yaml.safe_load((b_dir / 'config.yaml').read_text())
+    own['virtual_bms'] = []
+    (b_dir / 'config.yaml').write_text(yaml.safe_dump(own))
+    body = {'bundle': got['bundle'], 'hash': got['hash'], 'from': 'A'}
+    r = sb.post('/api/state/config', json=body, headers=tok['b'])
+    assert r.status_code == 422 and 'Virtual BMS' in r.text, r.text            # theirs as it is
+    r = sb.post('/api/state/config', json=dict(body, keep_local=['virtual_bms']), headers=tok['b'])
+    assert r.status_code == 200, r.text
+    assert yaml.safe_load((b_dir / 'config.yaml').read_text()).get('virtual_bms') == []

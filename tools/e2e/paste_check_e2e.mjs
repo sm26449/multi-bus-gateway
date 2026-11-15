@@ -7,6 +7,7 @@
 //
 //   CHROMIUM_PATH=… MBG_URL=http://127.0.0.1:8099 node paste_check_e2e.mjs
 import { chromium } from 'playwright';
+import { openPage } from './lib/nav.mjs';
 
 const BASE = process.env.MBG_URL || 'http://127.0.0.1:8099';
 const TPL = 'e2e_paste';
@@ -42,7 +43,7 @@ try {
   await page.waitForLoadState('load');
   const later = page.locator('button:has-text("Later")');
   if (await later.count()) await later.first().click().catch(() => {});
-  await page.click('[data-page="templates"]');
+  await openPage(page, 'templates');
   await page.click(`[data-tm-edit="${TPL}"]`);
   await page.waitForSelector('#devTplModal.active');
   const cell = page.locator('#devTplBody tr[data-idx="0"] input[data-f="topic"]');

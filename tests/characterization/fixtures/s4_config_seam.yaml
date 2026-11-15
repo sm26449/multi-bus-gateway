@@ -1,0 +1,285 @@
+# Multi-Bus Gateway — example configuration
+# Copy to config/config.yaml (or let the first run generate one — a fresh
+# boot with NO config.yaml enables login with a generated admin password,
+# printed once to the log). Every key below can also be set from the UI
+# (Config → Settings); the file is rewritten on each save.
+#
+# A fresh install starts with NO device: add yours from the UI (Devices →
+# Add Device, or Discover devices). Devices live in the `devices:` list.
+
+# The legacy primary device ("device #1", id umg512 — a Janitza UMG 512-PRO
+# read over the `modbus:` section below). Older installs have it; a fresh one
+# does not. true = the `modbus:` section describes that meter and it is read
+# and published (topics under mqtt.topic_prefix, Influx tag janitza_umg512).
+# A file without this key is an older install: it has device #1 exactly when
+# it holds a `modbus:` section, and the next save writes the key out.
+primary_device: false
+
+modbus:
+  # The legacy primary device's connection (used only with primary_device:
+  # true). Every other device carries its own `connection:` block.
+  host: 192.168.1.100
+  # Modbus TCP port (default 502)
+  port: 502
+  # Modbus unit/slave ID
+  unit_id: 1
+  # Connection timeout in seconds
+  timeout: 3
+  # Retry attempts on failure
+  retry_attempts: 3
+  # Delay between retries in seconds
+  retry_delay: 1
+  # No successful read within this many seconds => acquisition reported "stale"
+  # in /health and /api/status (does NOT fail the container healthcheck).
+  stale_after_s: 30
+  # Addresses this slave rejects with ILLEGAL DATA ADDRESS (exception 02). The
+  # batch reader never bridges a merged read across one of these (and skips a
+  # selected register sitting on one), so a single unmapped hole INSIDE a
+  # contiguous run can't poison the whole block. Decimal or 0x… — e.g.
+  #   illegal_registers: [0x0032, 214]
+  # (A per-device override goes under that device's `connection:` block.)
+  illegal_registers: []
+  # Data-readiness gate. A sleepy device (an inverter at night) can answer a read
+  # with an ALL-ZERO frame instead of an error; published as-is it reads as real
+  # 0 V / 0 W. With this on, a poll group whose numeric values are ALL exactly
+  # zero (>=2 of them) is dropped — the cache keeps the last-good values until the
+  # device wakes. Off by default (a legitimately all-zero group would be
+  # withheld); enable only for devices that sleep.
+  drop_all_zero: false
+
+# The read preview's budget (Add device → Check, the device page's Preview):
+# at most this many reads per preview (1..20), and this many seconds of
+# listening on a bus another master polls (1..60). Settings → Modbus.
+preview:
+  max_requests: 4
+  listen_s: 10
+
+polling:
+  # (per-group intervals live in selected_registers.json / the UI; there is
+  # no global default interval)
+  # Startup jitter (seconds, 0 = off). Each poll group waits a random delay in
+  # [0, min(interval, this)] before its FIRST read, so several devices/groups
+  # don't fire in lock-step and hammer a shared transport (e.g. the RTU-over-TCP
+  # serial bridge) at boot. Capped at the interval, so it never delays a group
+  # by more than one of its own cycles. A per-device modbus.startup_jitter_s
+  # overrides this for that device.
+  startup_jitter_s: 0
+  # Poll groups with different intervals
+  groups:
+    realtime:
+      interval: 1
+      description: "Real-time values (voltage, current, power)"
+    normal:
+      interval: 5
+      description: "Standard measurements"
+    slow:
+      interval: 60
+      description: "Energy counters, statistics"
+
+mqtt:
+  # Enable MQTT publishing
+  enabled: true
+  # MQTT broker address
+  broker: "mosquitto"
+  # MQTT broker port
+  port: 1883
+  # Authentication (leave empty if not required)
+  username: ""
+  password: ""
+  # The gateway's own topic root: <prefix>/status, <prefix>/site/meta, the
+  # virtual meters' state — and the legacy primary device's values, when there
+  # is one (older installs: "multibus/umg512"). Devices publish under
+  # default_topic_pattern (mbg/devices/<id>).
+  topic_prefix: "mbg/gateway"
+  # Retain messages
+  retain: true
+  # QoS level (0, 1, or 2)
+  qos: 0
+  # Publish mode: "changed" (only changed values) or "all" (all values every poll)
+  publish_mode: "changed"
+  # In "changed" mode, republish an UNCHANGED value after this many seconds so it
+  # keeps a fresh timestamp and HA doesn't grey the entity out (0 = off)
+  heartbeat_interval: 0
+  # Expose WRITABLE registers as Home Assistant number/select entities and act on
+  # their commands (perform the Modbus write). OFF by default — this turns
+  # broker-publish access into hardware-write access. DOUBLE-gated: a command is
+  # executed only when this AND security.allow_writes are true, the register is
+  # declared writable in its template, and the value is within write_min/max.
+  # Only non-primary devices (the primary is always read-only) get controls.
+  allow_write_entities: false
+  # Enable Home Assistant MQTT autodiscovery
+  ha_discovery:
+    enabled: true
+    prefix: "homeassistant"
+    # the legacy primary device's name in Home Assistant (only with
+    # primary_device: true; older installs: "Janitza UMG 512-PRO")
+    device_name: ""
+
+influxdb:
+  # Enable InfluxDB publishing
+  enabled: false
+  # InfluxDB server URL
+  url: "http://influxdb:8086"
+  # API token
+  token: ""
+  # Organization
+  org: "multibus"
+  # Bucket name
+  bucket: "multibus"
+  # Minimum write interval per measurement (seconds)
+  write_interval: 5
+  # Publish mode: "changed" (only changed values) or "all" (all values every poll)
+  publish_mode: "changed"
+  # In "changed" mode, rewrite an UNCHANGED value once it has not been written
+  # for this many seconds, so charts and "last value" panels always have a
+  # recent point (ADR-0029). Shorter = more points, longer = emptier panels.
+  # Whole seconds 0..86400; 0 = off. write_interval stays the minimum gap.
+  heartbeat_interval: 600
+  # Store-and-forward buffer: points produced while InfluxDB is unreachable are
+  # kept in RAM and replayed with their original timestamps on reconnect
+  # (idempotent - InfluxDB dedupes on measurement+tags+timestamp).
+  buffer_minutes: 120
+  buffer_max_points: 200000
+
+ui:
+  # Web UI host
+  # Bare-metal default is loopback; the container image overrides with
+  # UI_HOST=0.0.0.0 (exposure is then governed by the compose port mapping).
+  host: "127.0.0.1"
+  # Web UI port
+  port: 8080
+  # Enable authentication (optional). Set a username and a strong password before
+  # setting enabled: true — the gateway refuses to enable auth while the password
+  # is empty or default.
+  auth:
+    enabled: false
+    username: "admin"
+    password: ""          # CHANGE ME — required before enabling auth
+
+# Alerting hooks (optional, off by default). When enabled, notable Status-page
+# conditions are delivered over the channels below so alertd / Home Assistant /
+# Node-RED / a webhook notifier can act on them. Each alert is rate-limited per
+# key (min_interval_s) so a flapping signal cannot spam. Applies on restart.
+alerts:
+  enabled: false
+  # Publish a JSON alert to <mqtt.topic_prefix>/alert on the same broker.
+  mqtt: true
+  # Optional: also POST the JSON alert to this URL (SMS gateway, ntfy, Telegram
+  # bridge, alertd HTTP ingest). Leave empty to disable the webhook channel.
+  webhook_url: ""
+  # Optional extra HTTP headers on the webhook POST — e.g. an API key or bearer
+  # token the receiver requires (the webhook has no LAN/SSRF restriction, so this
+  # is how you authenticate to an external notifier).
+  webhook_headers: {}      # e.g. { "X-API-Key": "secret" }
+  # Optional body template. WITHOUT it, the raw alert JSON is posted:
+  #   {ts, severity, source, message, key, host}
+  # WITH it (a dict), each string value is rendered with those alert fields via
+  # {placeholders}, and the dict is POSTed as JSON. This maps the alert onto a
+  # specific endpoint's contract — e.g. an SMS gateway that expects {"message":...}:
+  #   webhook_body: { "message": "{severity} {source}: {message}" }
+  webhook_body: null
+  # Do not re-fire the same alert key more often than this (seconds).
+  min_interval_s: 300
+  # Thresholds
+  latency_ms: 1000        # alert when a source's read latency exceeds this
+  buffer_points: 1000     # alert when the InfluxDB store-and-forward buffer grows past this
+  # Per-register value alerting (the `threshold` signal below). Turns the
+  # dashboard's warning/danger limits into alert EVENTS. Fires when a value
+  # crosses INTO a warning/danger band and again when it clears to normal, with
+  # hysteresis so a value hovering at a limit cannot flap.
+  threshold_deadband_pct: 2.0     # clear-side hysteresis, % of the limit value
+  threshold_alert_on_start: true  # surface a value already in alarm at startup
+  # Which signals raise an alert
+  signals:
+    device: true          # a source device goes down / recovers
+    sink: true            # MQTT or InfluxDB disconnects / reconnects
+    latency: true         # sustained high read latency
+    buffer: true          # InfluxDB buffer backlog or dropped points
+    threshold: false      # per-register value crossings (warning/danger limits)
+
+# ESP flashing and the node list are available in MBG Pro. To link to it
+# from Devices, set
+# ui.nodes_url (e.g. /nodes/ when it runs behind the same host name).
+
+bridges:
+  - {id: ws, name: Panel bridge, type: rtu_transparent, host: 127.0.0.1, ports: [{port: 15996}]}
+  - {id: gw, name: Meter gateway, type: modbus_gateway, host: 127.0.0.1, ports: [{port: 15997}, {port: 15998}]}
+devices:
+  - id: hp
+    name: Heat pump
+    template: samsung_mim_b19n
+    enabled: false
+    connection: {bridge: ws, bridge_port: 15996, unit_id: 2, timeout: 3, max_gap: 10}
+    mqtt: {topic_prefix: mbg/devices/hp, ha_discovery: false, publish_mode: all}
+    influxdb: {bucket: hp, device_tag: hp}
+    write_locked: true
+    pq_recorder: {enabled: false, poll_s: 30}
+  - id: rs
+    name: Serial meter
+    template: fronius_smart_meter_65a
+    enabled: false
+    connection: {protocol: rtu, serial_port: /dev/ttyFAKE1, baudrate: 19200, parity: E, stopbits: 2, unit_id: 1, startup_jitter_s: 6.0}
+  - id: asc
+    name: ASCII meter
+    template: fronius_smart_meter_65a
+    enabled: false
+    connection: {protocol: ascii, serial_port: /dev/ttyFAKE2, baudrate: 9600, unit_id: 1}
+  - id: udp
+    name: UDP meter
+    template: fronius_smart_meter_65a
+    enabled: false
+    connection: {protocol: udp, host: 127.0.0.1, port: 15995, unit_id: 1}
+  - id: gx
+    name: Victron GX
+    template: victron_gx_mqtt
+    enabled: false
+    connection: {protocol: mqtt, broker: none.invalid, port: 8883, tls: true, tls_insecure: true, username: u, password: secret,
+                 topic: 'N/c0ffee000001/#', vars: {portal: c0ffee000001, vebus: '274'}, stale_after_s: 120}
+    mqtt: {topic_prefix: mbg/devices/gx, ha_discovery: false}
+    influxdb: {bucket: gx, device_tag: gx}
+    components:
+      - {type: battery, instance: '288', name: Shunt}
+  - id: gwm
+    name: Gateway meter
+    template: fronius_smart_meter_65a
+    enabled: false
+    connection: {bridge: gw, bridge_port: 15997, unit_id: 3, timeout: 3}
+  - id: web
+    name: Web inverter
+    template: fronius_solar_api_inverter
+    enabled: false
+    connection: {protocol: http, url: 'http://127.0.0.1:15993/solar_api/v1/GetInverterRealtimeData.cgi', verify_tls: false}
+endpoints:
+  - id: pv
+    name: PV
+    enabled: false
+    connection: {protocol: tcp, host: 127.0.0.1, port: 15994}
+    aggregates: false
+    groups:
+      - id: inverters
+        role: inverter
+        template: fronius_sunspec_inverter
+        units: [1, 2]
+        commands:
+          - {name: power_limit}
+        sources:
+          - id: sunspec
+            protocol: tcp
+            host: 127.0.0.1
+            port: 15994
+            max_gap: 20
+            startup_jitter_s: 6.0
+            poll_groups: {realtime: {interval: 5}, static: {interval: 3600}, controls: {interval: 10}}
+      - id: site
+        role: meter
+        template: fronius_sunspec_meter
+        units: [240]
+  - id: bank
+    name: Bank
+    template: seplos_bms_v3_rtu_tap
+    enabled: false
+    connection: {protocol: rtu_tap, serial_port: /dev/ttyFAKEBANK, baudrate: 19200, parity: N, stale_after_s: 60}
+    groups:
+      - id: units
+        connection: {protocol: rtu_tap, serial_port: /dev/ttyFAKEBANK, baudrate: 19200, stale_after_s: 60}
+        units: [1, 2]

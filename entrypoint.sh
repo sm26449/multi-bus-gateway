@@ -19,6 +19,16 @@ if [ "$(id -u)" = "0" ]; then
     fi
     # --no-new-privs: nothing this process starts can regain privilege (setuid
     # binaries, file capabilities) — the drop is final (3.80.0)
-    exec setpriv --reuid=mbg --regid=mbg --init-groups --no-new-privs "$@"
+    #
+    # Opt-in (MBG_CAN_NET_ADMIN=1, with --cap-add NET_ADMIN on the container):
+    # keep CAP_NET_ADMIN as an AMBIENT capability across the drop, so the
+    # non-root app can switch a CAN interface's mode (ADR-0046 L2) via `ip` —
+    # and ONLY that capability. Ambient caps survive --no-new-privs; nothing
+    # else is gained. Off by default: the app stays fully unprivileged.
+    AMBIENT=""
+    if [ "${MBG_CAN_NET_ADMIN:-0}" = "1" ]; then
+        AMBIENT="--inh-caps +net_admin --ambient-caps +net_admin"
+    fi
+    exec setpriv --reuid=mbg --regid=mbg --init-groups $AMBIENT --no-new-privs "$@"
 fi
 exec "$@"

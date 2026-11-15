@@ -44,7 +44,19 @@ One point per register per write, built by `build_point()`:
 | timestamp | the **poll time** of the read, nanosecond precision (`WritePrecision.NS`) — not the flush time, so batching latency and outage replay never skew a series | |
 
 A **text** value (enum label, status text) is written as a string in the
-named field only, without the `value` twin. Non-finite numbers are skipped.
+named field only, without the `value` twin. An **enum** or **bits** value
+also gets a numeric companion field **`<field>_code`**, always a float: the
+raw code behind the label (from the register's enum map, else the trailing
+`(n)` the decoder appends, as in `unknown (7)`). It is absent when no code
+can be recovered (e.g. a `bits` value that lists several flags). The text
+field keeps its string type, so existing series and dashboards are
+unchanged; graph or alert on `<field>_code`. Non-finite numbers are skipped.
+
+```flux
+from(bucket: "battery")
+  |> range(start: -1d)
+  |> filter(fn: (r) => r._field == "battery_status_code")
+```
 
 ### Measurement naming
 

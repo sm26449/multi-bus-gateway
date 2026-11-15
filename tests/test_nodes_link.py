@@ -32,7 +32,7 @@ esphome:
 
 
 def test_an_old_esphome_block_loads_is_ignored_and_dropped_on_save(tmp_path, caplog):
-    with caplog.at_level(logging.INFO, logger="multibus.config"):
+    with caplog.at_level(logging.INFO, logger="multibus.core.config"):
         cfg = write_config(tmp_path, extra_yaml=OLD_BLOCK)
     assert not getattr(cfg, "_load_failed", False)
     assert cfg.devices                                           # the rest of the file loaded

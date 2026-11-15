@@ -205,8 +205,8 @@ started from `normal` and lifted a curtailment that a restart caught in the
 band.)
 
 Three optional keys change how it behaves around a restart and an urgent
-write. All are off unless written; the rule editor has them under
-**Advanced: after a restart, urgent sends**.
+write. All are off unless written; the rule editor has them, with the two
+step-down keys below, under **Advanced / tuning** (a steps rule only).
 
 ```yaml
   resume_on_boot: true            # after a restart, start from the step the inverter holds
@@ -223,6 +223,35 @@ write. All are off unless written; the rule editor has them under
 
 The rule card lists the ones that are set. While it waits, the rule's
 decision reads `after a restart: waiting up to 60 s for the read-back`.
+
+Two more optional keys stop a voltage that hovers on a threshold from
+flipping the rule between two steps (80 % ↔ 70 % every half minute). They
+only slow a step **down**; a step up is never delayed, and with either key a
+step up above the step last sent also skips `min_interval_s`.
+
+```yaml
+  step_down_margin: 0.5           # step down only 0.5 V under the step's threshold
+  timing: { ..., step_down_hold_s: 90 }   # ... and only after 90 s with no sample at or over that line
+```
+
+| Key | Range | What it does |
+|---|---|---|
+| `step_down_margin` | 0 – (highest step − `release_below`) | A step down to a lower step needs the signal under the current step's `at` minus the margin; the rule goes to the highest step it still holds. Release under `release_below` and the band under the first step are unchanged. |
+| `timing.step_down_hold_s` | 0–3600 s | A step down also waits until no sample has reached the current step's `at` minus the margin for this long. The debounce is counted as usual; the decision reads `step-down hold 42/90 s towards Warning`. |
+
+**In the rule editor.** All five keys are under **Advanced / tuning** of a
+steps rule (the section is open when any of them is set, and hidden for the
+other kinds, which do not take them): *After a restart, wait for the
+read-back up to (s)* = `timing.boot_wait_s`, *Send an urgent want again, at
+most (times)* = `timing.urgent_retries`, *Step-down margin (signal units)* =
+`step_down_margin` (the hint shows its bound, the highest step minus *Normal
+again under*, as you edit the steps), *Step-down hold (s)* =
+`timing.step_down_hold_s`, and the *resume the step the device holds* box =
+`resume_on_boot`. An empty box leaves the key out of `rules.yaml` (the
+default behaviour); a typed `0` is written as `0`. A save keeps the keys it
+was not told to change exactly as stored, and an unchanged form sends
+nothing. A value out of range is refused by the server and said under its
+box. The rule card lists the keys that are set.
 
 Copy it once per inverter (`ov-u2`… with its own target and signal), or
 point one rule at the whole group with

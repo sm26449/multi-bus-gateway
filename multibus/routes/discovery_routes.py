@@ -81,7 +81,7 @@ def build(ctx) -> APIRouter:
 
     def _refuse_if_listened(what: str, protocol: str, conn: Dict) -> None:
         """409 on a bus a device only listens to (ADR-0025): nothing is sent."""
-        from ..bus_claims import bus_of, listeners, refusal_detail, where_of
+        from multibus.transports.serial.bus_claims import bus_of, listeners, refusal_detail, where_of
         bus = bus_of(protocol, conn)
         ids = listeners(config, bus, getattr(ctx, "template_registry", None))
         if ids:
@@ -91,7 +91,7 @@ def build(ctx) -> APIRouter:
     async def discover_modbus_scan(payload: Dict = Body(...)):
         """Scan a private CIDR on a port (default 502) for Modbus devices. Read-only
         probes; the range is LAN-restricted unless security.allow_nonlan_http_devices."""
-        from .. import discovery
+        from ..commissioning import discovery
         cidr = str(payload.get('cidr', '') or '').strip()
         try:
             port = int(payload.get('port', 502))
@@ -106,7 +106,7 @@ def build(ctx) -> APIRouter:
         except ValueError as e:
             raise HTTPException(status_code=422, detail={"errors": [str(e)]})
         # a host:port a device only listens to is not knocked on (ADR-0025)
-        from ..bus_claims import bus_of, listeners
+        from multibus.transports.serial.bus_claims import bus_of, listeners
         tr = getattr(ctx, "template_registry", None)
         skipped = [{"host": h, "listeners": ids} for h in hosts
                    for ids in [listeners(config, bus_of("tcp", {"host": h, "port": port}), tr)] if ids]
@@ -114,7 +114,7 @@ def build(ctx) -> APIRouter:
         # …nor a host:port a device of ours polls, nor a bridge port of ours
         # with a client that is not us (or that nobody can name, unless
         # confirm_open): never a second connection there (L3.7 m1)
-        from .. import preview
+        from ..commissioning import preview
         from .previews import env_of
         env = env_of(ctx)
         confirm = payload.get("confirm_open") is True
@@ -135,7 +135,7 @@ def build(ctx) -> APIRouter:
         responder is asked for its identity with a plaintext HelloRequest
         (answered pre-auth); encrypted-API nodes are still detected and
         flagged. Read-only, LAN-restricted, same bounds as the Modbus scan."""
-        from .. import discovery
+        from ..commissioning import discovery
         cidr = str(payload.get('cidr', '') or '').strip()
         try:
             port = int(payload.get('port', discovery.ESPHOME_API_PORT))
@@ -160,8 +160,8 @@ def build(ctx) -> APIRouter:
         scan cannot do is refused. Answers ``{protocol, units, job}``; past
         120 s it answers 202 ``{protocol, job, state: running}`` (poll
         ``GET /api/bus-scan/{job}``). A client that goes away stops the job."""
-        from .. import bus_scan
-        from ..config import NETWORK_PROTOCOLS, SERIAL_PROTOCOLS
+        from ..commissioning import bus_scan
+        from ..core.config import NETWORK_PROTOCOLS, SERIAL_PROTOCOLS
         from .bus_scan import launch
         proto = str(payload.get('protocol', 'tcp')).lower()
         try:
@@ -210,7 +210,7 @@ def build(ctx) -> APIRouter:
         """Walk the SunSpec model chain on one endpoint (read-only, FC3): the
         SunS marker, then every model the device DECLARES — identity included.
         The reflex of anyone coming from Fronius/SolarEdge/Huawei."""
-        from .. import discovery
+        from ..commissioning import discovery
         host = str(payload.get('host', '') or '').strip()
         if not host:
             raise HTTPException(status_code=422, detail={"errors": ["host required"]})
@@ -225,7 +225,7 @@ def build(ctx) -> APIRouter:
             raise HTTPException(status_code=422, detail={"errors": ["port/unit_id/timeout must be numbers"]})
         _port_or_422(port)
         _refuse_if_listened("A SunSpec walk", "tcp", {"host": host, "port": port})
-        from .. import preview
+        from ..commissioning import preview
         from .previews import env_of
         why = preview.second_connection(env_of(ctx), host, port, payload.get("confirm_open") is True)
         if why:
@@ -237,7 +237,7 @@ def build(ctx) -> APIRouter:
         """Collect the broker's speaking topics with payload previews so the
         user PICKS a topic instead of typing it blind. Retained messages give
         an instant tree; the listen window catches live publishers. Read-only."""
-        from .. import discovery
+        from ..commissioning import discovery
         broker = str(payload.get('broker', '') or '').strip()
         if not broker:
             raise HTTPException(status_code=422, detail={"errors": ["broker required"]})
@@ -269,7 +269,7 @@ def build(ctx) -> APIRouter:
         # SSRF egress guard (raises 400 if not LAN) — the same operator opt-out
         # the HTTP devices honour lets a lab reach a simulator on loopback
         if config.security.allow_nonlan_http_devices:
-            from .. import discovery
+            from ..commissioning import discovery
             _e = discovery.lan_host_error(host, True)
             if _e:
                 raise HTTPException(status_code=400, detail=_e)
@@ -280,7 +280,7 @@ def build(ctx) -> APIRouter:
 
         def _fetch(path):
             import urllib.request
-            from ..alerts import _NO_REDIRECT_OPENER
+            from ..outputs.alerts import _NO_REDIRECT_OPENER
             # connect to the validated literal IP, pass Host header for vhosts
             url = f"http://{_ip}:{int(port)}{path}"
             req = urllib.request.Request(url, headers={"Host": host})

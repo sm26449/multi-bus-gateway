@@ -6,9 +6,9 @@
     "vendor": "Deye",
     "model": "SUN-xK-SG0xLP1 (e.g. SUN-8K-SG05LP1-EU)",
     "kind": "inverter",
-    "version": "0.3.0",
+    "version": "0.11.0",
     "author": "Stefan Maldaianu",
-    "description": "Deye single-phase low-voltage hybrid inverter (SUN-xK-SG0xLP1 family, e.g. SUN-8K-SG05LP1-EU), READ-ONLY: FC03 holding registers only, no writable register and no command, so no rule or command can bind to it. Wire the inverter's RS485 \"Modbus\" port (not the BMS/CAN port, not the Wi-Fi logger port), Modbus RTU 9600 8N1, unit ID 1. Reads identity and serial, the running state, PV1/PV2 voltage, current and power, grid voltage, current, frequency and power, the inverter and load power, battery voltage, current, power, SOC and temperature, the GEN port (an AC-coupled microinverter there: its power, voltage and daily and total energy), the BMS block as the inverter receives it (voltage, current, temperature, SOC, charge/discharge current limits and voltages), the battery type and rated capacity settings, the load voltage, daily and total energies as counters, the inverter temperatures and the warning/fault words (bits named by the Fxx code the display shows). 32-bit totals are low word first, so the template's word order is little (CDAB); the total grid import is split across 78 and 80 (79 is the frequency) and is rebuilt as the calculated energy_active_import. Signs follow the gateway's canonical conventions: battery_power and battery_current + charging (Deye reports + discharging, so both are inverted with a negative scale), power_grid + import / - export (as Deye reports it), power_load negative = consuming (inverted). First checked on hardware on a SUN-8K-SG05LP1 (2026-10-27, no BMS connected): the rows that agreed say so, the rest are still to be verified on site against the inverter display.",
+    "description": "Deye single-phase low-voltage hybrid inverter (SUN-xK-SG0xLP1 family, e.g. SUN-8K-SG05LP1-EU), mostly READ-ONLY (FC03 holding registers): every telemetry row is read-only, and the only writable registers are the four battery/grid-charge set points behind the optional commands set_max_charge_current (210), set_max_discharge_current (211), set_grid_charge_current (230) and grid_charge (232) — all disabled by default, each written as a single FC16 register (the template never sets single_register_writes), so nothing is written until an admin enables a command on a device. Wire the inverter's RS485 \"Modbus\" port (not the BMS/CAN port, not the Wi-Fi logger port), Modbus RTU 9600 8N1, unit ID 1. Reads identity and serial, the running state, PV1/PV2 voltage, current and power, grid voltage, current, frequency and power, the inverter and load power, battery voltage, current, power, SOC and temperature, the GEN port (an AC-coupled microinverter there: its power, voltage and daily and total energy), the BMS block as the inverter receives it (voltage, current, temperature, SOC, charge/discharge current limits and voltages), the battery type and rated capacity settings, the load voltage, daily and total energies as counters, the inverter temperatures and the warning/fault words (bits named by the Fxx code the display shows). 32-bit totals are low word first, so the template's word order is little (CDAB); the total grid import is split across 78 and 80 (79 is the frequency) and is rebuilt as the calculated energy_active_import. Signs follow the gateway's canonical conventions: battery_power and battery_current + charging (Deye reports + discharging, so both are inverted with a negative scale), power_grid + import / - export (as Deye reports it), power_load negative = consuming (inverted). First checked on hardware on a SUN-8K-SG05LP1 (2026-10-27, no BMS connected): the rows that agreed say so, the rest are still to be verified on site against the inverter display. Version 0.4.0 adds the inverter's settings block as read-only rows (battery charge/discharge limits and SOC/voltage thresholds, grid charging, energy pattern, work mode and export, the time-of-use table, the special-functions word with the lithium-loss fault bit, the real-time clock, the grid-connected flag, the BMS alarm/fault flags and the selected BMS protocol) so the operator sees today's values; they are read, never written, and are all still to be checked on hardware.",
     "source_document": "Deye single-phase hybrid Modbus map as published by the ha-solarman project (deye_hybrid.yaml, SUN-xK-SG01LP1/SG03LP1/SG05LP1) and cross-read against kellerza/sunsynk (src/sunsynk/definitions/single_phase.py: the same Deye/Sunsynk single-phase firmware; there a negative factor marks a signed register, not an inversion) and Deye's 'Modbus RTU protocol' for single-phase energy storage inverters. Reference only, no code copied. Checked on a SUN-8K-SG05LP1 (protocol 0x0201) on 2026-10-27; each row says whether it was. The GEN port, BMS block and battery settings (0.3.0) come from the same maps; the BMS temperature (319) from the Deye document only.",
     "protocol": {
       "line": {"baudrate": 9600, "parity": "N", "bytesize": 8, "stopbits": 1},
@@ -18,7 +18,7 @@
       ],
       "byte_order": "little",
       "default_unit_id": 1,
-      "default_register_type": "holding"
+      "min_write_gap_s": 1
     },
     "poll_groups": {
       "fast": {
@@ -32,6 +32,10 @@
       "energy": {
         "interval": 60,
         "description": "daily and total energy counters"
+      },
+      "settings": {
+        "interval": 300,
+        "description": "inverter settings block (battery, grid charge, work mode, TOU)"
       },
       "static": {
         "interval": 3600,
@@ -82,6 +86,26 @@
       "identity": {
         "label": "Device identity",
         "order": 11
+      },
+      "battery_settings": {
+        "label": "Battery settings",
+        "order": 12
+      },
+      "grid_charge": {
+        "label": "Grid charging",
+        "order": 13
+      },
+      "settings": {
+        "label": "Inverter settings",
+        "order": 14
+      },
+      "tou": {
+        "label": "Time of use",
+        "order": 15
+      },
+      "system": {
+        "label": "System",
+        "order": 16
       }
     },
     "canonical": false,
@@ -107,12 +131,41 @@
     },
     "notes": [
       {
+        "level": "info",
+        "text": "Checked on hardware (SG05LP1, 2026-11-03): a write was issued and read back, and the change was confirmed on the inverter (Solarman).",
+        "fields": [
+          "set_max_charge_current",
+          "set_grid_charge_start_soc",
+          "set_tou_slot_1"
+        ]
+      },
+      {
         "level": "warning",
-        "text": "Partly checked on hardware (SUN-8K-SG05LP1, 2026-10-27, no BMS): identity, state, grid (GRID port and CT), load, PV, battery voltage/current/power, temperatures and the energy totals agreed, and the inverter display confirmed the signs and totals. Rows marked 'Not yet checked on hardware' (SOC and battery temperature with a BMS, inverter output power and current, rated power, serial, warning and fault words, and the GEN port, BMS block, battery settings, load voltage and cumulative production rows, whose display readings are noted) still need comparing with a register read."
+        "text": "Not yet checked on hardware: built and validated, but no write has been issued to the inverter. Each needs a bench write with the operator before it is considered verified.",
+        "fields": [
+          "grid_charge",
+          "grid_charge_control",
+          "set_grid_charge_current",
+          "set_grid_charge_start_voltage",
+          "set_max_discharge_current",
+          "set_max_sell_power",
+          "set_solar_sell",
+          "set_tou_slot_2",
+          "set_tou_slot_3",
+          "set_tou_slot_4",
+          "set_tou_slot_5",
+          "set_tou_slot_6",
+          "set_work_mode",
+          "set_zero_export_power"
+        ]
+      },
+      {
+        "level": "warning",
+        "text": "Partly checked on hardware (SUN-8K-SG05LP1, 2026-10-27, no BMS): identity, state, grid (GRID port and CT), load, PV, battery voltage/current/power, temperatures and the energy totals agreed, and the inverter display confirmed the signs and totals. Rows marked 'Not yet checked on hardware' (SOC and battery temperature with a BMS, inverter output power and current, rated power, serial, warning and fault words, and the GEN port, BMS block, battery settings, load voltage and cumulative production rows, whose display readings are noted) still need comparing with a register read. The 0.4.0 settings block (battery limits and thresholds, grid charging, work mode and export, the time-of-use table, the special-functions word, the clock, the BMS alarm/fault flags and the BMS protocol) is read-only and entirely 'Not yet checked on hardware' yet: read it on the Pi5 and compare with the inverter display (or the Solarman app)."
       },
       {
         "level": "info",
-        "text": "Read-only on purpose: the template declares no writable register and no command. Writing work mode or battery settings over Modbus changes the inverter's stored settings; do that from the inverter or its app."
+        "text": "A set of optional write commands is available (the battery current limits 210/211, grid charge current 230 and grid charging on/off 232, work mode and export settings, the grid-charge start SOC 229 and voltage 228, and the six time-of-use slots 250-273), all disabled by default and guarded (single-phase device type, and lithium battery for the current limits and protection setpoints). Each command carries a note saying whether it has been checked on hardware. Battery operation mode (213) and the battery shutdown/restart/low thresholds (217-222) are deliberately read-only. Writing a setting over Modbus changes the inverter\u2019s stored settings, so each command stays off until an admin enables it on a device and unlocks writes."
       },
       {
         "level": "info",
@@ -1655,9 +1708,1556 @@
             "enabled": true
           }
         }
+      },
+      {
+        "address": 22,
+        "name": "rtc_year_month",
+        "label": "Inverter clock (year/month)",
+        "unit": "",
+        "data_type": "uint16",
+        "register_type": "holding",
+        "access": "RD",
+        "category": "system",
+        "poll_group": "static",
+        "description": "22 (0x0016). Inverter real-time clock: high byte year (20YY), low byte month. The TOU program runs on this clock, so it is read for context. Source: Deye single-phase Modbus document (V118), ha-solarman deye_hybrid.yaml and kellerza/sunsynk single_phase.py (SystemTime). Checked on hardware (SG05LP1, 2026-11-03): 2026-11 (raw 6667 = 0x1A0B).",
+        "entity_category": "diagnostic",
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": true
+          }
+        }
+      },
+      {
+        "address": 23,
+        "name": "rtc_day_hour",
+        "label": "Inverter clock (day/hour)",
+        "unit": "",
+        "data_type": "uint16",
+        "register_type": "holding",
+        "access": "RD",
+        "category": "system",
+        "poll_group": "static",
+        "description": "23 (0x0017). Inverter real-time clock: high byte day, low byte hour. Source: Deye single-phase Modbus document (V118), ha-solarman deye_hybrid.yaml and kellerza/sunsynk single_phase.py. Checked on hardware (SG05LP1, 2026-11-03): day 03, hour 09 (raw 777 = 0x0309).",
+        "entity_category": "diagnostic",
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": true
+          }
+        }
+      },
+      {
+        "address": 24,
+        "name": "rtc_minute_second",
+        "label": "Inverter clock (minute/second)",
+        "unit": "",
+        "data_type": "uint16",
+        "register_type": "holding",
+        "access": "RD",
+        "category": "system",
+        "poll_group": "static",
+        "description": "24 (0x0018). Inverter real-time clock: high byte minute, low byte second. Source: Deye single-phase Modbus document (V118), ha-solarman deye_hybrid.yaml and kellerza/sunsynk single_phase.py. Checked on hardware (SG05LP1, 2026-11-03): minute 27, second 29 (raw 6941 = 0x1B1D); the inverter clock matched real time.",
+        "entity_category": "diagnostic",
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": true
+          }
+        }
+      },
+      {
+        "address": 100,
+        "name": "bms_interface_flags",
+        "label": "BMS interface flags",
+        "unit": "",
+        "data_type": "uint16",
+        "register_type": "holding",
+        "access": "RD",
+        "category": "system",
+        "poll_group": "normal",
+        "description": "100 (0x0064). Other test flags. Bit 8 = lithium battery interface on RS485, bit 9 = on CAN; a test register, so it is read to see which BMS link is live, not relied on. Source: Deye single-phase Modbus document (V118) (test register; to verify). Checked on hardware (SG05LP1, 2026-11-03): CAN interface selected; the Deye is off the BMS-CAN link, so this is the configured interface, not a live link.",
+        "bits": {
+          "8": "Li-ion BMS on RS485",
+          "9": "Li-ion BMS on CAN"
+        },
+        "entity_category": "diagnostic",
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": true
+          }
+        }
+      },
+      {
+        "address": 194,
+        "name": "grid_connected",
+        "label": "Grid connected",
+        "unit": "",
+        "data_type": "uint16",
+        "register_type": "holding",
+        "access": "RD",
+        "category": "status",
+        "poll_group": "normal",
+        "description": "194 (0x00C2). 1 while the inverter is tied to the grid, 0 off-grid. Source: ha-solarman deye_hybrid.yaml, kellerza/sunsynk single_phase.py. Checked on hardware (SG05LP1, 2026-11-03): Grid connected.",
+        "enum": {
+          "0": "Off-grid",
+          "1": "Grid connected"
+        },
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": true
+          }
+        }
+      },
+      {
+        "address": 201,
+        "name": "battery_equalization_voltage",
+        "label": "Battery equalization voltage",
+        "unit": "V",
+        "data_type": "uint16",
+        "register_type": "holding",
+        "access": "RD",
+        "category": "battery_settings",
+        "poll_group": "settings",
+        "scale": 100,
+        "description": "201 (0x00C9). Lead-acid equalization voltage, 0.01 V (used in lead-acid mode, 200 = 0). Source: Deye single-phase Modbus document (V118), ha-solarman deye_hybrid.yaml, kellerza/sunsynk single_phase.py. Not yet checked on hardware: read on the Pi5 and compare with the inverter display.",
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": true
+          }
+        }
+      },
+      {
+        "address": 202,
+        "name": "battery_absorption_voltage",
+        "label": "Battery absorption voltage",
+        "unit": "V",
+        "data_type": "uint16",
+        "register_type": "holding",
+        "access": "RD",
+        "category": "battery_settings",
+        "poll_group": "settings",
+        "scale": 100,
+        "description": "202 (0x00CA). Lead-acid absorption voltage, 0.01 V (lead-acid mode). Source: Deye single-phase Modbus document (V118), ha-solarman deye_hybrid.yaml, kellerza/sunsynk single_phase.py. Not yet checked on hardware: read on the Pi5 and compare with the inverter display.",
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": true
+          }
+        }
+      },
+      {
+        "address": 203,
+        "name": "battery_float_voltage",
+        "label": "Battery float voltage",
+        "unit": "V",
+        "data_type": "uint16",
+        "register_type": "holding",
+        "access": "RD",
+        "category": "battery_settings",
+        "poll_group": "settings",
+        "scale": 100,
+        "description": "203 (0x00CB). Lead-acid float voltage, 0.01 V (lead-acid mode). Source: Deye single-phase Modbus document (V118), ha-solarman deye_hybrid.yaml, kellerza/sunsynk single_phase.py. Not yet checked on hardware: read on the Pi5 and compare with the inverter display.",
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": true
+          }
+        }
+      },
+      {
+        "address": 206,
+        "name": "zero_export_power",
+        "label": "Zero-export power target",
+        "unit": "W",
+        "data_type": "int16",
+        "register_type": "holding",
+        "access": "RD/WR",
+        "writable": true,
+        "write_min": 0,
+        "write_max": 500,
+        "category": "settings",
+        "poll_group": "settings",
+        "description": "206 (0x00CE). Grid draw target in a zero-export work mode, W, signed (kellerza -500..+500; ha-solarman configurable). Source: Deye single-phase Modbus document (V118), ha-solarman deye_hybrid.yaml, kellerza/sunsynk single_phase.py. Checked on hardware (SG05LP1, 2026-11-03): 25 W.",
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": true
+          }
+        }
+      },
+      {
+        "address": 210,
+        "name": "battery_max_charge_current",
+        "label": "Battery max charge current",
+        "unit": "A",
+        "data_type": "uint16",
+        "register_type": "holding",
+        "access": "RD/WR",
+        "writable": true,
+        "write_min": 0,
+        "write_max": 185,
+        "category": "battery_settings",
+        "poll_group": "settings",
+        "description": "210 (0x00D2). 'Max A Charge' setting, 0-185 A (Deye single-phase Modbus document (V118)/kellerza/sunsynk single_phase.py; ha-solarman says 0-240; datasheet 190 A). A persisted setting. Source: Deye single-phase Modbus document (V118), ha-solarman deye_hybrid.yaml, kellerza/sunsynk single_phase.py. Checked on hardware (SG05LP1, 2026-11-03): 180 A (also written 180->10->30->180 over RS485, each read-back verified).",
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": true
+          }
+        }
+      },
+      {
+        "address": 211,
+        "name": "battery_max_discharge_current",
+        "label": "Battery max discharge current",
+        "unit": "A",
+        "data_type": "uint16",
+        "register_type": "holding",
+        "access": "RD/WR",
+        "writable": true,
+        "write_min": 0,
+        "write_max": 185,
+        "category": "battery_settings",
+        "poll_group": "settings",
+        "description": "211 (0x00D3). 'Max A Discharge' setting, 0-185 A (ha-solarman 0-240). A persisted setting. Source: Deye single-phase Modbus document (V118), ha-solarman deye_hybrid.yaml, kellerza/sunsynk single_phase.py. Checked on hardware (SG05LP1, 2026-11-03): 90 A.",
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": true
+          }
+        }
+      },
+      {
+        "address": 213,
+        "name": "battery_operation_mode",
+        "label": "Battery operation mode",
+        "unit": "",
+        "data_type": "uint16",
+        "register_type": "holding",
+        "access": "RD",
+        "category": "battery_settings",
+        "poll_group": "settings",
+        "description": "213 (0x00D5). How the inverter drives the battery: 0 by voltage, 1 by capacity (SOC), 2 no battery. Source: Deye single-phase Modbus document (V118), ha-solarman deye_hybrid.yaml. Checked on hardware (SG05LP1, 2026-11-03): By capacity (SOC).",
+        "enum": {
+          "0": "By voltage",
+          "1": "By capacity (SOC)",
+          "2": "No battery"
+        },
+        "entity_category": "diagnostic",
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": true
+          }
+        }
+      },
+      {
+        "address": 214,
+        "name": "battery_wake_up",
+        "label": "Battery wake-up",
+        "unit": "",
+        "data_type": "uint16",
+        "register_type": "holding",
+        "access": "RD",
+        "category": "battery_settings",
+        "poll_group": "settings",
+        "description": "214 (0x00D6). Battery wake-up: 0 enabled, 1 disabled. Source: Deye single-phase Modbus document (V118), ha-solarman deye_hybrid.yaml. Checked on hardware (SG05LP1, 2026-11-03): Disabled.",
+        "enum": {
+          "0": "Enabled",
+          "1": "Disabled"
+        },
+        "entity_category": "diagnostic",
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": true
+          }
+        }
+      },
+      {
+        "address": 217,
+        "name": "battery_shutdown_soc",
+        "label": "Battery shutdown SOC",
+        "unit": "%",
+        "data_type": "uint16",
+        "register_type": "holding",
+        "access": "RD",
+        "category": "battery_settings",
+        "poll_group": "settings",
+        "description": "217 (0x00D9). SOC at which the inverter shuts the battery down, % (invariant shutdown < low < restart). Source: Deye single-phase Modbus document (V118), ha-solarman deye_hybrid.yaml, kellerza/sunsynk single_phase.py. Checked on hardware (SG05LP1, 2026-11-03): 5 %.",
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": true
+          }
+        }
+      },
+      {
+        "address": 218,
+        "name": "battery_restart_soc",
+        "label": "Battery restart SOC",
+        "unit": "%",
+        "data_type": "uint16",
+        "register_type": "holding",
+        "access": "RD",
+        "category": "battery_settings",
+        "poll_group": "settings",
+        "description": "218 (0x00DA). SOC at which the inverter restarts the battery, %. Source: Deye single-phase Modbus document (V118), ha-solarman deye_hybrid.yaml, kellerza/sunsynk single_phase.py. Checked on hardware (SG05LP1, 2026-11-03): 50 %.",
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": true
+          }
+        }
+      },
+      {
+        "address": 219,
+        "name": "battery_low_soc",
+        "label": "Battery low SOC",
+        "unit": "%",
+        "data_type": "uint16",
+        "register_type": "holding",
+        "access": "RD",
+        "category": "battery_settings",
+        "poll_group": "settings",
+        "description": "219 (0x00DB). Low-battery SOC warning threshold, %. Source: Deye single-phase Modbus document (V118), ha-solarman deye_hybrid.yaml, kellerza/sunsynk single_phase.py. Checked on hardware (SG05LP1, 2026-11-03): 5 %.",
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": true
+          }
+        }
+      },
+      {
+        "address": 220,
+        "name": "battery_shutdown_voltage",
+        "label": "Battery shutdown voltage",
+        "unit": "V",
+        "data_type": "uint16",
+        "register_type": "holding",
+        "access": "RD",
+        "category": "battery_settings",
+        "poll_group": "settings",
+        "scale": 100,
+        "description": "220 (0x00DC). Shutdown voltage in voltage mode (213 = 0), 0.01 V (D1 default 41 V). Source: Deye single-phase Modbus document (V118), ha-solarman deye_hybrid.yaml, kellerza/sunsynk single_phase.py. Checked on hardware (SG05LP1, 2026-11-03): 46.0 V.",
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": true
+          }
+        }
+      },
+      {
+        "address": 221,
+        "name": "battery_restart_voltage",
+        "label": "Battery restart voltage",
+        "unit": "V",
+        "data_type": "uint16",
+        "register_type": "holding",
+        "access": "RD",
+        "category": "battery_settings",
+        "poll_group": "settings",
+        "scale": 100,
+        "description": "221 (0x00DD). Restart voltage in voltage mode, 0.01 V (D1 default 52 V). Source: Deye single-phase Modbus document (V118), ha-solarman deye_hybrid.yaml, kellerza/sunsynk single_phase.py. Checked on hardware (SG05LP1, 2026-11-03): 52.0 V.",
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": true
+          }
+        }
+      },
+      {
+        "address": 222,
+        "name": "battery_low_voltage",
+        "label": "Battery low voltage",
+        "unit": "V",
+        "data_type": "uint16",
+        "register_type": "holding",
+        "access": "RD",
+        "category": "battery_settings",
+        "poll_group": "settings",
+        "scale": 100,
+        "description": "222 (0x00DE). Low-battery voltage in voltage mode, 0.01 V (D1 default 46 V). Source: Deye single-phase Modbus document (V118), ha-solarman deye_hybrid.yaml, kellerza/sunsynk single_phase.py. Checked on hardware (SG05LP1, 2026-11-03): 47.0 V.",
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": true
+          }
+        }
+      },
+      {
+        "address": 228,
+        "name": "grid_charge_start_voltage",
+        "label": "Grid charge start voltage",
+        "unit": "V",
+        "data_type": "uint16",
+        "register_type": "holding",
+        "access": "RD/WR",
+        "writable": true,
+        "write_min": 46.0,
+        "write_max": 54.0,
+        "category": "grid_charge",
+        "poll_group": "settings",
+        "scale": 100,
+        "description": "228 (0x00E4). Battery voltage below which the inverter charges from the grid, 0.01 V. Source: Deye single-phase Modbus document (V118), ha-solarman deye_hybrid.yaml. Checked on hardware (SG05LP1, 2026-11-03): 49.0 V.",
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": true
+          }
+        }
+      },
+      {
+        "address": 229,
+        "name": "grid_charge_start_soc",
+        "label": "Grid charge start SOC",
+        "unit": "%",
+        "data_type": "uint16",
+        "register_type": "holding",
+        "access": "RD/WR",
+        "writable": true,
+        "write_min": 0,
+        "write_max": 100,
+        "category": "grid_charge",
+        "poll_group": "settings",
+        "description": "229 (0x00E5). Battery SOC below which the inverter charges from the grid, %. Source: Deye single-phase Modbus document (V118), ha-solarman deye_hybrid.yaml. Checked on hardware (SG05LP1, 2026-11-03): 30 %.",
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": true
+          }
+        }
+      },
+      {
+        "address": 230,
+        "name": "grid_charge_current",
+        "label": "Grid charge current",
+        "unit": "A",
+        "data_type": "uint16",
+        "register_type": "holding",
+        "access": "RD/WR",
+        "writable": true,
+        "write_min": 0,
+        "write_max": 185,
+        "category": "grid_charge",
+        "poll_group": "settings",
+        "description": "230 (0x00E6). Current used when charging from the grid, 0-185 A (kellerza/sunsynk single_phase.py max 185; ha-solarman 0-240). Acts only when grid charging is enabled (232). Source: Deye single-phase Modbus document (V118), kellerza/sunsynk single_phase.py, ha-solarman deye_hybrid.yaml. Checked on hardware (SG05LP1, 2026-11-03): 50 A.",
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": true
+          }
+        }
+      },
+      {
+        "address": 232,
+        "name": "grid_charge_enable",
+        "label": "Grid charging",
+        "unit": "",
+        "data_type": "uint16",
+        "register_type": "holding",
+        "access": "RD/WR",
+        "writable": true,
+        "write_allowed": [
+          0,
+          1
+        ],
+        "category": "grid_charge",
+        "poll_group": "settings",
+        "description": "232 (0x00E8). Charge the battery from the grid: 0 off, 1 on. Grid charging happens inside a TOU slot whose grid-charge bit is set (274-279 bit0). Source: Deye single-phase Modbus document (V118), ha-solarman deye_hybrid.yaml, kellerza/sunsynk single_phase.py. Checked on hardware (SG05LP1, 2026-11-03): On.",
+        "enum": {
+          "0": "Off",
+          "1": "On"
+        },
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": true
+          }
+        }
+      },
+      {
+        "address": 235,
+        "name": "gen_port_mode",
+        "label": "GEN port mode",
+        "unit": "",
+        "data_type": "uint16",
+        "register_type": "holding",
+        "access": "RD",
+        "category": "settings",
+        "poll_group": "settings",
+        "description": "235 (0x00EB). What the GEN port drives: 0 generator, 1 smart load, 2 micro-inverter (explains the GEN-port rows). Source: Deye single-phase Modbus document (V118), ha-solarman deye_hybrid.yaml, kellerza/sunsynk single_phase.py. Checked on hardware (SG05LP1, 2026-11-03): Micro-inverter (matches the GEN-port microinverter).",
+        "enum": {
+          "0": "Generator",
+          "1": "Smart load",
+          "2": "Micro-inverter"
+        },
+        "entity_category": "diagnostic",
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": true
+          }
+        }
+      },
+      {
+        "address": 243,
+        "name": "battery_charge_priority",
+        "label": "Energy pattern (battery/load first)",
+        "unit": "",
+        "data_type": "uint16",
+        "register_type": "holding",
+        "access": "RD",
+        "category": "settings",
+        "poll_group": "settings",
+        "description": "243 (0x00F3). Energy pattern: 0 battery first, 1 load first. Source: Deye single-phase Modbus document (V118), ha-solarman deye_hybrid.yaml, kellerza/sunsynk single_phase.py. Checked on hardware (SG05LP1, 2026-11-03): Battery first.",
+        "enum": {
+          "0": "Battery first",
+          "1": "Load first"
+        },
+        "entity_category": "diagnostic",
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": true
+          }
+        }
+      },
+      {
+        "address": 244,
+        "name": "work_mode",
+        "label": "Work mode (grid export)",
+        "unit": "",
+        "data_type": "uint16",
+        "register_type": "holding",
+        "access": "RD/WR",
+        "writable": true,
+        "write_allowed": [
+          0,
+          1,
+          2
+        ],
+        "category": "settings",
+        "poll_group": "settings",
+        "description": "244 (0x00F4). Limit-control / work mode: 0 selling first (export first), 1 zero export to load (built-in CT), 2 zero export to CT (external). Changes the whole energy flow. Source: Deye single-phase Modbus document (V118), ha-solarman deye_hybrid.yaml, kellerza/sunsynk single_phase.py. Checked on hardware (SG05LP1, 2026-11-03): Zero export to load.",
+        "enum": {
+          "0": "Selling first",
+          "1": "Zero export to load",
+          "2": "Zero export to CT"
+        },
+        "entity_category": "diagnostic",
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": true
+          }
+        }
+      },
+      {
+        "address": 245,
+        "name": "max_sell_power",
+        "label": "Max sell power (export limit)",
+        "unit": "W",
+        "data_type": "uint16",
+        "register_type": "holding",
+        "access": "RD/WR",
+        "writable": true,
+        "write_min": 0,
+        "write_max": 8000,
+        "category": "settings",
+        "poll_group": "settings",
+        "description": "245 (0x00F5). Maximum power the inverter exports to the grid, W (D1 0-8000; ha-solarman 0-12000). The grid-code export cap. Source: Deye single-phase Modbus document (V118), ha-solarman deye_hybrid.yaml, kellerza/sunsynk single_phase.py. Checked on hardware (SG05LP1, 2026-11-03): 8000 W.",
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": true
+          }
+        }
+      },
+      {
+        "address": 247,
+        "name": "solar_sell",
+        "label": "Solar sell",
+        "unit": "",
+        "data_type": "uint16",
+        "register_type": "holding",
+        "access": "RD/WR",
+        "writable": true,
+        "write_allowed": [
+          0,
+          1
+        ],
+        "category": "settings",
+        "poll_group": "settings",
+        "description": "247 (0x00F7). Sell surplus PV to the grid: 0 off, 1 on. kellerza notes enabling it draws a constant ~40 W. Source: Deye single-phase Modbus document (V118), ha-solarman deye_hybrid.yaml, kellerza/sunsynk single_phase.py. Checked on hardware (SG05LP1, 2026-11-03): Off.",
+        "enum": {
+          "0": "Off",
+          "1": "On"
+        },
+        "entity_category": "diagnostic",
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": true
+          }
+        }
+      },
+      {
+        "address": 248,
+        "name": "tou_enable",
+        "label": "Time-of-use enable",
+        "unit": "",
+        "data_type": "uint16",
+        "register_type": "holding",
+        "access": "RD",
+        "category": "tou",
+        "poll_group": "settings",
+        "description": "248 (0x00F8). TOU program: bit0 enable, bits 1-7 Mon-Sun, bit8 'work mode 3 (Spain)'. Written as a full word (no read-modify-write in the engine). Source: Deye single-phase Modbus document (V118), ha-solarman deye_hybrid.yaml, kellerza/sunsynk single_phase.py. Checked on hardware (SG05LP1, 2026-11-03): Enabled, all days.",
+        "bits": {
+          "0": "Enabled",
+          "1": "Mon",
+          "2": "Tue",
+          "3": "Wed",
+          "4": "Thu",
+          "5": "Fri",
+          "6": "Sat",
+          "7": "Sun",
+          "8": "Work mode 3"
+        },
+        "entity_category": "diagnostic",
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": true
+          }
+        }
+      },
+      {
+        "address": 250,
+        "name": "tou_time_1",
+        "label": "TOU slot 1 start time",
+        "unit": "",
+        "data_type": "uint16",
+        "register_type": "holding",
+        "access": "RD/WR",
+        "writable": true,
+        "write_min": 0,
+        "write_max": 2359,
+        "category": "tou",
+        "poll_group": "settings",
+        "description": "250 (0x00FA). Start time of TOU slot 1 as HHMM (decimal, 5-minute steps). Slot N runs from time N to time N+1. Source: Deye single-phase Modbus document (V118), ha-solarman deye_hybrid.yaml, kellerza/sunsynk single_phase.py. Checked on hardware (SG05LP1, 2026-11-03): 01:00 (HHMM 100).",
+        "entity_category": "diagnostic",
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": true
+          }
+        }
+      },
+      {
+        "address": 251,
+        "name": "tou_time_2",
+        "label": "TOU slot 2 start time",
+        "unit": "",
+        "data_type": "uint16",
+        "register_type": "holding",
+        "access": "RD/WR",
+        "writable": true,
+        "write_min": 0,
+        "write_max": 2359,
+        "category": "tou",
+        "poll_group": "settings",
+        "description": "251 (0x00FB). Start time of TOU slot 2 as HHMM (decimal, 5-minute steps). Slot N runs from time N to time N+1. Source: Deye single-phase Modbus document (V118), ha-solarman deye_hybrid.yaml, kellerza/sunsynk single_phase.py. Checked on hardware (SG05LP1, 2026-11-03): 05:55 (555).",
+        "entity_category": "diagnostic",
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": true
+          }
+        }
+      },
+      {
+        "address": 252,
+        "name": "tou_time_3",
+        "label": "TOU slot 3 start time",
+        "unit": "",
+        "data_type": "uint16",
+        "register_type": "holding",
+        "access": "RD/WR",
+        "writable": true,
+        "write_min": 0,
+        "write_max": 2359,
+        "category": "tou",
+        "poll_group": "settings",
+        "description": "252 (0x00FC). Start time of TOU slot 3 as HHMM (decimal, 5-minute steps). Slot N runs from time N to time N+1. Source: Deye single-phase Modbus document (V118), ha-solarman deye_hybrid.yaml, kellerza/sunsynk single_phase.py. Checked on hardware (SG05LP1, 2026-11-03): 10:00 (1000).",
+        "entity_category": "diagnostic",
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": true
+          }
+        }
+      },
+      {
+        "address": 253,
+        "name": "tou_time_4",
+        "label": "TOU slot 4 start time",
+        "unit": "",
+        "data_type": "uint16",
+        "register_type": "holding",
+        "access": "RD/WR",
+        "writable": true,
+        "write_min": 0,
+        "write_max": 2359,
+        "category": "tou",
+        "poll_group": "settings",
+        "description": "253 (0x00FD). Start time of TOU slot 4 as HHMM (decimal, 5-minute steps). Slot N runs from time N to time N+1. Source: Deye single-phase Modbus document (V118), ha-solarman deye_hybrid.yaml, kellerza/sunsynk single_phase.py. Checked on hardware (SG05LP1, 2026-11-03): 13:55 (1355).",
+        "entity_category": "diagnostic",
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": true
+          }
+        }
+      },
+      {
+        "address": 254,
+        "name": "tou_time_5",
+        "label": "TOU slot 5 start time",
+        "unit": "",
+        "data_type": "uint16",
+        "register_type": "holding",
+        "access": "RD/WR",
+        "writable": true,
+        "write_min": 0,
+        "write_max": 2359,
+        "category": "tou",
+        "poll_group": "settings",
+        "description": "254 (0x00FE). Start time of TOU slot 5 as HHMM (decimal, 5-minute steps). Slot N runs from time N to time N+1. Source: Deye single-phase Modbus document (V118), ha-solarman deye_hybrid.yaml, kellerza/sunsynk single_phase.py. Checked on hardware (SG05LP1, 2026-11-03): 15:00 (1500).",
+        "entity_category": "diagnostic",
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": true
+          }
+        }
+      },
+      {
+        "address": 255,
+        "name": "tou_time_6",
+        "label": "TOU slot 6 start time",
+        "unit": "",
+        "data_type": "uint16",
+        "register_type": "holding",
+        "access": "RD/WR",
+        "writable": true,
+        "write_min": 0,
+        "write_max": 2359,
+        "category": "tou",
+        "poll_group": "settings",
+        "description": "255 (0x00FF). Start time of TOU slot 6 as HHMM (decimal, 5-minute steps). Slot N runs from time N to time N+1. Source: Deye single-phase Modbus document (V118), ha-solarman deye_hybrid.yaml, kellerza/sunsynk single_phase.py. Checked on hardware (SG05LP1, 2026-11-03): 21:00 (2100).",
+        "entity_category": "diagnostic",
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": true
+          }
+        }
+      },
+      {
+        "address": 256,
+        "name": "tou_power_1",
+        "label": "TOU slot 1 power",
+        "unit": "W",
+        "data_type": "uint16",
+        "register_type": "holding",
+        "access": "RD/WR",
+        "writable": true,
+        "write_min": 0,
+        "write_max": 8000,
+        "category": "tou",
+        "poll_group": "settings",
+        "description": "256 (0x0100). Max battery power for TOU slot 1, W (D1 0-8000). Source: Deye single-phase Modbus document (V118), ha-solarman deye_hybrid.yaml, kellerza/sunsynk single_phase.py. Not yet checked on hardware: read on the Pi5 and compare with the inverter display.",
+        "entity_category": "diagnostic",
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": true
+          }
+        }
+      },
+      {
+        "address": 257,
+        "name": "tou_power_2",
+        "label": "TOU slot 2 power",
+        "unit": "W",
+        "data_type": "uint16",
+        "register_type": "holding",
+        "access": "RD/WR",
+        "writable": true,
+        "write_min": 0,
+        "write_max": 8000,
+        "category": "tou",
+        "poll_group": "settings",
+        "description": "257 (0x0101). Max battery power for TOU slot 2, W (D1 0-8000). Source: Deye single-phase Modbus document (V118), ha-solarman deye_hybrid.yaml, kellerza/sunsynk single_phase.py. Not yet checked on hardware: read on the Pi5 and compare with the inverter display.",
+        "entity_category": "diagnostic",
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": true
+          }
+        }
+      },
+      {
+        "address": 258,
+        "name": "tou_power_3",
+        "label": "TOU slot 3 power",
+        "unit": "W",
+        "data_type": "uint16",
+        "register_type": "holding",
+        "access": "RD/WR",
+        "writable": true,
+        "write_min": 0,
+        "write_max": 8000,
+        "category": "tou",
+        "poll_group": "settings",
+        "description": "258 (0x0102). Max battery power for TOU slot 3, W (D1 0-8000). Source: Deye single-phase Modbus document (V118), ha-solarman deye_hybrid.yaml, kellerza/sunsynk single_phase.py. Not yet checked on hardware: read on the Pi5 and compare with the inverter display.",
+        "entity_category": "diagnostic",
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": true
+          }
+        }
+      },
+      {
+        "address": 259,
+        "name": "tou_power_4",
+        "label": "TOU slot 4 power",
+        "unit": "W",
+        "data_type": "uint16",
+        "register_type": "holding",
+        "access": "RD/WR",
+        "writable": true,
+        "write_min": 0,
+        "write_max": 8000,
+        "category": "tou",
+        "poll_group": "settings",
+        "description": "259 (0x0103). Max battery power for TOU slot 4, W (D1 0-8000). Source: Deye single-phase Modbus document (V118), ha-solarman deye_hybrid.yaml, kellerza/sunsynk single_phase.py. Not yet checked on hardware: read on the Pi5 and compare with the inverter display.",
+        "entity_category": "diagnostic",
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": true
+          }
+        }
+      },
+      {
+        "address": 260,
+        "name": "tou_power_5",
+        "label": "TOU slot 5 power",
+        "unit": "W",
+        "data_type": "uint16",
+        "register_type": "holding",
+        "access": "RD/WR",
+        "writable": true,
+        "write_min": 0,
+        "write_max": 8000,
+        "category": "tou",
+        "poll_group": "settings",
+        "description": "260 (0x0104). Max battery power for TOU slot 5, W (D1 0-8000). Source: Deye single-phase Modbus document (V118), ha-solarman deye_hybrid.yaml, kellerza/sunsynk single_phase.py. Not yet checked on hardware: read on the Pi5 and compare with the inverter display.",
+        "entity_category": "diagnostic",
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": true
+          }
+        }
+      },
+      {
+        "address": 261,
+        "name": "tou_power_6",
+        "label": "TOU slot 6 power",
+        "unit": "W",
+        "data_type": "uint16",
+        "register_type": "holding",
+        "access": "RD/WR",
+        "writable": true,
+        "write_min": 0,
+        "write_max": 8000,
+        "category": "tou",
+        "poll_group": "settings",
+        "description": "261 (0x0105). Max battery power for TOU slot 6, W (D1 0-8000). Source: Deye single-phase Modbus document (V118), ha-solarman deye_hybrid.yaml, kellerza/sunsynk single_phase.py. Not yet checked on hardware: read on the Pi5 and compare with the inverter display.",
+        "entity_category": "diagnostic",
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": true
+          }
+        }
+      },
+      {
+        "address": 262,
+        "name": "tou_voltage_1",
+        "label": "TOU slot 1 voltage",
+        "unit": "V",
+        "data_type": "uint16",
+        "register_type": "holding",
+        "access": "RD",
+        "category": "tou",
+        "poll_group": "settings",
+        "scale": 100,
+        "description": "262 (0x0106). Target battery voltage for TOU slot 1, 0.01 V (used when 213 = voltage mode). Source: Deye single-phase Modbus document (V118), ha-solarman deye_hybrid.yaml. Not yet checked on hardware: read on the Pi5 and compare with the inverter display.",
+        "entity_category": "diagnostic",
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": true
+          }
+        }
+      },
+      {
+        "address": 263,
+        "name": "tou_voltage_2",
+        "label": "TOU slot 2 voltage",
+        "unit": "V",
+        "data_type": "uint16",
+        "register_type": "holding",
+        "access": "RD",
+        "category": "tou",
+        "poll_group": "settings",
+        "scale": 100,
+        "description": "263 (0x0107). Target battery voltage for TOU slot 2, 0.01 V (used when 213 = voltage mode). Source: Deye single-phase Modbus document (V118), ha-solarman deye_hybrid.yaml. Not yet checked on hardware: read on the Pi5 and compare with the inverter display.",
+        "entity_category": "diagnostic",
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": true
+          }
+        }
+      },
+      {
+        "address": 264,
+        "name": "tou_voltage_3",
+        "label": "TOU slot 3 voltage",
+        "unit": "V",
+        "data_type": "uint16",
+        "register_type": "holding",
+        "access": "RD",
+        "category": "tou",
+        "poll_group": "settings",
+        "scale": 100,
+        "description": "264 (0x0108). Target battery voltage for TOU slot 3, 0.01 V (used when 213 = voltage mode). Source: Deye single-phase Modbus document (V118), ha-solarman deye_hybrid.yaml. Not yet checked on hardware: read on the Pi5 and compare with the inverter display.",
+        "entity_category": "diagnostic",
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": true
+          }
+        }
+      },
+      {
+        "address": 265,
+        "name": "tou_voltage_4",
+        "label": "TOU slot 4 voltage",
+        "unit": "V",
+        "data_type": "uint16",
+        "register_type": "holding",
+        "access": "RD",
+        "category": "tou",
+        "poll_group": "settings",
+        "scale": 100,
+        "description": "265 (0x0109). Target battery voltage for TOU slot 4, 0.01 V (used when 213 = voltage mode). Source: Deye single-phase Modbus document (V118), ha-solarman deye_hybrid.yaml. Not yet checked on hardware: read on the Pi5 and compare with the inverter display.",
+        "entity_category": "diagnostic",
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": true
+          }
+        }
+      },
+      {
+        "address": 266,
+        "name": "tou_voltage_5",
+        "label": "TOU slot 5 voltage",
+        "unit": "V",
+        "data_type": "uint16",
+        "register_type": "holding",
+        "access": "RD",
+        "category": "tou",
+        "poll_group": "settings",
+        "scale": 100,
+        "description": "266 (0x010A). Target battery voltage for TOU slot 5, 0.01 V (used when 213 = voltage mode). Source: Deye single-phase Modbus document (V118), ha-solarman deye_hybrid.yaml. Not yet checked on hardware: read on the Pi5 and compare with the inverter display.",
+        "entity_category": "diagnostic",
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": true
+          }
+        }
+      },
+      {
+        "address": 267,
+        "name": "tou_voltage_6",
+        "label": "TOU slot 6 voltage",
+        "unit": "V",
+        "data_type": "uint16",
+        "register_type": "holding",
+        "access": "RD",
+        "category": "tou",
+        "poll_group": "settings",
+        "scale": 100,
+        "description": "267 (0x010B). Target battery voltage for TOU slot 6, 0.01 V (used when 213 = voltage mode). Source: Deye single-phase Modbus document (V118), ha-solarman deye_hybrid.yaml. Not yet checked on hardware: read on the Pi5 and compare with the inverter display.",
+        "entity_category": "diagnostic",
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": true
+          }
+        }
+      },
+      {
+        "address": 268,
+        "name": "tou_soc_1",
+        "label": "TOU slot 1 SOC",
+        "unit": "%",
+        "data_type": "uint16",
+        "register_type": "holding",
+        "access": "RD/WR",
+        "writable": true,
+        "write_min": 0,
+        "write_max": 100,
+        "category": "tou",
+        "poll_group": "settings",
+        "description": "268 (0x010C). Target SOC for TOU slot 1, % (used with a BMS). Source: Deye single-phase Modbus document (V118), ha-solarman deye_hybrid.yaml, kellerza/sunsynk single_phase.py. Checked on hardware (SG05LP1, 2026-11-03): 85 %.",
+        "entity_category": "diagnostic",
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": true
+          }
+        }
+      },
+      {
+        "address": 269,
+        "name": "tou_soc_2",
+        "label": "TOU slot 2 SOC",
+        "unit": "%",
+        "data_type": "uint16",
+        "register_type": "holding",
+        "access": "RD/WR",
+        "writable": true,
+        "write_min": 0,
+        "write_max": 100,
+        "category": "tou",
+        "poll_group": "settings",
+        "description": "269 (0x010D). Target SOC for TOU slot 2, % (used with a BMS). Source: Deye single-phase Modbus document (V118), ha-solarman deye_hybrid.yaml, kellerza/sunsynk single_phase.py. Checked on hardware (SG05LP1, 2026-11-03): 85 %.",
+        "entity_category": "diagnostic",
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": true
+          }
+        }
+      },
+      {
+        "address": 270,
+        "name": "tou_soc_3",
+        "label": "TOU slot 3 SOC",
+        "unit": "%",
+        "data_type": "uint16",
+        "register_type": "holding",
+        "access": "RD/WR",
+        "writable": true,
+        "write_min": 0,
+        "write_max": 100,
+        "category": "tou",
+        "poll_group": "settings",
+        "description": "270 (0x010E). Target SOC for TOU slot 3, % (used with a BMS). Source: Deye single-phase Modbus document (V118), ha-solarman deye_hybrid.yaml, kellerza/sunsynk single_phase.py. Checked on hardware (SG05LP1, 2026-11-03): 85 %.",
+        "entity_category": "diagnostic",
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": true
+          }
+        }
+      },
+      {
+        "address": 271,
+        "name": "tou_soc_4",
+        "label": "TOU slot 4 SOC",
+        "unit": "%",
+        "data_type": "uint16",
+        "register_type": "holding",
+        "access": "RD/WR",
+        "writable": true,
+        "write_min": 0,
+        "write_max": 100,
+        "category": "tou",
+        "poll_group": "settings",
+        "description": "271 (0x010F). Target SOC for TOU slot 4, % (used with a BMS). Source: Deye single-phase Modbus document (V118), ha-solarman deye_hybrid.yaml, kellerza/sunsynk single_phase.py. Checked on hardware (SG05LP1, 2026-11-03): 85 %.",
+        "entity_category": "diagnostic",
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": true
+          }
+        }
+      },
+      {
+        "address": 272,
+        "name": "tou_soc_5",
+        "label": "TOU slot 5 SOC",
+        "unit": "%",
+        "data_type": "uint16",
+        "register_type": "holding",
+        "access": "RD/WR",
+        "writable": true,
+        "write_min": 0,
+        "write_max": 100,
+        "category": "tou",
+        "poll_group": "settings",
+        "description": "272 (0x0110). Target SOC for TOU slot 5, % (used with a BMS). Source: Deye single-phase Modbus document (V118), ha-solarman deye_hybrid.yaml, kellerza/sunsynk single_phase.py. Checked on hardware (SG05LP1, 2026-11-03): 85 %.",
+        "entity_category": "diagnostic",
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": true
+          }
+        }
+      },
+      {
+        "address": 273,
+        "name": "tou_soc_6",
+        "label": "TOU slot 6 SOC",
+        "unit": "%",
+        "data_type": "uint16",
+        "register_type": "holding",
+        "access": "RD/WR",
+        "writable": true,
+        "write_min": 0,
+        "write_max": 100,
+        "category": "tou",
+        "poll_group": "settings",
+        "description": "273 (0x0111). Target SOC for TOU slot 6, % (used with a BMS). Source: Deye single-phase Modbus document (V118), ha-solarman deye_hybrid.yaml, kellerza/sunsynk single_phase.py. Checked on hardware (SG05LP1, 2026-11-03): 85 %.",
+        "entity_category": "diagnostic",
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": true
+          }
+        }
+      },
+      {
+        "address": 274,
+        "name": "tou_flags_1",
+        "label": "TOU slot 1 flags",
+        "unit": "",
+        "data_type": "uint16",
+        "register_type": "holding",
+        "access": "RD",
+        "category": "tou",
+        "poll_group": "settings",
+        "description": "274 (0x0112). Charge/mode flags of TOU slot 1: bit0 grid charge, bit1 gen charge, bit2 GM, bit3 BU, bit4 CH mode (kellerza also 0x40 'sell'). Full word. Source: Deye single-phase Modbus document (V118), ha-solarman deye_hybrid.yaml, kellerza/sunsynk single_phase.py. Checked on hardware (SG05LP1, 2026-11-03): Gen charge, GM (grid-charge bit not set).",
+        "bits": {
+          "0": "Grid charge",
+          "1": "Gen charge",
+          "2": "GM",
+          "3": "BU",
+          "4": "CH mode"
+        },
+        "entity_category": "diagnostic",
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": true
+          }
+        }
+      },
+      {
+        "address": 275,
+        "name": "tou_flags_2",
+        "label": "TOU slot 2 flags",
+        "unit": "",
+        "data_type": "uint16",
+        "register_type": "holding",
+        "access": "RD",
+        "category": "tou",
+        "poll_group": "settings",
+        "description": "275 (0x0113). Charge/mode flags of TOU slot 2: bit0 grid charge, bit1 gen charge, bit2 GM, bit3 BU, bit4 CH mode (kellerza also 0x40 'sell'). Full word. Source: Deye single-phase Modbus document (V118), ha-solarman deye_hybrid.yaml, kellerza/sunsynk single_phase.py. Checked on hardware (SG05LP1, 2026-11-03): Gen charge, GM (grid-charge bit not set).",
+        "bits": {
+          "0": "Grid charge",
+          "1": "Gen charge",
+          "2": "GM",
+          "3": "BU",
+          "4": "CH mode"
+        },
+        "entity_category": "diagnostic",
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": true
+          }
+        }
+      },
+      {
+        "address": 276,
+        "name": "tou_flags_3",
+        "label": "TOU slot 3 flags",
+        "unit": "",
+        "data_type": "uint16",
+        "register_type": "holding",
+        "access": "RD",
+        "category": "tou",
+        "poll_group": "settings",
+        "description": "276 (0x0114). Charge/mode flags of TOU slot 3: bit0 grid charge, bit1 gen charge, bit2 GM, bit3 BU, bit4 CH mode (kellerza also 0x40 'sell'). Full word. Source: Deye single-phase Modbus document (V118), ha-solarman deye_hybrid.yaml, kellerza/sunsynk single_phase.py. Checked on hardware (SG05LP1, 2026-11-03): Gen charge, GM (grid-charge bit not set).",
+        "bits": {
+          "0": "Grid charge",
+          "1": "Gen charge",
+          "2": "GM",
+          "3": "BU",
+          "4": "CH mode"
+        },
+        "entity_category": "diagnostic",
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": true
+          }
+        }
+      },
+      {
+        "address": 277,
+        "name": "tou_flags_4",
+        "label": "TOU slot 4 flags",
+        "unit": "",
+        "data_type": "uint16",
+        "register_type": "holding",
+        "access": "RD",
+        "category": "tou",
+        "poll_group": "settings",
+        "description": "277 (0x0115). Charge/mode flags of TOU slot 4: bit0 grid charge, bit1 gen charge, bit2 GM, bit3 BU, bit4 CH mode (kellerza also 0x40 'sell'). Full word. Source: Deye single-phase Modbus document (V118), ha-solarman deye_hybrid.yaml, kellerza/sunsynk single_phase.py. Checked on hardware (SG05LP1, 2026-11-03): Gen charge, GM (grid-charge bit not set).",
+        "bits": {
+          "0": "Grid charge",
+          "1": "Gen charge",
+          "2": "GM",
+          "3": "BU",
+          "4": "CH mode"
+        },
+        "entity_category": "diagnostic",
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": true
+          }
+        }
+      },
+      {
+        "address": 278,
+        "name": "tou_flags_5",
+        "label": "TOU slot 5 flags",
+        "unit": "",
+        "data_type": "uint16",
+        "register_type": "holding",
+        "access": "RD",
+        "category": "tou",
+        "poll_group": "settings",
+        "description": "278 (0x0116). Charge/mode flags of TOU slot 5: bit0 grid charge, bit1 gen charge, bit2 GM, bit3 BU, bit4 CH mode (kellerza also 0x40 'sell'). Full word. Source: Deye single-phase Modbus document (V118), ha-solarman deye_hybrid.yaml, kellerza/sunsynk single_phase.py. Checked on hardware (SG05LP1, 2026-11-03): Gen charge, GM (grid-charge bit not set).",
+        "bits": {
+          "0": "Grid charge",
+          "1": "Gen charge",
+          "2": "GM",
+          "3": "BU",
+          "4": "CH mode"
+        },
+        "entity_category": "diagnostic",
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": true
+          }
+        }
+      },
+      {
+        "address": 279,
+        "name": "tou_flags_6",
+        "label": "TOU slot 6 flags",
+        "unit": "",
+        "data_type": "uint16",
+        "register_type": "holding",
+        "access": "RD",
+        "category": "tou",
+        "poll_group": "settings",
+        "description": "279 (0x0117). Charge/mode flags of TOU slot 6: bit0 grid charge, bit1 gen charge, bit2 GM, bit3 BU, bit4 CH mode (kellerza also 0x40 'sell'). Full word. Source: Deye single-phase Modbus document (V118), ha-solarman deye_hybrid.yaml, kellerza/sunsynk single_phase.py. Checked on hardware (SG05LP1, 2026-11-03): Gen charge, GM (grid-charge bit not set).",
+        "bits": {
+          "0": "Grid charge",
+          "1": "Gen charge",
+          "2": "GM",
+          "3": "BU",
+          "4": "CH mode"
+        },
+        "entity_category": "diagnostic",
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": true
+          }
+        }
+      },
+      {
+        "address": 280,
+        "name": "special_functions",
+        "label": "Special functions",
+        "unit": "",
+        "data_type": "uint16",
+        "register_type": "holding",
+        "access": "RD",
+        "category": "settings",
+        "poll_group": "settings",
+        "description": "280 (0x0118). Special functions, a packed word: bit14 'lithium battery loss reports fault enable' (the BMS-loss stop; F58 is raised only when it is set). Also micro-inverter cut-off, peak shaving and DRM bits. Read as a whole word; set bit14 at the display, never over Modbus v1 (no masked write). Source: Deye single-phase Modbus document (V118), ha-solarman deye_hybrid.yaml, kellerza/sunsynk single_phase.py. Not yet checked on hardware: read on the Pi5 and compare with the inverter display.",
+        "bits": {
+          "14": "Lithium battery loss fault enable"
+        },
+        "entity_category": "diagnostic",
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": true
+          }
+        }
+      },
+      {
+        "address": 322,
+        "name": "bms_alarm_flag",
+        "label": "BMS alarm flag",
+        "unit": "",
+        "data_type": "uint16",
+        "register_type": "holding",
+        "access": "RD",
+        "category": "bms",
+        "poll_group": "normal",
+        "description": "322 (0x0142). Lithium battery alarm flag as the inverter receives it (0x359 warnings on CAN); the bit mapping is not yet known. Source: Deye single-phase Modbus document (V118), ha-solarman deye_hybrid.yaml. Not yet checked on hardware: read on the Pi5 and compare with the inverter display.",
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": true
+          }
+        }
+      },
+      {
+        "address": 323,
+        "name": "bms_fault_flag",
+        "label": "BMS fault flag",
+        "unit": "",
+        "data_type": "uint16",
+        "register_type": "holding",
+        "access": "RD",
+        "category": "bms",
+        "poll_group": "normal",
+        "description": "323 (0x0143). Lithium battery fault flag as the inverter receives it (0x359 protection on CAN); the bit mapping is not yet known. Source: Deye single-phase Modbus document (V118), ha-solarman deye_hybrid.yaml. Not yet checked on hardware: read on the Pi5 and compare with the inverter display.",
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": true
+          }
+        }
+      },
+      {
+        "address": 324,
+        "name": "bms_flag_2",
+        "label": "BMS flag 2",
+        "unit": "",
+        "data_type": "uint16",
+        "register_type": "holding",
+        "access": "RD",
+        "category": "bms",
+        "poll_group": "normal",
+        "description": "324 (0x0144). Lithium battery flag 2: bit1 'force charge' (mirrors the 0x35C force-charge request on CAN). Source: Deye single-phase Modbus document (V118), ha-solarman deye_hybrid.yaml. Not yet checked on hardware: read on the Pi5 and compare with the inverter display.",
+        "bits": {
+          "1": "Force charge"
+        },
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": true
+          }
+        }
+      },
+      {
+        "address": 325,
+        "name": "bms_protocol",
+        "label": "BMS protocol",
+        "unit": "",
+        "data_type": "uint16",
+        "register_type": "holding",
+        "access": "RD",
+        "category": "bms",
+        "poll_group": "static",
+        "description": "325 (0x0145). Lithium battery type / BMS protocol selected: D1 list 0 PYLON/SOLAX generic CAN, 5 Pylon 485, 10 Shenggao CAN, etc. (kellerza publishes a different list, so the raw number is shown too). A wrong value loses the BMS (F58). Source: Deye single-phase Modbus document (V118), ha-solarman deye_hybrid.yaml, kellerza/sunsynk single_phase.py. Checked on hardware (SG05LP1, 2026-11-03): PYLON/SOLAX generic CAN.",
+        "enum": {
+          "0": "PYLON/SOLAX generic CAN",
+          "1": "Tianbangda 485",
+          "2": "KOK",
+          "3": "Keith",
+          "4": "Topai",
+          "5": "Pylon 485",
+          "6": "Jelis 485",
+          "7": "Sunwoda 485",
+          "8": "Xinruineng 485",
+          "9": "Tianbangda 485 (b)",
+          "10": "Shenggao CAN"
+        },
+        "entity_category": "diagnostic",
+        "defaults": {
+          "mqtt": {
+            "enabled": true
+          },
+          "influxdb": {
+            "enabled": true
+          }
+        }
       }
     ],
     "calculated": [
+    {
+      "name": "load_ema_1h",
+      "label": "House load (1 h average)",
+      "unit": "W",
+      "expr": "ema(0 - power_load, 3600)",
+      "poll_group": "fast",
+      "category": "inverter",
+      "decimals": 0
+    },
       {
         "name": "energy_active_import",
         "label": "Grid import (total)",
@@ -1719,6 +3319,1012 @@
         "topic": "status/active",
         "measurement": "status",
         "category": "status"
+      }
+    ],
+    "commands": {
+    "grid_charge_control": {
+      "label": "Grid charge control (enable + current)",
+      "params": {
+        "enable": {
+          "label": "Enable grid charging",
+          "allowed": [
+            0,
+            1
+          ],
+          "required": true
+        },
+        "current": {
+          "label": "Grid charge current",
+          "unit": "A",
+          "min": 0,
+          "max": 185,
+          "required": true
+        }
+      },
+      "guard": [
+        {
+          "read": "device_type",
+          "in": [
+            3,
+            768
+          ]
+        }
+      ],
+      "writes": [
+        {
+          "register": "grid_charge_current",
+          "value": "${current}"
+        },
+        {
+          "register": "grid_charge_enable",
+          "value": "${enable}"
+        }
+      ],
+      "settle_s": 2,
+      "verify": [
+        {
+          "read": "grid_charge_current",
+          "expect": "${current}"
+        },
+        {
+          "read": "grid_charge_enable",
+          "expect": "${enable}"
+        }
+      ],
+      "readback_group": "settings",
+      "channel": "grid_charge",
+      "on": "${enable} > 0",
+      "safe": {
+        "enable": 0,
+        "current": 0
+      },
+      "confirm": true,
+      "skip_if_set": true
+    },
+      "set_tou_slot_1": {
+        "label": "TOU slot 1 setpoints",
+        "params": {
+          "time": {
+            "label": "Start time (HHMM)",
+            "unit": "",
+            "min": 0,
+            "max": 2359,
+            "required": true
+          },
+          "soc": {
+            "label": "Target/floor SOC",
+            "unit": "%",
+            "min": 0,
+            "max": 100,
+            "required": true
+          },
+          "power": {
+            "label": "Slot power",
+            "unit": "W",
+            "min": 0,
+            "max": 8000,
+            "required": true
+          }
+        },
+        "guard": [
+          {
+            "read": "device_type",
+            "in": [
+              3,
+              768
+            ]
+          }
+        ],
+        "writes": [
+          {
+            "register": "tou_time_1",
+            "value": "${time}"
+          },
+          {
+            "register": "tou_power_1",
+            "value": "${power}"
+          },
+          {
+            "register": "tou_soc_1",
+            "value": "${soc}"
+          }
+        ],
+        "settle_s": 2,
+        "verify": [
+          {
+            "read": "tou_time_1",
+            "expect": "${time}"
+          },
+          {
+            "read": "tou_power_1",
+            "expect": "${power}"
+          },
+          {
+            "read": "tou_soc_1",
+            "expect": "${soc}"
+          }
+        ],
+        "readback_group": "settings",
+        "confirm": true,
+        "skip_if_set": true
+      },
+      "set_tou_slot_2": {
+        "label": "TOU slot 2 setpoints",
+        "params": {
+          "time": {
+            "label": "Start time (HHMM)",
+            "unit": "",
+            "min": 0,
+            "max": 2359,
+            "required": true
+          },
+          "soc": {
+            "label": "Target/floor SOC",
+            "unit": "%",
+            "min": 0,
+            "max": 100,
+            "required": true
+          },
+          "power": {
+            "label": "Slot power",
+            "unit": "W",
+            "min": 0,
+            "max": 8000,
+            "required": true
+          }
+        },
+        "guard": [
+          {
+            "read": "device_type",
+            "in": [
+              3,
+              768
+            ]
+          }
+        ],
+        "writes": [
+          {
+            "register": "tou_time_2",
+            "value": "${time}"
+          },
+          {
+            "register": "tou_power_2",
+            "value": "${power}"
+          },
+          {
+            "register": "tou_soc_2",
+            "value": "${soc}"
+          }
+        ],
+        "settle_s": 2,
+        "verify": [
+          {
+            "read": "tou_time_2",
+            "expect": "${time}"
+          },
+          {
+            "read": "tou_power_2",
+            "expect": "${power}"
+          },
+          {
+            "read": "tou_soc_2",
+            "expect": "${soc}"
+          }
+        ],
+        "readback_group": "settings",
+        "confirm": true,
+        "skip_if_set": true
+      },
+      "set_tou_slot_3": {
+        "label": "TOU slot 3 setpoints",
+        "params": {
+          "time": {
+            "label": "Start time (HHMM)",
+            "unit": "",
+            "min": 0,
+            "max": 2359,
+            "required": true
+          },
+          "soc": {
+            "label": "Target/floor SOC",
+            "unit": "%",
+            "min": 0,
+            "max": 100,
+            "required": true
+          },
+          "power": {
+            "label": "Slot power",
+            "unit": "W",
+            "min": 0,
+            "max": 8000,
+            "required": true
+          }
+        },
+        "guard": [
+          {
+            "read": "device_type",
+            "in": [
+              3,
+              768
+            ]
+          }
+        ],
+        "writes": [
+          {
+            "register": "tou_time_3",
+            "value": "${time}"
+          },
+          {
+            "register": "tou_power_3",
+            "value": "${power}"
+          },
+          {
+            "register": "tou_soc_3",
+            "value": "${soc}"
+          }
+        ],
+        "settle_s": 2,
+        "verify": [
+          {
+            "read": "tou_time_3",
+            "expect": "${time}"
+          },
+          {
+            "read": "tou_power_3",
+            "expect": "${power}"
+          },
+          {
+            "read": "tou_soc_3",
+            "expect": "${soc}"
+          }
+        ],
+        "readback_group": "settings",
+        "confirm": true,
+        "skip_if_set": true
+      },
+      "set_tou_slot_4": {
+        "label": "TOU slot 4 setpoints",
+        "params": {
+          "time": {
+            "label": "Start time (HHMM)",
+            "unit": "",
+            "min": 0,
+            "max": 2359,
+            "required": true
+          },
+          "soc": {
+            "label": "Target/floor SOC",
+            "unit": "%",
+            "min": 0,
+            "max": 100,
+            "required": true
+          },
+          "power": {
+            "label": "Slot power",
+            "unit": "W",
+            "min": 0,
+            "max": 8000,
+            "required": true
+          }
+        },
+        "guard": [
+          {
+            "read": "device_type",
+            "in": [
+              3,
+              768
+            ]
+          }
+        ],
+        "writes": [
+          {
+            "register": "tou_time_4",
+            "value": "${time}"
+          },
+          {
+            "register": "tou_power_4",
+            "value": "${power}"
+          },
+          {
+            "register": "tou_soc_4",
+            "value": "${soc}"
+          }
+        ],
+        "settle_s": 2,
+        "verify": [
+          {
+            "read": "tou_time_4",
+            "expect": "${time}"
+          },
+          {
+            "read": "tou_power_4",
+            "expect": "${power}"
+          },
+          {
+            "read": "tou_soc_4",
+            "expect": "${soc}"
+          }
+        ],
+        "readback_group": "settings",
+        "confirm": true,
+        "skip_if_set": true
+      },
+      "set_tou_slot_5": {
+        "label": "TOU slot 5 setpoints",
+        "params": {
+          "time": {
+            "label": "Start time (HHMM)",
+            "unit": "",
+            "min": 0,
+            "max": 2359,
+            "required": true
+          },
+          "soc": {
+            "label": "Target/floor SOC",
+            "unit": "%",
+            "min": 0,
+            "max": 100,
+            "required": true
+          },
+          "power": {
+            "label": "Slot power",
+            "unit": "W",
+            "min": 0,
+            "max": 8000,
+            "required": true
+          }
+        },
+        "guard": [
+          {
+            "read": "device_type",
+            "in": [
+              3,
+              768
+            ]
+          }
+        ],
+        "writes": [
+          {
+            "register": "tou_time_5",
+            "value": "${time}"
+          },
+          {
+            "register": "tou_power_5",
+            "value": "${power}"
+          },
+          {
+            "register": "tou_soc_5",
+            "value": "${soc}"
+          }
+        ],
+        "settle_s": 2,
+        "verify": [
+          {
+            "read": "tou_time_5",
+            "expect": "${time}"
+          },
+          {
+            "read": "tou_power_5",
+            "expect": "${power}"
+          },
+          {
+            "read": "tou_soc_5",
+            "expect": "${soc}"
+          }
+        ],
+        "readback_group": "settings",
+        "confirm": true,
+        "skip_if_set": true
+      },
+      "set_tou_slot_6": {
+        "label": "TOU slot 6 setpoints",
+        "params": {
+          "time": {
+            "label": "Start time (HHMM)",
+            "unit": "",
+            "min": 0,
+            "max": 2359,
+            "required": true
+          },
+          "soc": {
+            "label": "Target/floor SOC",
+            "unit": "%",
+            "min": 0,
+            "max": 100,
+            "required": true
+          },
+          "power": {
+            "label": "Slot power",
+            "unit": "W",
+            "min": 0,
+            "max": 8000,
+            "required": true
+          }
+        },
+        "guard": [
+          {
+            "read": "device_type",
+            "in": [
+              3,
+              768
+            ]
+          }
+        ],
+        "writes": [
+          {
+            "register": "tou_time_6",
+            "value": "${time}"
+          },
+          {
+            "register": "tou_power_6",
+            "value": "${power}"
+          },
+          {
+            "register": "tou_soc_6",
+            "value": "${soc}"
+          }
+        ],
+        "settle_s": 2,
+        "verify": [
+          {
+            "read": "tou_time_6",
+            "expect": "${time}"
+          },
+          {
+            "read": "tou_power_6",
+            "expect": "${power}"
+          },
+          {
+            "read": "tou_soc_6",
+            "expect": "${soc}"
+          }
+        ],
+        "readback_group": "settings",
+        "confirm": true,
+        "skip_if_set": true
+      },
+      "set_grid_charge_start_voltage": {
+        "label": "Grid-charge start voltage",
+        "params": {
+          "value": {
+            "label": "Voltage below which grid charging starts",
+            "unit": "V",
+            "min": 46.0,
+            "max": 54.0,
+            "required": true
+          }
+        },
+        "guard": [
+          {
+            "read": "device_type",
+            "in": [
+              3,
+              768
+            ]
+          }
+        ],
+        "writes": [
+          {
+            "register": "grid_charge_start_voltage",
+            "value": "${value}"
+          }
+        ],
+        "settle_s": 2,
+        "verify": [
+          {
+            "read": "grid_charge_start_voltage",
+            "expect": "${value}"
+          }
+        ],
+        "readback_group": "settings",
+        "confirm": true,
+        "skip_if_set": true
+      },
+      "set_work_mode": {
+        "label": "Work mode (grid export)",
+        "params": {
+          "value": {
+            "label": "0 selling first, 1 zero export to load, 2 zero export to CT",
+            "allowed": [
+              0,
+              1,
+              2
+            ],
+            "required": true
+          }
+        },
+        "guard": [
+          {
+            "read": "device_type",
+            "in": [
+              3,
+              768
+            ]
+          }
+        ],
+        "writes": [
+          {
+            "register": "work_mode",
+            "value": "${value}"
+          }
+        ],
+        "settle_s": 2,
+        "verify": [
+          {
+            "read": "work_mode",
+            "expect": "${value}"
+          }
+        ],
+        "readback_group": "settings",
+        "confirm": true,
+        "skip_if_set": true
+      },
+      "set_solar_sell": {
+        "label": "Sell surplus PV to grid",
+        "params": {
+          "value": {
+            "label": "0 off, 1 on",
+            "allowed": [
+              0,
+              1
+            ],
+            "required": true
+          }
+        },
+        "guard": [
+          {
+            "read": "device_type",
+            "in": [
+              3,
+              768
+            ]
+          }
+        ],
+        "writes": [
+          {
+            "register": "solar_sell",
+            "value": "${value}"
+          }
+        ],
+        "settle_s": 2,
+        "verify": [
+          {
+            "read": "solar_sell",
+            "expect": "${value}"
+          }
+        ],
+        "readback_group": "settings",
+        "confirm": true,
+        "skip_if_set": true
+      },
+      "set_max_sell_power": {
+        "label": "Max sell power (export limit)",
+        "params": {
+          "value": {
+            "label": "Max export to grid",
+            "unit": "W",
+            "min": 0,
+            "max": 8000,
+            "required": true
+          }
+        },
+        "guard": [
+          {
+            "read": "device_type",
+            "in": [
+              3,
+              768
+            ]
+          }
+        ],
+        "writes": [
+          {
+            "register": "max_sell_power",
+            "value": "${value}"
+          }
+        ],
+        "settle_s": 2,
+        "verify": [
+          {
+            "read": "max_sell_power",
+            "expect": "${value}"
+          }
+        ],
+        "readback_group": "settings",
+        "confirm": true,
+        "skip_if_set": true
+      },
+      "set_zero_export_power": {
+        "label": "Zero-export grid-draw target",
+        "params": {
+          "value": {
+            "label": "Grid draw target in zero-export",
+            "unit": "W",
+            "min": 0,
+            "max": 500,
+            "required": true
+          }
+        },
+        "guard": [
+          {
+            "read": "device_type",
+            "in": [
+              3,
+              768
+            ]
+          }
+        ],
+        "writes": [
+          {
+            "register": "zero_export_power",
+            "value": "${value}"
+          }
+        ],
+        "settle_s": 2,
+        "verify": [
+          {
+            "read": "zero_export_power",
+            "expect": "${value}"
+          }
+        ],
+        "readback_group": "settings",
+        "confirm": true,
+        "skip_if_set": true
+      },
+      "set_grid_charge_start_soc": {
+        "label": "Grid-charge start SOC",
+        "params": {
+          "value": {
+            "label": "SOC below which grid charging starts",
+            "unit": "%",
+            "min": 0,
+            "max": 100,
+            "required": true
+          }
+        },
+        "guard": [
+          {
+            "read": "device_type",
+            "in": [
+              3,
+              768
+            ]
+          }
+        ],
+        "writes": [
+          {
+            "register": "grid_charge_start_soc",
+            "value": "${value}"
+          }
+        ],
+        "settle_s": 2,
+        "verify": [
+          {
+            "read": "grid_charge_start_soc",
+            "expect": "${value}"
+          }
+        ],
+        "readback_group": "settings",
+        "confirm": true,
+        "skip_if_set": true
+      },
+      "set_max_charge_current": {
+        "safe": {
+          "value": 180
+        },
+        "label": "Battery max charge current",
+        "params": {
+          "value": {
+            "label": "Battery max charge current",
+            "unit": "A",
+            "min": 0,
+            "max": 185,
+            "required": true
+          }
+        },
+        "guard": [
+          {
+            "read": "device_type",
+            "in": [
+              3,
+              768
+            ]
+          },
+          {
+            "read": "battery_type",
+            "expect": 1
+          }
+        ],
+        "writes": [
+          {
+            "register": "battery_max_charge_current",
+            "value": "${value}"
+          }
+        ],
+        "settle_s": 2,
+        "verify": [
+          {
+            "read": "battery_max_charge_current",
+            "expect": "${value}"
+          }
+        ],
+        "readback_group": "settings",
+        "confirm": true,
+        "channel": "battery_limits",
+        "skip_if_set": true
+      },
+      "set_max_discharge_current": {
+        "safe": {
+          "value": 90
+        },
+        "label": "Battery max discharge current",
+        "params": {
+          "value": {
+            "label": "Battery max discharge current",
+            "unit": "A",
+            "min": 0,
+            "max": 185,
+            "required": true
+          }
+        },
+        "guard": [
+          {
+            "read": "device_type",
+            "in": [
+              3,
+              768
+            ]
+          },
+          {
+            "read": "battery_type",
+            "expect": 1
+          }
+        ],
+        "writes": [
+          {
+            "register": "battery_max_discharge_current",
+            "value": "${value}"
+          }
+        ],
+        "settle_s": 2,
+        "verify": [
+          {
+            "read": "battery_max_discharge_current",
+            "expect": "${value}"
+          }
+        ],
+        "readback_group": "settings",
+        "confirm": true,
+        "channel": "battery_limits",
+        "skip_if_set": true
+      },
+      "set_grid_charge_current": {
+        "label": "Grid charge current",
+        "params": {
+          "value": {
+            "label": "Grid charge current",
+            "unit": "A",
+            "min": 0,
+            "max": 185,
+            "required": true
+          }
+        },
+        "guard": [
+          {
+            "read": "device_type",
+            "in": [
+              3,
+              768
+            ]
+          }
+        ],
+        "writes": [
+          {
+            "register": "grid_charge_current",
+            "value": "${value}"
+          }
+        ],
+        "settle_s": 2,
+        "verify": [
+          {
+            "read": "grid_charge_current",
+            "expect": "${value}"
+          }
+        ],
+        "readback_group": "settings",
+        "confirm": true,
+        "channel": "grid_charge",
+        "skip_if_set": true
+      },
+      "grid_charge": {
+        "label": "Grid charging",
+        "params": {
+          "value": {
+            "label": "0 off, 1 on",
+            "allowed": [
+              0,
+              1
+            ],
+            "required": true
+          }
+        },
+        "guard": [
+          {
+            "read": "device_type",
+            "in": [
+              3,
+              768
+            ]
+          }
+        ],
+        "writes": [
+          {
+            "register": "grid_charge_enable",
+            "value": "${value}"
+          }
+        ],
+        "settle_s": 2,
+        "verify": [
+          {
+            "read": "grid_charge_enable",
+            "expect": "${value}"
+          }
+        ],
+        "safe": {
+          "value": 0
+        },
+        "readback_group": "settings",
+        "confirm": true,
+        "on": "${value} > 0",
+        "channel": "grid_charge",
+        "skip_if_set": true
+      }
+    },
+    "channels": {
+      "battery_limits": {
+        "label": "Battery current limits",
+        "combine": "min",
+        "min_interval_s": 600
+      },
+      "grid_charge": {
+        "label": "Grid charging",
+        "combine": "min",
+        "min_interval_s": 300
+      }
+    },
+    "rules": [
+      {
+        "id": "charge_from_excess",
+        "label": "Charge the battery from surplus — keep the grid at ~0 (MBG-controlled)",
+        "description": "Closed-loop grid regulator: the signal is the grid export (negative grid CT power). While the house exports over 50 W it RAISES the max charge current so the battery soaks the surplus; while it imports over 50 W it lowers it; within +/-50 W of zero it holds. This self-limits — as the charge current rises, export falls and the signal falls, so it settles at grid ~0 — unlike a PV-minus-load signal, which does not include the battery and so cannot self-limit (FINDINGS DEYE-CTRL-1). Targets set_max_charge_current (reg 210) over RS485. START IN SHADOW: confirm the grid CT sign and placement on the bench before arming, and tune the dead band and gain. In strict zero-export the firmware already holds the grid near zero, so this rule mostly holds and only acts if export appears; its clearer home is an export-enabled or grid-charge setup. Reg 210 is an EEPROM setting; the closed loop re-commands only on drift and the 60 s channel pace keep writes rare — a bench demonstration of the control logic, not a permanent sub-minute regulator (the production knob is the BMS-CAN charge-current limit, ADR-0039). NOT ARMED by default: like every preset it is offered in shadow and is only armed once a write budget for reg 210 is agreed (design \u00a72) \u2014 the channel is paced at 600 s and the loop writes only on read-back drift.",
+        "kind": "trim",
+        "layer": "optimize",
+        "target": {
+          "device": "{device}",
+          "command": "set_max_charge_current"
+        },
+        "signal": "0 - {device}.grid_ct_power",
+        "signal_unit": "W",
+        "above": 50,
+        "below": -50,
+        "gain": 0.02,
+        "step": 5,
+        "min": 2,
+        "max": 180,
+        "off_value": 0,
+        "timing": {
+          "every_s": 30,
+          "min_interval_s": 600,
+          "reassert_s": 1800
+        },
+        "stale_after_s": 120,
+        "on_stale": 0,
+        "on_disable": "hold"
+      },
+      {
+        "id": "charge_soc_ceiling",
+        "label": "Stop charging at a SOC ceiling (MBG-controlled)",
+        "description": "Protective charge ceiling: while the battery SOC is at or above 95 % it asks set_max_charge_current (reg 210) for 0 A, so charging stops; it releases when SOC falls back under 90 % (a 5-point hysteresis band). It runs in the SAFETY layer, above the charge_from_excess trim on the same battery_limits channel, so the trim regulates under this cap and this cap wins when the battery is full. Below the ceiling the rule abstains (else = no opinion) and leaves the current to a lower layer. on_stale = 0 fails closed (no charge while the SOC reading is stale). START IN SHADOW; tune the 95/90 band to the pack, and raise it toward the BMS's own limit. Reg 210 is an EEPROM setting, so the condition re-commands only on change and the channel pace keeps writes rare.",
+        "kind": "condition",
+        "layer": "safety",
+        "target": {
+          "device": "{device}",
+          "command": "set_max_charge_current"
+        },
+        "when": "{device}.soc >= 95",
+        "release": "{device}.soc < 90",
+        "then": {
+          "params": {
+            "value": 0
+          }
+        },
+        "else": null,
+        "timing": {
+          "every_s": 30,
+          "min_interval_s": 600,
+          "reassert_s": 1800
+        },
+        "stale_after_s": 120,
+        "on_stale": 0,
+        "on_disable": "hold"
+      },
+      {
+        "id": "grid_charge_window",
+        "label": "Charge from the grid only in a time window (MBG-controlled)",
+        "description": "Time-of-use grid charging done with an MBG schedule instead of the inverter's TOU program: it sets set_grid_charge_current (reg 230) to a charge rate inside an off-peak window and back to 0 A outside it. The example charges at 40 A from 01:00 and stops at 06:00, every day -- edit the windows, the rate and the days. This is the RS485-native alternative to arming a TOU slot, which needs the slot enable (248) and the per-slot grid-charge flag bit (274-279) -- single-bit (masked) writes that are not in this engine yet. For the grid to actually charge the battery the inverter must have grid charging armed (a TOU slot with its grid-charge bit set, plus grid_charge_enable); with that off this rule only moves reg 230 and nothing flows. START IN SHADOW. Reg 230 is an EEPROM setting, so the schedule writes only when the active window changes (a few times a day).",
+        "kind": "schedule",
+        "layer": "schedule",
+        "target": {
+          "device": "{device}",
+          "command": "set_grid_charge_current"
+        },
+        "schedule": [
+          {
+            "days": "all",
+            "at": "00:00",
+            "params": {
+              "value": 0
+            },
+            "label": "no grid charge (default)"
+          },
+          {
+            "days": "all",
+            "at": "01:00",
+            "params": {
+              "value": 40
+            },
+            "label": "off-peak: charge from grid"
+          },
+          {
+            "days": "all",
+            "at": "06:00",
+            "params": {
+              "value": 0
+            },
+            "label": "peak: stop grid charge"
+          }
+        ],
+        "timing": {
+          "every_s": 60,
+          "min_interval_s": 300,
+          "reassert_s": 1800
+        },
+        "stale_after_s": 120,
+        "on_stale": "hold",
+        "on_disable": "hold"
+      },
+      {
+        "id": "grid_charge_soc_floor",
+        "label": "Grid-charge off a SOC floor when the house load is low (MBG-controlled)",
+        "description": "A worked example of a load-aware floor protection: when the battery SOC drops below 15 % AND the house load averaged over ~1 h (load_ema_1h) is under 2000 W, it enables grid charging at 10 A via grid_charge_control; it keeps charging until SOC recovers over 20 % (hysteresis), then turns grid charging off. Below the floor but with a high recent load it waits, so it does not pull from the grid during heavy demand. The 1 h figure is an exponential moving average (ema(load, 3600)), not a fixed-window mean. It runs in the SAFETY layer on the grid_charge channel (paced at 300 s). on_stale/on_disable fall back to the command's safe params (grid charge off). IMPORTANT: for the inverter to actually draw from the grid a TOU slot's grid-charge bit must be set (on Solarman, or a future masked write) -- with it off this rule still decides and writes enable/current, but no grid power flows. START IN SHADOW; adapt the 15/20 % floor, the 2000 W load gate and the 10 A rate to the site. This is one example; a template can ship several.",
+        "kind": "condition",
+        "layer": "safety",
+        "target": {
+          "device": "{device}",
+          "command": "grid_charge_control"
+        },
+        "when": "{device}.soc < 15 and {device}.load_ema_1h < 2000",
+        "release": "{device}.soc > 20",
+        "then": {
+          "params": {
+            "enable": 1,
+            "current": 10
+          }
+        },
+        "else": {
+          "params": {
+            "enable": 0,
+            "current": 0
+          }
+        },
+        "timing": {
+          "every_s": 30,
+          "min_interval_s": 300,
+          "reassert_s": 1800
+        },
+        "stale_after_s": 120,
+        "on_stale": "safe",
+        "on_disable": "safe"
       }
     ]
   }

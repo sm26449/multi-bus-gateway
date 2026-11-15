@@ -16,7 +16,7 @@ from typing import Any, Dict, List
 
 from fastapi import APIRouter, Body, HTTPException, Request
 
-from .. import device_types as dtypes
+from ..catalog import device_types as dtypes
 
 logger = logging.getLogger(__name__)
 
@@ -26,7 +26,7 @@ def build(ctx) -> APIRouter:
     config = ctx.config
 
     def _template_rows():
-        from ..device_kind import template_kind
+        from ..catalog.device_kind import template_kind
         return [(template_kind(t, t.id)[0], list(getattr(t, 'types', None) or []))
                 for t in ctx.template_registry.list()]
 

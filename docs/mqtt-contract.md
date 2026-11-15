@@ -20,6 +20,9 @@ are the canonical names in [canonical-fields.md](canonical-fields.md).
 | `mqtt.qos` | `0` | QoS of the same publishes; a few topics are hard-wired to QoS 1 (marked below) |
 | `mqtt.publish_mode` | `changed` | `changed` = a value topic publishes only when the rounded value differs from the last confirmed publish; `all` = every poll |
 | `mqtt.heartbeat_interval` | `0` (off) | in `changed` mode, republish an unchanged value after this many seconds |
+| `mqtt.min_interval_s` | `0` (off) | device/calc value topics: a changed value publishes at most every N s per topic; a value held back is sent once the interval elapses (the latest wins; the final value of a series is never lost). Elapsed time down to 90 % of N counts, so a poll of the same period is not halved by jitter. Virtual meters and rules read in-process, unthrottled |
+| `mqtt.deadband_pct` | `0` (off) | device/calc value topics: a numeric change within this % of the last **published** value is not published (the heartbeat still republishes) |
+| `mqtt.throttle_poll_groups` | `[]` (all) | poll-group names the two knobs above apply to (e.g. `[realtime]`); empty = every group |
 | `mqtt.compat_aliases` | `[]` | dual-publish: every topic starting with `from` is also published under `to` (with `leaves` renames); see below |
 | `mqtt.ha_discovery.enabled` / `.prefix` | `true` / `homeassistant` | Home Assistant discovery |
 | `mqtt.allow_write_entities` | `false` | gate for every inbound write topic (commands, HA `…/set`) together with `security.allow_writes`; refused while `mqtt.username` is empty |
@@ -205,8 +208,12 @@ verify sequence; a newer value of the same register replaces one still
 waiting (a slider dragged across its range writes the first and the last),
 and a write that waited more than 30 s expires. Every outcome is published
 on `<dev>/cmd/result` with `"command": "raw:holding@<address>"` and `"via":
-"ha"`. Retained commands are ignored and cleared. Code: `multibus/api.py` — `_mqtt_write_command`;
-`multibus/mqtt_publisher.py` — `_write_entity_config`.
+"ha"` for a write that arrived over MQTT. The same raw write (and every named
+command) issued over REST publishes the identical result here with `"via":
+"api"` — since the §2 command seam (CMD-9/10), a REST command and an MQTT command
+share one dispatch path and differ only in the `via`/`by` stamp. Retained
+commands are ignored and cleared. Code: `multibus/api/command_exec.py`
+(MQTT face, `via:"ha"`); `multibus/routes/writes.py` (REST face, `via:"api"`).
 
 ## Rules — `mbg/rules/<rule_id>/…`
 

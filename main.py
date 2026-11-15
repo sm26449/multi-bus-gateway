@@ -99,6 +99,8 @@ class GatewayApp:
         """Initialize all components."""
         logger.info("Multi-Bus Gateway starting...")
 
+        # (Core ports are wired at import of multibus.api — imported above — so
+        # Config.load() already has them, whichever main.py the image ships.)
         self._first_run_provision()
 
         # Load configuration — through the last-known-good seatbelt: a
@@ -205,6 +207,9 @@ class GatewayApp:
             get_template=self.template_registry.get,
             event_log=self.app.state.event_log,
             state_dir=self.config.config_path.parent,
+            # the device's realtime poll health: the waveform archive holds off
+            # while it lags (PQ-STALL-1); resolved per call (clients get rebuilt)
+            get_realtime_stats=self._realtime_stats_for,
         )
         self.app.state.pq_manager = self.pq_manager   # for the /api/pq routes
 
@@ -282,6 +287,14 @@ class GatewayApp:
                         self.vmeter_manager.publish_ha_discovery()
             else:
                 logger.warning("MQTT connection failed - will retry automatically")
+
+    def _realtime_stats_for(self, device_id: str):
+        """get_stats() of a device's live client, or None."""
+        try:
+            _i, _cfg, client = self.app.state.registry.find(device_id)
+            return client.get_stats() if client is not None and hasattr(client, "get_stats") else None
+        except Exception:  # noqa: BLE001
+            return None
 
     def _connect_modbus_background(self, client, host, port, label="Modbus", tcp=True):
         """Connect one Modbus client in a background thread. For TCP we first

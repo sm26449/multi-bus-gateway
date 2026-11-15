@@ -27,5 +27,6 @@ def test_every_409_branch_of_the_ui_lets_a_blocked_config_through():
 
 
 def test_the_blocked_answer_carries_the_marker():
-    src = (UI.parent.parent / "multibus" / "api.py").read_text(encoding="utf-8")
+    api_dir = UI.parent.parent / "multibus" / "api"   # a package now (P0.8b)
+    src = "\n".join(p.read_text(encoding="utf-8") for p in sorted(api_dir.glob("*.py")))
     assert '"config_blocked": True' in src

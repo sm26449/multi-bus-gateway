@@ -56,14 +56,20 @@ SHAPES = {
 }
 WALL0 = 1792465200.0                                  # 2026-10-20 06:00 EEST
 # the keys, present but OFF: must be the same as absent
-OFF_KEYS = {'timing': {'boot_wait_s': 0, 'urgent_retries': 0}, 'resume_on_boot': False}
+OFF_KEYS = {'timing': {'boot_wait_s': 0, 'urgent_retries': 0, 'step_down_hold_s': 0},
+            'resume_on_boot': False, 'step_down_margin': 0}
 ON_KEYS = {'timing': {'boot_wait_s': 60, 'urgent_retries': 3}, 'resume_on_boot': True}
+# OV-STEPDOWN-1 (design §2), alone and with the lot C keys
+STEPDOWN_KEYS = {'timing': {'step_down_hold_s': 90}, 'step_down_margin': 0.5}
+ALL_KEYS = {'timing': {**ON_KEYS['timing'], **STEPDOWN_KEYS['timing']}, 'resume_on_boot': True,
+            'step_down_margin': 0.5}
 
 
 def _with(raw, keys):
     if raw.get('kind') != 'steps':
         return raw
-    return {**raw, 'timing': {**raw.get('timing', {}), **keys['timing']}, 'resume_on_boot': keys['resume_on_boot']}
+    return {**raw, **{k: v for k, v in keys.items() if k != 'timing'},
+            'timing': {**raw.get('timing', {}), **keys['timing']}}
 
 
 def _bound(mod, raw):
@@ -215,15 +221,25 @@ def _level(st):
     return labels.index(st.state) if st.state in labels else -1
 
 
+@pytest.mark.parametrize('keys', ['lot-c', 'stepdown', 'all'])
 @pytest.mark.parametrize('shape', ['ov', 'ov-guard', 'ov-stale-safe', 'ov-for', 'ov-norate'])
-def test_with_the_keys_the_rule_is_never_less_protective(shape):
+def test_with_the_keys_the_rule_is_never_less_protective(shape, keys):
     """Every write goes through (L = 0, §1.7): at every tick the rule with the
     keys is at least as far up the steps, and the limit last written to its
-    device (or what the device held, before any write) is never higher."""
+    device (or what the device held, before any write) is never higher.
+
+    The step-down keys (OV-STEPDOWN-1) send on other ticks than the rule
+    without them (a held step sends nothing, an escalation skips the rate
+    limit), so the two rate-limit windows drift apart. Their wire is compared
+    while both last wrote a STEP's value: a value an operator forced, a
+    stale safe/fixed value or a clamp is the knob's, and the window it went
+    out in is not the keys' doing (the level is compared on every tick)."""
     raw = SHAPES[shape]
+    on = {'lot-c': ON_KEYS, 'stepdown': STEPDOWN_KEYS, 'all': ALL_KEYS}[keys]
+    step_values = {float(s['value']) for s in raw['steps']}
     for seed in range(60):
         wire = None
-        for a, b, da, db, t in _drive(1000 + seed, raw, _with(raw, ON_KEYS), new, new, fail=False):
+        for a, b, da, db, t in _drive(1000 + seed, raw, _with(raw, on), new, new, fail=False):
             if wire is None:                          # what the devices held before any write
                 wire = [da.actual, db.actual]
             for i, d in enumerate((da, db)):
@@ -232,5 +248,7 @@ def test_with_the_keys_the_rule_is_never_less_protective(shape):
             if a.state == 'stale' or b.state == 'stale' or a.forced or b.forced:
                 continue
             assert _level(b) >= _level(a), (seed, t, a.state, b.state)
+            if keys != 'lot-c' and not all(w is not None and float(w) in step_values for w in wire):
+                continue
             if wire[0] is not None and wire[1] is not None:
                 assert wire[1] <= wire[0], (seed, t, wire)

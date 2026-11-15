@@ -6,6 +6,7 @@ template's (`power_limit` on fronius_sunspec_inverter); nothing here knows a
 register address."""
 import json
 
+import pytest
 
 from multibus.config import SourceConfig
 from tests.test_devices import write_config
@@ -59,6 +60,15 @@ class _Drv:
     def poll_now(self, group=None):
         self.swept.append(group)
         return 1
+
+    # a ModbusClient is RegisterReadable (ADR-0033); this double stands in for
+    # one, so it answers the whole capability, not just the poll_now the
+    # read-back path happens to call
+    def read_register(self, *a, **kw):
+        return None
+
+    def read_registers_batch(self, registers):
+        return {}
 
     def get_stats(self):
         return {'connected': True, 'successful_reads': 1, 'failed_reads': 0}
@@ -354,6 +364,120 @@ def test_the_ha_slider_and_the_mqtt_topic_go_through_the_same_command(tmp_path):
     cfg.mqtt.allow_write_entities = False
     mq.topics['pv/inverters/1/cmd/power_limit']('20'); app.state.command_dispatch.drain()
     assert len(inv.writes) == n
+
+
+@needs_tc
+def test_a_non_numeric_ha_command_publishes_a_rejection(tmp_path):
+    """REFAC-NUM-1: a command-backed HA number entity given a non-numeric value must
+    PUBLISH a rejection on cmd/result, not silently drop it. The bare-register path
+    already refuses; the command-backed branch used to only log and return."""
+    inv = _Inverter(sf=-2)
+    mq = _Mqtt()
+    cfg, app, client = _app(tmp_path, {'pv-u1': inv}, mqtt=mq)
+    from multibus.device_template import TemplateRegistry
+    reg = next(r for r in TemplateRegistry().get('fronius_sunspec_inverter').registers
+               if r.name == 'power_limit_pct')
+    before = len(inv.writes)
+    app.state.mqtt_write_command('pv-u1', reg, 'abc'); app.state.command_dispatch.drain()
+    results = [json.loads(p) for t, p, _ in mq.sent if t.endswith('/cmd/result')]
+    assert results and results[-1]['status'] == 'rejected', mq.sent
+    assert 'number' in results[-1]['reason'].lower()
+    assert len(inv.writes) == before            # nothing was written
+
+
+@needs_tc
+@pytest.mark.parametrize('operation', ['import', 'restore'])
+def test_a_bundle_lock_binds_the_running_registry(tmp_path, operation):
+    """REFAC-LOCK-1: a write-lock a restore/import brings back must take effect on
+    the RUNNING registry at once (not only in the on-disk config, and not only on a
+    full apply) — a lock is safety-critical. Before the fix the config showed locked
+    but the stale registry device was still unlocked, so a command still wrote."""
+    import io
+    import zipfile
+
+    import yaml
+    inv = _Inverter(sf=-2)
+    cfg, app, client = _app(tmp_path, {'pv-u1': inv})
+    assert client.post('/api/devices/pv-u1/write-lock', json={'locked': True}).status_code == 200
+    sid = client.post('/api/config/snapshots', json={'label': 'locked'}).json()['snapshot']['id']
+    assert client.post('/api/devices/pv-u1/write-lock', json={'locked': False}).status_code == 200
+    if operation == 'restore':
+        r = client.post(f'/api/config/snapshots/{sid}/restore?apply=false')
+    else:
+        doc = yaml.safe_load(cfg.config_path.read_text())
+        doc['endpoints'][0]['write_locked'] = True
+        data = io.BytesIO()
+        with zipfile.ZipFile(data, 'w') as z:
+            z.writestr('config.yaml', yaml.safe_dump(doc))
+        r = client.post('/api/config/import?apply=false', content=data.getvalue())
+    assert r.status_code == 200, r.text
+    assert cfg.get_device('pv-u1').write_locked                         # config reflects the lock
+    assert app.state.registry.find('pv-u1')[1].write_locked, "running registry not re-bound"
+    command = client.post('/api/devices/pv-u1/commands/power_limit', json={'value': 60})
+    assert command.status_code == 403 and not inv.writes               # the lock is enforced
+
+
+@needs_tc
+@pytest.mark.parametrize('apply_flag', [False, True])
+def test_a_retargeted_device_refuses_writes_until_restart(tmp_path, apply_flag):
+    """REFAC-RETARGET-1 / ADR-0042: an import/restore that moves a device's wire does
+    not rebuild a non-primary client, so a write would hit the OLD physical device. The
+    head refuses it (restart required) instead of writing the old wire; the config and
+    restart_required already reflect the move."""
+    import io
+    import zipfile
+
+    import yaml
+    old_wire = _Inverter(sf=-2)
+    cfg, app, client = _app(tmp_path, {'pv-u1': old_wire})
+    cfg.save_yaml_config()
+    old_client = app.state.registry.find('pv-u1')[2]
+    doc = yaml.safe_load(cfg.config_path.read_text())
+    for src in doc['endpoints'][0]['groups'][0]['sources']:
+        if src.get('protocol') == 'tcp':
+            src['host'] = '192.0.2.99'
+    b = io.BytesIO()
+    with zipfile.ZipFile(b, 'w') as z:
+        z.writestr('config.yaml', yaml.safe_dump(doc))
+    # lock_writes=false isolates the ADR-0042 RETARGET guard: with F20's default
+    # (ADR-0041 L2) the import would also write-lock the device, so a write would be
+    # refused as LOCKED (safer, but it would shadow the retarget-specific refusal this
+    # test is about). F20's own locking is covered in tests/test_snapshots.py.
+    r = client.post('/api/config/import?lock_writes=false&apply=' + str(apply_flag).lower(), content=b.getvalue())
+    assert r.status_code == 200, r.text
+    assert r.json()['restart_required'] is True
+    assert app.state.registry.find('pv-u1')[2] is old_client           # client not rebuilt
+    command = client.post('/api/devices/pv-u1/commands/power_limit', json={'value': 60})
+    assert command.status_code == 403 and not old_wire.writes          # refused, old wire untouched
+    assert 'retarget' in command.json()['reason'].lower()
+
+
+@needs_tc
+def test_f20_default_lock_refuses_the_write_before_the_retarget_guard(tmp_path):
+    """The F20 safe default (ADR-0041 L2) and the ADR-0042 retarget guard layer: an
+    import that retargets a device WITHOUT opting out of locking refuses a write as
+    LOCKED (the first, broader gate) — so the retargeted old wire is never written
+    either way. Documents the interaction as a decision, not an accident."""
+    import io
+    import zipfile
+
+    import yaml
+    old_wire = _Inverter(sf=-2)
+    cfg, app, client = _app(tmp_path, {'pv-u1': old_wire})
+    cfg.save_yaml_config()
+    doc = yaml.safe_load(cfg.config_path.read_text())
+    for src in doc['endpoints'][0]['groups'][0]['sources']:
+        if src.get('protocol') == 'tcp':
+            src['host'] = '192.0.2.99'
+    b = io.BytesIO()
+    with zipfile.ZipFile(b, 'w') as z:
+        z.writestr('config.yaml', yaml.safe_dump(doc))
+    # default import → F20 locks every path
+    r = client.post('/api/config/import', content=b.getvalue())
+    assert r.status_code == 200 and r.json().get('write_locked_forced') is True
+    command = client.post('/api/devices/pv-u1/commands/power_limit', json={'value': 60})
+    assert command.status_code == 403 and not old_wire.writes          # refused, old wire untouched
+    assert 'lock' in command.json()['reason'].lower()                  # LOCKED is the first gate, not retarget
 
 
 @needs_tc

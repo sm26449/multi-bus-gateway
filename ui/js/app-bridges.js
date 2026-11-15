@@ -166,6 +166,84 @@ Object.assign(JanitzaMonitor.prototype, {
         this.bridgeScan(id);
     },
 
+    // ── what changes on a bridge card while the page is open (UI-LIVE-1) ──
+    // The bridge's state (dot, words) and, per bus, the busy meter, the line
+    // health chip and a tap's frame count. Drawn by the section and patched in
+    // place by _bridgesLiveTick, so the two can never say it differently.
+    _bridgeStateHtml(b, part) {
+        const st = b.state || {};
+        if (part === 'dot') {
+            const dot = { online: 'var(--success,#22c55e)', degraded: 'var(--warning,#f59e0b)',
+                          offline: 'var(--danger,#ef4444)', unknown: 'var(--text-secondary)', checking: 'var(--text-secondary)' };
+            return `<span class="status-dot" style="--dot:${dot[st.status] || dot.unknown}" title="${this._esc(st.detail || st.status || '')}"></span>`;
+        }
+        return `<span class="field-hint">${this._esc(this.t('bridges.state.' + (st.status || 'unknown'), st.status || 'unknown'))}${st.detail ? ' — ' + this._esc(st.detail) : ''}</span>`;
+    },
+
+    _bridgePortLiveHtml(b, p) {
+        const t = (k, d, x) => this.t(k, d, x);
+        return `${p.busy ? this._busyMeter(p) : ''}${p.diag ? this._diagChip(b.id, p) : ''}${p.tapped
+            ? `<span class="sink-pill ${p.wire?.error ? 'bad' : 'ok'}" title="${this._esc(p.wire?.error || t('bridges.tappedHint', 'Another master polls this bus; the gateway only listens. Scan, Check mode and polled devices are off here — they would transmit.'))}"><i aria-hidden="true" class="bi bi-ear"></i> ${p.wire?.error ? this._esc(t('bridges.tapLost', 'listening — link lost')) : this._esc(t('bridges.tapped', 'listening · {frames} frames · {crc} CRC errors', { frames: p.wire?.frames ?? 0, crc: p.wire?.crc_errors ?? 0 }))}</span>`
+            : ''}`;
+    },
+
+    // While the Devices list is shown, the bridge cards follow the gateway:
+    // every few seconds the live parts are asked again and patched where they
+    // changed. The list itself is not redrawn (an open menu, the focus, the
+    // find filter stay); a part holding the focus waits for the next round.
+    // A bridge or bus added or removed is drawn by the action that did it.
+    BRIDGES_LIVE_MS: 5000,
+
+    _bridgesLiveStart() {
+        this._bridgesLiveStop();
+        this._bridgesLiveGen = (this._bridgesLiveGen || 0) + 1;
+        if (!(this._bridges || []).length) return;
+        this._bridgesLiveTimer = setInterval(() => {
+            if (this.currentPage !== 'devices' || this._sessionDead) { this._bridgesLiveStop(); return; }
+            if (document.hidden || this._bridgesLiveBusy) return;
+            const list = document.getElementById('devicesListView');
+            if (!list || list.offsetParent === null) return;
+            this._bridgesLiveBusy = true;
+            this._bridgesLiveTick().catch(() => {}).finally(() => { this._bridgesLiveBusy = false; });
+        }, this.BRIDGES_LIVE_MS);
+    },
+
+    _bridgesLiveStop() {
+        if (this._bridgesLiveTimer) { clearInterval(this._bridgesLiveTimer); this._bridgesLiveTimer = null; }
+    },
+
+    async _bridgesLiveTick() {
+        // a round asked before the list was drawn again (an action reloaded it)
+        // must not put the older answer back
+        const gen = this._bridgesLiveGen;
+        const r = await fetch('/api/bridges');
+        if (!r.ok || gen !== this._bridgesLiveGen) return;
+        const bridges = (await r.json()).bridges || [];
+        if (gen !== this._bridgesLiveGen) return;
+        this._bridges = bridges;
+        const host = document.getElementById('devicesList');
+        if (!host) return;
+        // the new markup goes through the browser's own serialisation before it
+        // is compared: the raw string never equals innerHTML (attributes are
+        // re-written), so the part would be replaced every round — a tooltip,
+        // a press, a screen reader's place lost
+        const norm = document.createElement('template');
+        const put = (el, html) => {
+            if (!el || el.contains(document.activeElement)) return;
+            norm.innerHTML = html;
+            if (norm.innerHTML !== el.innerHTML) el.innerHTML = html;
+        };
+        for (const b of bridges) {
+            const card = host.querySelector(`.bridge-card[data-bridge="${CSS.escape(String(b.id))}"]`);
+            if (!card) continue;
+            put(card.querySelector('[data-live-state]'), this._bridgeStateHtml(b, 'dot'));
+            put(card.querySelector('[data-live-state-text]'), this._bridgeStateHtml(b, 'text'));
+            for (const p of b.ports || []) {
+                put(card.querySelector(`[data-live-port="${CSS.escape(String(p.port))}"]`), this._bridgePortLiveHtml(b, p));
+            }
+        }
+    },
+
     // ── the Devices page section ────────────────────────────────────────────
     _bridgesSectionHtml(bridges, healthColor) {
         if (!bridges.length) return '';
@@ -174,11 +252,8 @@ Object.assign(JanitzaMonitor.prototype, {
             <a class="btn btn-ghost btn-sm" href="/api/bridges/export" download><i aria-hidden="true" class="bi bi-download"></i> ${t('bridges.export', 'Export')}</a>
             <button data-admin class="btn btn-ghost btn-sm" ${this._act('openBridgesImport', [])}><i aria-hidden="true" class="bi bi-upload"></i> ${t('bridges.import', 'Import')}</button>
             <button data-admin class="btn btn-ghost btn-sm" ${this._act('openBridgesDiscover', [])}><i aria-hidden="true" class="bi bi-radar"></i> ${t('bridges.find', 'Find on the LAN')}</button></div>`;
-        const dot = { online: 'var(--success,#22c55e)', degraded: 'var(--warning,#f59e0b)',
-                      offline: 'var(--danger,#ef4444)', unknown: 'var(--text-secondary)', checking: 'var(--text-secondary)' };
         return bridges.map(b => {
             const ty = this._bridgeType(b.type);
-            const st = b.state || {};
             const ports = (b.ports || []).map(p => `
                 <div class="bridge-port">
                   <div class="bridge-port-head">
@@ -187,9 +262,7 @@ Object.assign(JanitzaMonitor.prototype, {
                     ${p.label ? `<span>${this._esc(p.label)}</span>` : ''}
                     ${p.serial_text || p.serial ? `<span class="dev-chip">${this._esc(p.serial_text || p.serial)}</span>` : ''}
                     <span class="field-hint">${this.tn('bridges.nDevices', (p.devices || []).length, '{n} devices')}</span>
-                    ${p.busy ? this._busyMeter(p) : ''}
-                    ${p.diag ? this._diagChip(b.id, p) : ''}
-                    ${p.tapped ? `<span class="sink-pill ${p.wire?.error ? 'bad' : 'ok'}" title="${this._esc(p.wire?.error || t('bridges.tappedHint', 'Another master polls this bus; the gateway only listens. Scan, Check mode and polled devices are off here — they would transmit.'))}"><i aria-hidden="true" class="bi bi-ear"></i> ${p.wire?.error ? this._esc(t('bridges.tapLost', 'listening — link lost')) : this._esc(t('bridges.tapped', 'listening · {frames} frames · {crc} CRC errors', { frames: p.wire?.frames ?? 0, crc: p.wire?.crc_errors ?? 0 }))}</span>` : ''}
+                    <span class="bridge-live" data-live-port="${this._esc(p.port)}">${this._bridgePortLiveHtml(b, p)}</span>
                     ${p.tapped ? '' : `<span class="bridge-port-actions">
                       <button data-admin class="btn btn-ghost btn-sm" ${this._act('busScan', [b.id, p.port])} title="${this._esc(t('bridges.scanBusHint', 'Ask every unit id on this bus who answers, and what it probably is'))}"><i aria-hidden="true" class="bi bi-search"></i> ${t('bridges.scanBus', 'Scan')}</button>
                       <button data-admin class="btn btn-ghost btn-sm" ${this._act('addDeviceOnBus', [b.id, p.port])} title="${this._esc(t('bridges.addDeviceHint', 'Add a device (a slave) on this bus'))}"><i aria-hidden="true" class="bi bi-plus-lg"></i> ${t('bridges.addDevice', 'Device')}</button>
@@ -202,14 +275,19 @@ Object.assign(JanitzaMonitor.prototype, {
                     // the device's own line and ⋯ (the device page's, one builder —
                     // a unit's too); a unit opens its installation, which says how it is read
                     const full = (this._devices || []).find(x => x.id === d.id);
+                    // A-MED-7: the row's "open" action is a dedicated <button> and
+                    // the ⋯ menu is its SIBLING — not a focusable menu nested inside
+                    // a role=button container (axe nested-interactive).
                     return `
-                    <div class="bridge-dev" role="button" tabindex="0" data-f="${this._esc(d.id)}" ${this._act(d.endpoint_id ? 'openEndpointDetail' : 'openDeviceDetail', [d.endpoint_id || d.id], { guard: '.dev-row-menu' })}>
-                      <span class="status-dot" style="--dot:${healthColor[d.health] || healthColor.idle}"></span>
-                      <span class="dev-chip">${this._esc(this.t('common.unitN', 'unit {n}', { n: d.unit_id }))}</span>
-                      ${d.tap ? `<span class="dev-chip" title="${this._esc(t('bridges.tapDevHint', 'listen-only'))}"><i aria-hidden="true" class="bi bi-ear"></i></span>` : ''}
-                      <span>${this._esc(d.name || d.id)}</span>
-                      ${full && !d.endpoint_id ? `<span class="field-hint bridge-dev-sum">${this._devSummaryHtml(full, { compact: true })}</span>` : ''}
-                      ${d.endpoint_id ? `<span class="field-hint">${t('bridges.inInstallation', 'in an installation')}</span>` : ''}
+                    <div class="bridge-dev" data-f="${this._esc(d.id)}">
+                      <button type="button" class="bridge-dev-open" ${this._act(d.endpoint_id ? 'openEndpointDetail' : 'openDeviceDetail', [d.endpoint_id || d.id])}>
+                        <span class="status-dot" style="--dot:${healthColor[d.health] || healthColor.idle}"></span>
+                        <span class="dev-chip">${this._esc(this.t('common.unitN', 'unit {n}', { n: d.unit_id }))}</span>
+                        ${d.tap ? `<span class="dev-chip" title="${this._esc(t('bridges.tapDevHint', 'listen-only'))}"><i aria-hidden="true" class="bi bi-ear"></i></span>` : ''}
+                        <span>${this._esc(d.name || d.id)}</span>
+                        ${full && !d.endpoint_id ? `<span class="field-hint bridge-dev-sum">${this._devSummaryHtml(full, { compact: true })}</span>` : ''}
+                        ${d.endpoint_id ? `<span class="field-hint">${t('bridges.inInstallation', 'in an installation')}</span>` : ''}
+                      </button>
                       ${full ? this._devRowMenuHtml(full, 'bridge') : ''}
                     </div>`; }).join('') || `<div class="field-hint bridge-dev">${t('bridges.noDevices', 'No device on this bus yet.')}</div>`}
                 </div>`).join('');
@@ -217,11 +295,11 @@ Object.assign(JanitzaMonitor.prototype, {
             <div class="bridge-card" data-bridge="${this._esc(b.id)}">
               <div class="bridge-head">
                 <i aria-hidden="true" class="bi bi-hdd-network"></i>
-                <span class="status-dot" style="--dot:${dot[st.status] || dot.unknown}" title="${this._esc(st.detail || st.status || '')}"></span>
+                <span class="bridge-live" data-live-state>${this._bridgeStateHtml(b, 'dot')}</span>
                 <b>${this._esc(b.name || b.id)}</b>
                 <span class="dev-chip">${this._esc(ty.name || b.type)}</span>
                 <code>${this._esc(b.host)}</code>
-                <span class="field-hint">${this._esc(t('bridges.state.' + (st.status || 'unknown'), st.status || 'unknown'))}${st.detail ? ' — ' + this._esc(st.detail) : ''}</span>
+                <span class="bridge-live" data-live-state-text>${this._bridgeStateHtml(b, 'text')}</span>
                 <span class="bridge-actions">
                   ${ty.discovery === 'api' ? `<button data-admin class="btn btn-ghost btn-sm" ${this._act('bridgeScan', [b.id])}><i aria-hidden="true" class="bi bi-arrow-repeat"></i> ${t('bridges.scan', 'Buses')}</button>` : ''}
                   <button class="btn btn-ghost btn-sm" ${this._act('bridgeSetup', [b.id])}><i aria-hidden="true" class="bi bi-wrench"></i> ${t('bridges.setup', 'Set-up')}</button>
@@ -400,11 +478,68 @@ Object.assign(JanitzaMonitor.prototype, {
             [t('bridges.diag.answered', 'Answered reads'), this._esc(m.ok ?? '—')],
             [t('bridges.diag.timeoutsLabel', 'Timeouts'), this._esc(m.timeouts ?? '—')],
             [t('bridges.diag.connErrors', 'Connection errors'), this._esc(m.connection ?? '—')],
-            [t('bridges.diag.exceptions', 'Exceptions (the slave said no)'), this._esc(m.exceptions ?? '—')],
+            // a tapped bus's CRC/exceptions once, not once per unit on it (TAP-DIAG-2)
+            [t('bridges.diag.exceptions', 'Exceptions (the slave said no)'), this._esc(m.exceptions_deduped ?? m.exceptions ?? '—')],
+            [t('bridges.diag.crcLabel', 'CRC errors'), this._esc(m.crc_deduped ?? m.crc ?? '—')],
           ]) : `<p class="field-hint">${this._esc(t('bridges.diag.noMbg', 'No device of the gateway reads this bus.'))}</p>`}
+          ${v.tap_bus ? this._tapBusHtml(v.tap_bus) : ''}
           <h4 class="tplu-h">${this._esc(t('bridges.diag.eventsTitle', 'Recent events on the bridge'))}</h4>
           ${ev ? `<ul class="br-diag-events">${ev}</ul>` : `<p class="field-hint">${this._esc(t('bridges.diag.noEvents', 'None.'))}</p>`}
         </section>`;
+    },
+
+    // a listen-only tap's bus (TAP-DIAG-2): the shared reader's counters ONCE
+    // for the bus, what its resync threw away, and per unit only its own
+    _tapBusHtml(tb) {
+        const t = (k, d, x) => this.t(k, d, x);
+        const n = v => this._esc(v ?? '—');
+        const dl = items => `<dl class="br-diag-dl">${items.map(([k, val]) => `<dt>${this._esc(k)}</dt><dd>${val}</dd>`).join('')}</dl>`;
+        const devs = (Array.isArray(tb.devices) ? tb.devices : []).map(d => `<tr>
+            <th scope="row">${this._esc(d.id)}</th><td>${n(d.windows)}</td><td>${n(d.updates)}</td>
+            <td>${n(d.implausible)}${d.implausible_windows ? ` <span class="field-hint">(${this._esc(t('bridges.tap.windowsDropped', '{n} windows dropped', { n: d.implausible_windows }))})</span>` : ''}</td>
+            <td>${d.staleness_age_s == null ? '—' : this._esc(this._secsText(d.staleness_age_s))}</td></tr>`).join('');
+        return `<section class="br-tap-bus" data-tap-bus>
+          <h4 class="tplu-h">${this._esc(t('bridges.tap.title', 'The tapped bus (counted once, shared by every listening device)'))}</h4>
+          <p class="field-hint">${this._esc(t('bridges.tap.lead', 'One reader hears the whole bus for all the devices that listen on it: these counters belong to the bus, not to any one device.'))}</p>
+          ${tb.open_error ? `<p class="field-error">${this._esc(tb.open_error)}</p>` : ''}
+          ${dl([
+            [t('bridges.tap.frames', 'Valid frames'), n(tb.frames)],
+            [t('bridges.diag.crcLabel', 'CRC errors'), n(tb.crc_errors)],
+            [t('bridges.tap.orphans', 'Frames with no partner'), n(tb.orphan_frames)],
+            [t('bridges.tap.exceptions', 'Exception responses'), n(tb.exception_responses)],
+            [t('bridges.tap.resync', 'Bytes skipped to realign'), n(tb.resync_dropped_bytes)],
+            [t('bridges.tap.unpaired', 'Responses with no matching request'), n(tb.unpaired_responses)],
+            [t('bridges.tap.acrossJunk', 'Paired across skipped bytes'), n(tb.paired_across_junk)],
+            [t('bridges.tap.inferred', 'Windows placed by their learned shape'), n(tb.inferred_windows)],
+          ])}
+          <h4 class="tplu-h">${this._esc(t('bridges.tap.junkTitle', 'Last skipped byte runs'))}</h4>
+          ${this._junkSamplesHtml(tb.junk_samples)}
+          <h4 class="tplu-h">${this._esc(t('bridges.tap.devTitle', 'Each listening device (its own)'))}</h4>
+          ${devs ? `<div class="br-table-wrap"><table class="tplu-table br-diag-table br-tap-devs"><thead><tr>
+            <th scope="col">${this._esc(t('bridges.tap.device', 'Device'))}</th>
+            <th scope="col">${this._esc(t('bridges.tap.windows', 'Windows'))}</th>
+            <th scope="col">${this._esc(t('bridges.tap.values', 'Values'))}</th>
+            <th scope="col">${this._esc(t('bridges.tap.implausible', 'Implausible values dropped'))}</th>
+            <th scope="col">${this._esc(t('bridges.tap.age', 'Last value'))}</th></tr></thead>
+            <tbody>${devs}</tbody></table></div>` : `<p class="field-hint">${this._esc(t('bridges.diag.noEvents', 'None.'))}</p>`}
+        </section>`;
+    },
+
+    // the resync's ring of discarded byte runs (newest first), hex — read-only
+    _junkSamplesHtml(samples) {
+        const t = (k, d, x) => this.t(k, d, x);
+        const rows = (Array.isArray(samples) ? samples : []).filter(s => s && typeof s === 'object').slice().reverse()
+            .map(s => {
+                const when = Number.isFinite(s.ts) ? `<time datetime="${new Date(s.ts * 1000).toISOString()}">${this._esc(new Date(s.ts * 1000).toLocaleTimeString(this._loc()))}</time>` : '—';
+                const hex = String(s.hex || '').replace(/(..)(?=.)/g, '$1 ');
+                return `<tr><td>${when}</td><td>${this._esc(s.bytes ?? '—')}</td><td><code class="br-junk-hex">${this._esc(hex)}</code></td></tr>`;
+            }).join('');
+        if (!rows) return `<p class="field-hint">${this._esc(t('bridges.tap.noJunk', 'None: the reader has not had to skip any bytes.'))}</p>`;
+        return `<div class="br-table-wrap"><table class="tplu-table br-diag-table br-junk"><thead><tr>
+            <th scope="col">${this._esc(t('bridges.tap.junkWhen', 'When'))}</th>
+            <th scope="col">${this._esc(t('bridges.tap.junkBytes', 'Bytes skipped'))}</th>
+            <th scope="col">${this._esc(t('bridges.tap.junkHex', 'First bytes (hex)'))}</th></tr></thead>
+            <tbody>${rows}</tbody></table></div>`;
     },
 
     async openBridgeHealth(bridgeId, port) {

@@ -238,8 +238,8 @@ try {
   await answer(page, 'Reach', 'address');
   await fill(page, 'Host', '127.0.0.7');
   await fill(page, 'Port', '4005');
+  await answer(page, 'Role', 'poll').catch(() => {});      // the role before the protocol (ADR-0031 §2)
   await answer(page, 'Speaks', 'modbus:rtu').catch(() => {});
-  await answer(page, 'Role', 'poll').catch(() => {});
   await page.click('#addDevNext');
   await page.waitForFunction(() => document.querySelector('#addDevRail [aria-current="step"]')?.dataset.shellStep === 'what', null, { timeout: 8000 });
   await page.click('#addDevBack');

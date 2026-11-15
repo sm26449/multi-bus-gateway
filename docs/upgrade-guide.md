@@ -9,16 +9,16 @@ An upgrade is just a new image over the same mounted config:
 
 ```bash
 # published image (default): pick the release, pull it, restart on it
-MBG_VERSION=3.98.0 docker compose pull multi-bus-gateway
-MBG_VERSION=3.98.0 docker compose up -d multi-bus-gateway
+MBG_VERSION=3.101.0-rc1 docker compose pull multi-bus-gateway
+MBG_VERSION=3.101.0-rc1 docker compose up -d multi-bus-gateway
 
 # from source: same, with a local build
 git pull && docker compose build multi-bus-gateway && docker compose up -d multi-bus-gateway
 ```
 
-Put `MBG_VERSION=3.98.0` in `.env` to pin the tag for every later
+Put `MBG_VERSION=<version>` (e.g. `3.101.0-rc1`) in `.env` to pin the tag for every later
 `docker compose up`; `latest` follows the newest release. **Rolling back** is
-the same command with the previous tag (`MBG_VERSION=3.92.1 …`) — read the
+the same command with the previous tag (`MBG_VERSION=3.98.2 …`) — read the
 downgrade warning below first, then restore the matching config snapshot
 (§Snapshots) if the newer version had migrated your config.
 
@@ -37,6 +37,85 @@ version) into `config.yaml` — see the downgrade section below. The stamp is
 informational: loading never depends on it, so the compatibility contract is
 exactly the above. (Device *templates* additionally carry a `schema_version`,
 and newer template schemas are rejected with a clear error.)
+
+## 3.98 → 3.101 — what to know before upgrading
+
+No config migration: nothing in `config.yaml` is renamed. Act on these:
+
+**Access and security**
+- **`/metrics` answers loopback only** unless the scraper is admitted. A
+  Prometheus on another host now gets **403**: add its IP or subnet to
+  `security.metrics_allowlist` (opens `/metrics` only), or have it admitted
+  by a set `security.allowlist`. See MANUAL §17.
+- **Passkey and password logins share one lockout per IP.** A locked-out IP
+  gets `429 {"error": "locked_out", "retry_after_s": N}` from passkey
+  `login/finish` too, and a malformed passkey assertion now counts as a
+  failed login (it used to be a 500).
+- To let the gateway switch a CAN interface (Settings → CAN), grant
+  `--cap-add NET_ADMIN` **and** `MBG_CAN_NET_ADMIN=1`; without them nothing
+  changes (MANUAL §5.5).
+
+**Backups, restores and reloads**
+- **A restore or an import locks every write path by default**
+  (`lock_writes=true`): after it, unlock each device deliberately. Locking
+  also suspends the rules that write (an over-voltage rule included) until
+  you unlock. A script that restores and expects writes to continue must
+  send `lock_writes=false`; `dry_run=true` shows what would be unlocked.
+- An import or restore now **starts added devices and stops removed ones**
+  without a restart. A device whose connection the bundle moved keeps its
+  old connection and **refuses writes (403) until a restart**; a command
+  still queued for a device that was rebuilt is refused (409).
+- **A reload is a clean load:** a section you deleted from `config.yaml`
+  returns to its default on the next reload or apply (it used to keep the
+  old in-memory value). A reload of a file that cannot be read is refused
+  and the running configuration is kept.
+
+**Data**
+- **InfluxDB: a numeric `<field>_code` beside each enum/bits field.** The
+  text stays in the field it always had (string); the raw code is written
+  as a float under `<field>_code` (absent when no code can be recovered).
+  New fields appear in the device's measurement; nothing existing changes
+  type. See [influxdb-schema.md](influxdb-schema.md).
+- A counter that steps **back** by a little is held, not adopted as a reset;
+  a lasting step back is adopted after 1 h.
+- An installation's voltage and frequency averages skip units that are
+  asleep or read 0.
+- A unit counts as **online** only while its fastest-polled values are
+  fresh: a unit kept "online" by a slow metadata register now reads offline
+  — the Status counts can drop.
+- **Home Assistant:** a disabled device announces nothing; its retained
+  discovery configs are cleared once. A virtual meter's discovery is
+  re-sent only on a broker reconnect or a configuration change (it was
+  republished every few minutes).
+- Optional MQTT throttling (`mqtt.min_interval_s`, `deadband_pct`,
+  `throttle_poll_groups`) is **off** unless set.
+- Updated bundled templates (Seplos V3 tap 1.10.0 with `valid_min` /
+  `valid_max` plausibility bounds, UMG 512 1.1.0 with monotonic counter
+  flags) reach a device only through **⋯ → Update from template…**.
+
+**Alerts**
+- **Virtual-meter alerts are on by default** (`alerts.signals.vmeter`):
+  not serving, serving held values, consumer lost. With alerting enabled
+  they fire after the upgrade; tune `alerts.vmeter` (or per meter in
+  `virtual_meters.yaml`) or set the signal to `false`.
+- The InfluxDB *dropped points* alert now names its cause (a schema/field
+  type rejection or a full buffer).
+- Successful commands are logged at INFO; repeated no-op commands and
+  refused logins are coalesced in the audit; the audit keeps 2 MB per file
+  (current + 5); successful health-probe requests no longer appear in the
+  access log.
+
+**Rules**
+- A rule's "the read-back already matches" now needs a read-back taken
+  **after** the rule's last write; a rule may write once more where it used
+  to trust an older read-back.
+
+**UI**
+- **The navigation moved:** Dashboard · Assets (Devices, Virtual Meters,
+  Virtual BMS) · Configuration (Rules, Templates) · System (Diagnostics,
+  Settings) · Status. Page addresses (`#/devices`, `#/vmeters`, `#/config`…)
+  are unchanged; a device's dashboard view is `#/dashboard/<device>`. A UI
+  automation that clicked the old top-level tabs must open the group first.
 
 ## 3.92 → 3.98 — what to know before upgrading
 

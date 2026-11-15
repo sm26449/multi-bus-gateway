@@ -1,13 +1,18 @@
-# CAN bus (`protocol: can`) — listen-only
+# CAN bus (`protocol: can`) — listen-only devices
 
 The gateway reads a CAN bus by **listening**: frames arrive, the template's
 signal rows decode them, and the values reach MQTT, InfluxDB, Home Assistant,
-the UI and the rules like any other device's. It never transmits — there is
-no code that could. The first map is the **Pylontech CAN** link between a
-battery's BMS and its inverter (`pylontech_can_inverter`).
+the UI and the rules like any other device's. A CAN device never transmits —
+its driver has no transmit path. The first map is the **Pylontech CAN** link
+between a battery's BMS and its inverter (`pylontech_can_inverter`).
+
+The only CAN transmitter in the gateway is the **Virtual BMS** (experimental,
+[MANUAL.md §11e](MANUAL.md#11e-virtual-bms--experimental)): a separate module
+that sends only while armed, and refuses to open a port that is listen-only.
+§6 below covers switching a port's mode from the gateway.
 
 This page is the how-to; the manual's short version is
-[MANUAL.md §5.5](MANUAL.md#55-can-listen-only).
+[MANUAL.md §5.5](MANUAL.md#55-can).
 
 ## 1. What you need
 
@@ -25,7 +30,7 @@ This page is the how-to; the manual's short version is
 
   `listen-only on` makes the controller itself silent (no ACK, no error
   frames): a second guarantee beside the driver having no transmit path.
-  It is **set by the operator**, not by the gateway. The driver reads the
+  It is set by the operator — on the host, or from Settings → CAN (§6). The driver reads the
   flag from the kernel each time it opens the interface: `listen_only` in
   its status (`true`, `false`, or `null` for an interface without one, such
   as `vcan`), and a warning in the log when it is `false`. Check it before
@@ -219,7 +224,43 @@ meters, :502 and OPC UA bind directly on the host — check for port clashes.
 The container stays on the host network for everything else too. Listen-only
 is set on the host (`ip link … listen-only on`).
 
-## 6. Tests
+## 6. Switching a port's mode from the gateway (Settings → CAN)
+
+**Settings → CAN** (and `GET /api/can-interfaces`) lists each interface with
+its mode, up/down, bitrate, controller state and the devices that read it.
+**Switch to Transmit** / **Switch to Listen-only** (or
+`POST /api/can-interfaces/{name}` with `mode`, `bitrate`, `up`) runs the same
+`ip link` sequence as §1: down, `type can … listen-only on|off`, up. Every
+change cycles the link.
+
+It needs `CAP_NET_ADMIN`, off by default. Grant it deliberately — both parts:
+
+```yaml
+services:
+  multi-bus-gateway:
+    network_mode: host
+    cap_add: [NET_ADMIN]
+    environment:
+      MBG_CAN_NET_ADMIN: "1"
+```
+
+The entrypoint drops root to the app user; with `MBG_CAN_NET_ADMIN=1` it
+keeps `CAP_NET_ADMIN` (only that) as an ambient capability across the drop,
+and the process still runs with `no-new-privs`. Without it a switch answers
+409 *MBG cannot change CAN interfaces — it needs CAP_NET_ADMIN*. With host
+networking that capability reaches every interface of the host: grant it
+only where a Virtual BMS has to transmit.
+
+Refused (409): **Transmit** while `security.allow_writes` is off; any change
+on a port that carries an armed Virtual BMS; a new bitrate on a bus that
+devices read, unless `force: true`. A bad value is a 422 and the link is not
+touched. Bitrates: 10000, 20000, 50000, 100000, 125000, 250000, 500000,
+800000, 1000000.
+
+A port only read by CAN devices should stay listen-only: the Add Device step
+still refuses an interface that can transmit.
+
+## 7. Tests
 
 - `tests/test_can_signal.py` — the decoder on captured bytes and on
   cantools-decoded vectors (Intel and Motorola), the template checks.

@@ -178,7 +178,7 @@ class InfluxDBConfigUpdate(BaseModel):
     def _whole_seconds(cls, v):
         if v is None:
             return None
-        from ..config import heartbeat_seconds
+        from ..core.config import heartbeat_seconds
         s = heartbeat_seconds(v)
         if s is None:
             raise ValueError("whole seconds, 0..86400")

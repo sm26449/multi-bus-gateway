@@ -9,7 +9,7 @@
 //   CHROMIUM_PATH=… MBG_URL=http://127.0.0.1:8099 PARENT=gx-test node tools/e2e/device_components_e2e.mjs
 import { chromium } from 'playwright';
 import { watchDialogs } from './lib/dialogs.mjs';
-import { openDeviceTab, openDeviceEditor } from './lib/device-page.mjs';
+import { openDeviceTab, openDeviceEditor, closeDeviceEditor, editorModalOpen } from './lib/device-page.mjs';
 
 const BASE = process.env.MBG_URL || 'http://127.0.0.1:8099';
 const PARENT = process.env.PARENT || 'gx-test';
@@ -116,6 +116,8 @@ try {
     && (await page.locator('#deviceDetailView .header-actions [data-ddv-act="open-parent"]').count()) === 1);
   await openDeviceTab(page, 'connection');
   check('component: no connection form', (await page.locator('#ddvBroker, #ddvProtoShown').count()) === 0);
+  // (L3.11b) a component's "connection" is its name, in the Edit device modal: close it first
+  if (await editorModalOpen(page)) await closeDeviceEditor(page);
   await page.click('#deviceDetailView [data-action="closeDeviceDetail"]');
   await page.waitForSelector('#devComponentsCard tr[data-comp]');
   check('component: Back goes to its parent', await page.locator('#devComponentsCard').isVisible());

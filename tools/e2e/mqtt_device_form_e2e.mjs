@@ -8,6 +8,7 @@
 //   CHROMIUM_PATH=… MBG_URL=http://127.0.0.1:8099 node mqtt_device_form_e2e.mjs
 import { chromium } from 'playwright';
 import { openDeviceTab, saveDeviceEditor } from './lib/device-page.mjs';
+import { openPage } from './lib/nav.mjs';
 
 const BASE = process.env.MBG_URL || 'http://127.0.0.1:8099';
 const DEV = 'e2e-gx';
@@ -45,7 +46,7 @@ try {
   await page.waitForLoadState('load');
   const later = page.locator('button:has-text("Later")');
   if (await later.count()) await later.first().click().catch(() => {});
-  await page.click('[data-page="devices"]');
+  await openPage(page, 'devices');
   const rowText = await page.locator(`[data-action="openDeviceDetail"][data-args*="${DEV}"]`).first()
     .evaluate(el => (el.closest('tr, .device-row, .card') || el).innerText);
   check('the list does not show the topic', !rowText.includes('c0ffee000001'), rowText.slice(0, 160));

@@ -25,7 +25,7 @@ def test_glitch_does_not_lower_baseline():
     f = MonotonicFilter()
     f.feed(500.0)
     assert f.feed(0.0) is None        # a 0 read (classic bad frame) is dropped
-    assert f.feed(499.0) is None      # still below the held 500 baseline → dropped
+    assert f.feed(499.0) == 500.0     # small back-step → held at 500 (CNT-1)
     assert f.feed(501.0) == 501.0     # only a value at/above baseline resumes
 
 
@@ -60,7 +60,7 @@ def test_noise_tolerance_absorbs_float_jitter():
     f.feed(230.0)
     assert f.feed(229.7) == 229.7     # within noise → accepted, not a regression
     assert f.feed(230.2) == 230.2
-    assert f.feed(228.0) is None      # beyond noise → treated as a real drop
+    assert f.feed(228.0) == 230.2     # beyond noise → a back-step, held (CNT-1)
 
 
 def test_non_numeric_passes_through_untouched():
@@ -158,3 +158,92 @@ def test_the_daily_counter_holds_the_days_maximum_and_adopts_midnight():
     assert f.feed(300) == 300 and f.just_reset                      # below 2 % of the held 20000: a reset
     assert f.feed('n/a') == 'n/a' and f.feed(True) is True          # non-numerics pass through
 
+
+
+# ── CNT-1: a small back-step is held, never adopted by read count ────────────
+
+class _Clock:
+    def __init__(self):
+        self.t = 1000.0
+
+    def __call__(self):
+        return self.t
+
+
+def test_small_back_step_is_held_then_recovers():
+    """Prod 2026-11-14: after a 25 s stall the umg512 import counter read
+    491475.44 → 491473.06 and three coherent reads ADOPTED it as a reset;
+    the downstream virtual meter saw energy run backwards."""
+    clk = _Clock()
+    f = MonotonicFilter(reset_confirm=3, clock=clk)
+    assert f.feed(491475.44) == 491475.44
+    for v in (491473.06, 491473.10, 491473.30, 491474.0, 491475.0):
+        clk.t += 5
+        assert f.feed(v) == 491475.44          # held at the last good value
+        assert f.just_reset is False
+    clk.t += 5
+    assert f.feed(491475.80) == 491475.80      # grew past it → resumes
+    assert f.just_reset is False
+
+
+def test_small_back_step_persisting_past_the_hold_is_adopted():
+    clk = _Clock()
+    f = MonotonicFilter(reset_confirm=3, reset_hold_s=3600, clock=clk)
+    f.feed(100_000.0)
+    assert f.feed(99_990.0) == 100_000.0       # held
+    clk.t += 1800
+    assert f.feed(99_991.0) == 100_000.0       # still held, half-way
+    clk.t += 1800
+    assert f.feed(99_992.0) == 99_992.0        # persisted 1 h → adopted
+    assert f.just_reset is True
+    assert "persisted" in f.reset_reason
+    assert f.feed(99_993.0) == 99_993.0        # grows from the new baseline
+    assert f.just_reset is False
+
+
+def test_recovery_restarts_the_hold_timer():
+    clk = _Clock()
+    f = MonotonicFilter(reset_hold_s=3600, clock=clk)
+    f.feed(1000.0)
+    assert f.feed(999.5) == 1000.0
+    clk.t += 3000
+    assert f.feed(1000.5) == 1000.5            # recovered
+    clk.t += 10
+    assert f.feed(1000.0) == 1000.5            # new back-step: fresh timer
+    clk.t += 3000
+    assert f.feed(1000.1) == 1000.5            # 3000 s < 3600 s → still held
+
+
+def test_genuine_reset_to_near_zero_is_still_adopted_by_confirmation():
+    clk = _Clock()
+    f = MonotonicFilter(reset_confirm=3, clock=clk)
+    f.feed(491475.44)
+    assert f.feed(0.5) is None
+    assert f.feed(0.6) is None
+    assert f.feed(0.7) == 0.7                  # large drop, coherent → adopted
+    assert f.just_reset is True
+    assert "coherent" in f.reset_reason
+
+
+def test_small_drop_frac_zero_restores_the_read_count_rule():
+    f = MonotonicFilter(reset_confirm=3, small_drop_frac=0)
+    f.feed(491475.44)
+    assert f.feed(491473.06) is None
+    assert f.feed(491473.06) is None
+    assert f.feed(491473.07) == 491473.07
+
+
+def test_umg512_template_flags_unsigned_counters_only():
+    """CNT-FLAGS-1: the reactive/apparent counters stepped back unguarded on
+    prod; the NET counters (_G_WH_SUML13, _QH[4]) are signed and legitimately
+    fall, so they must never carry the flag (it would freeze them)."""
+    import json
+    from multibus.device_template import parse_template
+    t = parse_template(json.load(open("multibus/device_templates/janitza_umg512_pro.json")))
+    by = {r.name: r for r in t.registers}
+    for n in ("_WH_V[4]", "_WH_Z[4]", "_WH_S[4]", "_IQH[4]", "_CQH[4]",
+              "_G_IQH_SUML13", "_G_CQH_SUML13", "_G_WH_S_SUML13"):
+        assert by[n].monotonic is True, n
+    for n in ("_WH[4]", "_QH[4]", "_G_WH_SUML13", "_G_QH_SUML13", "_VWH_MONTH[0]"):
+        assert by[n].monotonic is False, n
+    assert "net" in by["_G_WH_SUML13"].label

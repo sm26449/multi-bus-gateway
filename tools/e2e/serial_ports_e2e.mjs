@@ -86,8 +86,9 @@ async function directRtu(page) {
   await page.click('[data-ad-way="connection"]');
   await ask(page, 'PortKind', 'serial');
   await ask(page, 'Reach', 'here');
-  await ask(page, 'Speaks', 'modbus:rtu');
+  // the role before the protocol (ADR-0031 §2)
   await ask(page, 'Role', 'poll');
+  await ask(page, 'Speaks', 'modbus:rtu');
   await page.waitForSelector('#csAddSerialList .cf-port');
 }
 const row = (page, name, px = 'csAdd') => page.locator(`#${px}SerialList .cf-port-row[data-port="${name}"]`);

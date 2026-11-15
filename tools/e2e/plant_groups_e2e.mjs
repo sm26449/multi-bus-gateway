@@ -16,6 +16,7 @@
  */
 import { chromium } from 'playwright';
 import { watchDialogs } from './lib/dialogs.mjs';
+import { openPage } from './lib/nav.mjs';
 
 const BASE = process.env.MBG_URL || 'http://localhost:18085';
 const EP = process.env.ENDPOINT || 'sunfield';
@@ -41,7 +42,7 @@ try {
   await page.waitForLoadState('networkidle');
   const later = page.locator('button:has-text("Later")');
   if (await later.count()) await later.first().click().catch(() => {});
-  await page.click('[data-page="devices"]');
+  await openPage(page, 'devices');
   await page.waitForTimeout(1200);
   await page.locator('.endpoint-row button[data-action="openEndpointDetail"]').first().click();
   await page.waitForTimeout(1500);

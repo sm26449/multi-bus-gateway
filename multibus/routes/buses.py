@@ -24,6 +24,10 @@ from fastapi import APIRouter, Body, HTTPException
 logger = logging.getLogger(__name__)
 
 
+# the classic-CAN rates a port may be set to (CANCTL-1: anything else is a 422, not an `ip` error)
+CAN_BITRATES = (10000, 20000, 50000, 100000, 125000, 250000, 500000, 800000, 1000000)
+
+
 def build(ctx) -> APIRouter:
     r = APIRouter(tags=["buses"])
     config, registry = ctx.config, ctx.registry
@@ -42,7 +46,7 @@ def build(ctx) -> APIRouter:
     @r.get("/api/buses")
     def list_buses():
         """Every bus the gateway knows (``buses.buses``)."""
-        from .. import buses
+        from ..devices import buses
         app = getattr(ctx, "app", None)
         diag = getattr(getattr(app, "state", None), "bridge_diag", None)
         return {"buses": buses.buses(config, getattr(ctx, "template_registry", None),
@@ -52,7 +56,7 @@ def build(ctx) -> APIRouter:
     def list_can_interfaces():
         """The CAN interfaces of this host (``can_interfaces.interfaces``).
         Never raises: an unreadable sysfs is an empty list and a logged line."""
-        from .. import can_interfaces
+        from ..transports.can import can_interfaces
         try:
             return {"interfaces": can_interfaces.interfaces(
                 devices=can_interfaces.devices_by_channel(config))}
@@ -60,11 +64,74 @@ def build(ctx) -> APIRouter:
             logger.warning("CAN interfaces could not be listed", exc_info=True)
             return {"interfaces": [], "error": "the CAN interfaces could not be listed (see the gateway log)"}
 
+    @r.post("/api/can-interfaces/{name}")
+    def set_can_interface(name: str, payload: Dict = Body(...)):
+        """Switch a CAN interface's **mode** (``transmit``/``listen_only``), **bitrate** and
+        **up** (ADR-0046 L2). Needs MBG to hold ``CAP_NET_ADMIN``; admin, audited. This is how a
+        guided prerequisite takes a port out of listen-only so a Virtual BMS can transmit."""
+        from ..transports.can import can_ctl, can_interfaces
+        try:
+            itfs = {i.get("name"): i for i in can_interfaces.interfaces(
+                devices=can_interfaces.devices_by_channel(config))}
+        except Exception:  # noqa: BLE001 — an odd sysfs: no interface is known, so none is changed
+            itfs = {}
+        if name not in itfs:
+            raise HTTPException(status_code=404, detail=f"{name!r} is not a CAN interface on this host")
+        mode, bitrate, up = payload.get("mode"), payload.get("bitrate"), payload.get("up")
+        # every field is checked before the link is touched (CANCTL-1): a bad value used to
+        # reach `ip` (or int()) and answer 500 with the link already down
+        errors = []
+        if mode is not None and mode not in ("transmit", "listen_only"):
+            errors.append("mode must be 'transmit' or 'listen_only'")
+        if bitrate is not None and (isinstance(bitrate, bool) or not isinstance(bitrate, int)
+                                    or bitrate not in CAN_BITRATES):
+            errors.append("bitrate must be one of " + ", ".join(str(b) for b in CAN_BITRATES))
+        if up is not None and not isinstance(up, bool):
+            errors.append("up must be true or false")
+        if mode is None and bitrate is None and up is None:
+            errors.append("nothing to change — give mode, bitrate and/or up")
+        if errors:
+            raise HTTPException(status_code=422, detail={"errors": errors})
+        cur = itfs[name]
+        # taking a port OUT of listen-only is what lets the gateway transmit on a bus: it obeys
+        # the master write switch like every other hardware write. Into listen-only, or down,
+        # is the safe direction and is never refused for it.
+        if mode == "transmit" and not config.security.allow_writes:
+            raise HTTPException(status_code=409, detail={"errors": [
+                "Writes are disabled — set security.allow_writes=true before a CAN port may transmit"]})
+        # any change cycles the link. An ARMED Virtual BMS on this port would stop reaching its
+        # inverter mid-flight: disarm it first — a deliberate act, not a side effect.
+        _app = getattr(ctx, "app", None)
+        vbm = getattr(getattr(_app, "state", None), "vbms_manager", None)
+        armed = sorted(i.id for i in (vbm.instances.values() if vbm is not None else [])
+                       if i.channel == name and (i.armed or i.running))
+        if armed:
+            raise HTTPException(status_code=409, detail={"errors": [
+                f"{name} carries an armed Virtual BMS ({', '.join(armed)}) — disarm it first"]})
+        # a different bitrate makes every device reading this bus deaf: only on purpose
+        readers = list(cur.get("devices") or [])
+        if (bitrate is not None and cur.get("bitrate") and bitrate != cur.get("bitrate")
+                and readers and payload.get("force") is not True):
+            raise HTTPException(status_code=409, detail={
+                "code": "bus_has_readers", "readers": readers, "bitrate": cur.get("bitrate"),
+                "errors": [
+                    f"{name} is read by {', '.join(str(r) for r in readers)} at {cur.get('bitrate')} bit/s — "
+                    f"changing the bitrate would stop them; send force: true to do it anyway"]})
+        try:
+            can_ctl.apply(name, mode=mode, bitrate=bitrate, up=up)
+        except PermissionError:
+            raise HTTPException(status_code=409, detail={"errors": [
+                "MBG cannot change CAN interfaces — it needs CAP_NET_ADMIN (add --cap-add NET_ADMIN)"]})
+        except OSError as e:
+            raise HTTPException(status_code=409, detail={"errors": [f"could not set {name}: {e}"]})
+        itf = next((i for i in can_interfaces.interfaces() if i.get("name") == name), {})
+        return {"status": "applied", "interface": itf}
+
     @r.get("/api/buses/{bus:path}/line")
     def bus_line_now(bus: str):
         """The line a bus has now (the Edit bus line dialog starts from it):
         ``{bus, kind, line, source: devices|bridge|unknown}``."""
-        from .. import bus_line
+        from ..devices import bus_line
         try:
             return bus_line.current(config, getattr(ctx, "template_registry", None), bus)
         except bus_line.Refused as e:
@@ -83,7 +150,7 @@ def build(ctx) -> APIRouter:
         write to one of its devices is in flight. One config write, one audit
         record. A restart that fails after the write is named in
         ``restart_failed`` (the line is stored). Admin only."""
-        from .. import bus_line
+        from ..devices import bus_line
         templates = getattr(ctx, "template_registry", None)
         try:
             line = bus_line.clean(payload)
@@ -125,8 +192,8 @@ def build(ctx) -> APIRouter:
                 lk.release()
 
     def _apply_line(bus: str, line: Dict, templates, checked, bstate) -> Dict:
-        from .. import bridges as bridge_api
-        from .. import bus_line
+        from multibus.transports.serial import bridges as bridge_api
+        from ..devices import bus_line
         try:
             plan = bus_line.plan(config, templates, bus, line)        # again, under the locks
         except bus_line.Refused as e:

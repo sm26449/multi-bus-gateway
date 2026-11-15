@@ -24,6 +24,7 @@ import { watchDialogs } from './lib/dialogs.mjs';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
+import { openPage } from './lib/nav.mjs';
 
 const BASE = process.env.MBG_URL || 'http://127.0.0.1:8099';
 const CTR = process.env.CTR || 'mbg-ui-sandbox';
@@ -116,7 +117,7 @@ page.on('pageerror', e => errs.push(String(e)));
 const setCell = async (loc, v) => { await loc.fill(String(v)); await loc.dispatchEvent('change'); };
 const lastRow = () => page.locator('#devTplBody tbody tr').last();
 async function toTemplates() {
-  await page.click('[data-page="templates"]');
+  await openPage(page, 'templates');
   await page.waitForSelector('#tmImportCsvBtn');
 }
 async function importMap({ fmt, id, name, vendor, transport = '', order, text }) {
@@ -144,7 +145,7 @@ const tpl = async id => (await api(`/api/device-templates/${id}`)).body.device_t
 // Name & save, Create, Done
 const PORT_OF = { tcp: ['ethernet', 'address'], rtu: ['serial', 'here'], http: ['http', ''], mqtt: ['mqtt', ''] };
 async function addDevice({ proto, fill, template, id, name }) {
-  await page.click('[data-page="devices"]');
+  await openPage(page, 'devices');
   if (!(await page.isVisible('#devicesListView'))) {
     // the wizard jumped into the last device's Measurements, and the Devices
     // tab keeps that view — only its back arrow returns to the list
@@ -157,7 +158,7 @@ async function addDevice({ proto, fill, template, id, name }) {
   const [port, reach] = PORT_OF[proto];
   await answer(page, 'PortKind', port);
   if (reach) await answer(page, 'Reach', reach);
-  if (proto === 'rtu') { await answer(page, 'Speaks', 'modbus:rtu').catch(() => {}); await answer(page, 'Role', 'poll'); }
+  if (proto === 'rtu') { await answer(page, 'Role', 'poll'); await answer(page, 'Speaks', 'modbus:rtu').catch(() => {}); }
   const testOut = await fill();
   if (await next(page) === 'connection') return testOut;     // refused: said at its field
   return finishAdd({ id, name, testOut });
@@ -401,7 +402,7 @@ try {
   check('MQTT bare-number topic ~/temp = 21.5', near(v.temperature, 21.5), String(v.temperature));
 
   // ═══ 4. Word order: find it in Diagnostics → Probe, fix it there ════════
-  await page.click('[data-page="diagnostics"]');
+  await openPage(page, 'diagnostics');
   await page.waitForSelector('#probeBtn');
   await page.waitForFunction(id => [...document.querySelectorAll('#probeDevice option')].some(o => o.value === id), D.tcp);
   await page.selectOption('#probeDevice', D.tcp);
@@ -438,7 +439,7 @@ try {
   check('dashboard shows 1234.5 W', /1[ ,.]?234[.,]5/.test(grid), '');
 
   // ═══ 5. Virtual meter (emulator) ═════════════════════════════════════════
-  await page.click('[data-page="vmeters"]');
+  await openPage(page, 'vmeters');
   await page.waitForSelector('#vmAddInstanceBtn', { state: 'attached' });
   if (await page.isDisabled('#vmAddInstanceBtn')) {
     // the empty state (not the button's own label) must say what to do first
@@ -471,7 +472,7 @@ try {
   const vmt = (await api(`/api/virtual-meters/template/${VM}`)).body;
   check('vmeter template saved (2 rows)', (vmt.registers || []).length === 2, JSON.stringify(vmt).slice(0, 160));
 
-  await page.click('[data-page="vmeters"]');
+  await openPage(page, 'vmeters');
   await page.waitForSelector('#vmAddInstanceBtn:not([disabled])');
   await page.click('#vmAddInstanceBtn');
   await page.waitForSelector('#vmAddInstanceModal.active');
@@ -506,7 +507,7 @@ try {
   const again = await post('/api/virtual-meters/templates/import', { yaml: exp.yaml });
   check('re-import of the same id refused without overwrite (409)', again.status === 409, JSON.stringify(again.body));
   // the UI import (Virtual Meters → Import) with the copy as a file
-  await page.click('[data-page="vmeters"]');
+  await openPage(page, 'vmeters');
   await page.waitForSelector('#vmImportFile', { state: 'attached' });
   await page.setInputFiles('#vmImportFile', { name: `${VM_COPY}.yaml`, mimeType: 'text/yaml',
     buffer: Buffer.from(exp.yaml.replace(`id: ${VM}`, `id: ${VM_COPY}`)) });

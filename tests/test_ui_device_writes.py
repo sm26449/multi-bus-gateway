@@ -101,6 +101,7 @@ _NOT_A_DEVICE = {
     ('app-attributes.js', 'attrSave'): r'/api/attributes/',
     ('app-attributes.js', 'attrDelete'): r'/api/attributes/',
     ('app-usedby.js', '_ubRawDelete'): r'/api/(endpoints|device-templates)/',
+    ('app-vbms.js', 'saveVbmsModal'): r'/api/vbms',
 }
 
 # the URLs with their own revision (ADR-0030): a write sends If-Match

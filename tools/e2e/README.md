@@ -1,4 +1,67 @@
-# E2E — Power Quality feature (Playwright)
+# E2E tests (Playwright)
+
+Browser e2e for the gateway UI: ~130 `*_e2e.mjs` scripts, each run against a **throwaway
+gateway built from this checkout**. This file covers many features — use the index first.
+**Every `*_e2e.mjs` has a header comment with its exact fixture, port and run line — read it
+before running.** The `*_model_test.mjs` files are logic/DOM-model checks (no browser).
+
+## Setup (once)
+
+- Node 18, then `cd tools/e2e && npm install playwright@1.49.1 && npx playwright install chromium`
+  (or point `CHROMIUM_PATH` at an existing Chromium). Scripts read `MBG_URL`; login uses
+  `MBG_USER`/`MBG_PASS` when the fixture requires it.
+- **Throwaway gateway:** `tools/e2e/fixture_up.sh VARIANT PORT [--writes] [--login PWD]` starts
+  `mbg-fx-<VARIANT>` on `127.0.0.1:PORT` running this checkout's `ui/`+`multibus/`, reaching only
+  its own loopback. Stop it: `docker rm -f mbg-fx-<VARIANT>`.
+- **Run all (one at a time, each on a fresh gateway):** `tools/e2e/run_all.sh` → `results.tsv`
+  + per-script logs; subset with `RUN_ONLY=rules_e2e,dialogs_e2e` (`ONLY=` still works; it is
+  kept away from the scripts, a few of which read `ONLY` as their own filter). A script that
+  exits 0 without one `PASS`/`✓` line is a FAIL. **Every new script is registered in
+  `run_all.sh`** (`R` with its fixture, or `S` with why it is not run): a full run fails an
+  unregistered one, and `tests/test_e2e_registered.py` says it in the normal suite. `cmd_dispatch_live/run.sh` and
+  `can_vcan/run.sh` run through their **own** `run.sh` and hold `/tmp/mbg-pytest.lock` — don't
+  wrap those in `flock`.
+
+## Fixture variants (`fixtures/installation_safety/<variant>.yaml`)
+
+| Variant | Default port | For |
+|---|---|---|
+| `safety` | 18087 | general devices / UI (the default) |
+| `plant` | 18085 | installations & plant groups |
+| `drive` | 18090 | rules / VFD / power control |
+| `cmdui` | — | named commands + bindings |
+| `types` | — | device types & identity |
+| `qa` | — | 3.97 design-conformance sweep |
+| `endpoint` / `fronius` | — | endpoint page / Fronius (`fronius` adds a fake Solar API container) |
+| `vbms` / `vbmsdev` | 18092 | Virtual BMS (`vbmsdev` + `MBG_FX_VCAN=1` gives throwaway `vcan0`/`vcan1`) |
+| `base` | — | minimal base other variants extend |
+
+## Feature → scripts → fixture → where in the UI
+
+| Area | Representative scripts | Fixture | Open in the UI |
+|---|---|---|---|
+| Devices (add/edit/view/CRUD) | `add_device_new`, `device_page`, `device_edit_modal`, `connform` | `safety` / `types` | `#/devices` |
+| Installations & plants | `installations_step3`, `plant_wizard`, `plant_groups`, `linked_meter` | `plant` | `#/installations` |
+| **Virtual BMS** | `vbms_create`, `vbms_crud`, `vbms_arm` | `vbmsdev` + `MBG_FX_VCAN=1` | `#/vbms` |
+| Rules & control | `rules_e2e`, `rules_layers`, `rules_schedule`, `rules_trim`, `ov_tuning`, `rules_tuning` (safety), `sequences` | `drive` | Configuration → Rules |
+| Named commands | `commands_e2e`, `command_binding`, `command_ownership_lead`, `mqtt_commands` | `cmdui` | see script header |
+| **Status / health / alerts** | `status_page`, `status_issues_expand`, `alertd_settings`, `influx_heartbeat` | `safety` | Status subtabs `#stTab-outputs` (alerts/outputs), `#stTab-gateway`, `#stTab-automation` |
+| Fleet | `fleet_attention_strip`, `fleet_stable_dom`, `fleet_stale_values` | `safety` | fleet view |
+| Bridges & serial | `bridges_e2e`, `bridges_p3`, `bridge_ports`, `serial_ports`, `rtu_tap_device` | `safety` | `#/devices` (bridge flows) |
+| Config lifecycle (import/restore/apply, F20) | `undo_restore`, `f20_disclosure`, `settings_apply_feedback`, `security_settings` | `safety` | `#/config` |
+| Endpoints (Fronius) | `endpoint_page`, `endpoint_outputs`, `fronius_endpoint` | `endpoint` / `fronius` | endpoint page |
+| Attributes & templates | `attributes_e2e`, `template_advanced`, `template_notes`, `canonical_unit` | `safety` / `types` | `#/templates` |
+| OPC UA / FUXA | `opcua_e2e`, `opcua_output`, `fuxa_ui_check` | `safety` | see script header |
+| Power Quality | `pq_e2e` | PQ-capable template | device Outputs card |
+| Nav / a11y / shell | `ux13_nav`, `humanize_keys`, `dialogs`, `pickers`, `csp_smoke`, `ui_sweep`, `findability` | `safety` | — |
+| QA conformance | `qa_397_conformance`, `qa_397_sweep`, `ui_g_findings`, `broken_fixes` | `qa` | — |
+
+Routes listed are the ones confirmed in the router/scripts; where a cell says "see script
+header", the script navigates via a helper — its header has the exact steps.
+
+The sections below are the detailed per-feature notes (this README was written PQ-first).
+
+## Power Quality (`pq_e2e.mjs`)
 
 Validates the full PQ recorder flow in a real browser against a running
 gateway: login, capability gating (`pq_supported` from the device template),
@@ -309,6 +372,19 @@ end. `BUG` lines are product bugs known when it was written: the check states
 the right behaviour, does not fail the run unless `STRICT=1`, and prints
 `FIXED` once the product is right.
 
+## Getting around in a test (`lib/nav.mjs`, `lib/rules.mjs`)
+
+Open pages and menus the way a user does, so the next reorganisation of the
+UI changes one helper and not forty scripts:
+
+- `openPage(page, 'rules')` — a top-level link, or its submenu first
+  (Configuration ▾ → Rules); on a phone, the Navigation disclosure first.
+- `freshPage(page, 'devices')` — the same, and the page's data drawn again:
+  clicking the link of the page already shown does nothing, so a script that
+  waits for a value to change there reloads it first.
+- `ruleOverride(page, ruleId, 'clamp' | 'pause' | 'force')` — a rule card's
+  Overrides ▾ menu, then the item.
+
 ## Dialogs in a test (`lib/dialogs.mjs`)
 
 The UI asks through its own dialog (`ui/js/app-dialogs.js`), never the
@@ -336,7 +412,7 @@ and `multibus/` (image `MBG_IMAGE`, default `multi-bus-gateway:latest`):
 
 | Variant | What it holds | Scripts |
 |---|---|---|
-| `safety` | installation `sunfield`: `inverters` (units 1, 2; sources `solar_api` http + `sunspec` tcp; power_limit/restore), `grid` (unit 240 as `sunfield-meter-240`), `spare` (unit 7, no template → idle) | `installation_safety_e2e`, `rules_e2e`, `commands_e2e`, `attributes_e2e` (`ATTR_DEVICE=sunfield-meter-240`), `attributes_use_e2e`, `endpoint_outputs_e2e`, `new_user_e2e` |
+| `safety` | installation `sunfield`: `inverters` (units 1, 2; sources `solar_api` http + `sunspec` tcp; power_limit/restore), `grid` (unit 240 as `sunfield-meter-240`), `spare` (unit 7, no template → idle) | `installation_safety_e2e`, `rules_e2e`, `rules_tuning_e2e`, `commands_e2e`, `attributes_e2e` (`ATTR_DEVICE=sunfield-meter-240`), `attributes_use_e2e`, `endpoint_outputs_e2e`, `new_user_e2e` |
 | `plant` | `sunfield` with `inverters` (1, 2; `sunspec`) and `grid` (240) only | `plant_groups_e2e` |
 | `endpoint` | `sunfield` over Modbus TCP at a refusing port: units 1, 2 and `sunfield-east` "East roof", `max_connections: 2`; no primary meter | `endpoint_page_e2e`, `device_logs_e2e` (`DEVICE=sunfield-u1`, after ~20 s) |
 | `fronius` | `fronius-inverters` (Solar API, units 1, 2, answered by `fake_solar_api.mjs`) and `fronius-meter` (SunSpec, unit 240, refusing); no primary meter | `fronius_endpoint_e2e` |

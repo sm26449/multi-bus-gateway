@@ -8,6 +8,7 @@
  */
 import { chromium } from 'playwright';
 import { watchDialogs } from './lib/dialogs.mjs';
+import { openPage } from './lib/nav.mjs';
 const BASE = process.env.MBG_URL || 'http://localhost:18087';
 const results = [];
 const check = (name, cond, extra = '') => { results.push({ name, ok: !!cond }); console.log(`${cond ? 'PASS' : 'FAIL'} ${name}${extra ? ' — ' + extra : ''}`); };
@@ -19,8 +20,8 @@ const errs = []; page.on('console', m => { if (m.type() === 'error' && !/40[39]|
 try {
   await page.goto(BASE + '/'); await page.waitForLoadState('networkidle');
   const later = page.locator('button:has-text("Later")'); if (await later.count()) await later.first().click().catch(() => {});
-  check('Rules is in the main navigation', await page.locator('[data-page="rules"]').count() === 1);
-  await page.click('[data-page="rules"]'); await page.waitForTimeout(800);
+  check('Rules is in the main navigation', await page.locator('#mainNav [data-page="rules"]').count() === 1);
+  await openPage(page, 'rules'); await page.waitForTimeout(800);
   const content = page.locator('#rulesContent');
   check('the empty state says what a rule is', /shadow/i.test(await content.innerText()));
   // the editor

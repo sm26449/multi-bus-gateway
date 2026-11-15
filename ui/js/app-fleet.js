@@ -56,6 +56,8 @@ Object.assign(JanitzaMonitor.prototype, {
         if (view) view.addEventListener('click', (e) => {
             const pin = e.target.closest('.fleet-pin');
             if (pin) { e.stopPropagation(); this._toggleOverviewPin(pin.dataset.pin); return; }
+            const attn = e.target.closest('.fleet-attn-item');   // UX-04: the attention strip shortcuts
+            if (attn && attn.dataset.id) { this.openFleetDevice(attn.dataset.id); return; }
             const row = e.target.closest('.fleet-row');
             if (row && row.dataset.id) this.openFleetDevice(row.dataset.id);
         });
@@ -107,6 +109,9 @@ Object.assign(JanitzaMonitor.prototype, {
     },
 
     async openFleetDevice(id) {
+        // record which overview row we drilled from, so Back focuses it (the router
+        // already captured the overview's scroll into _routeLeave before this ran)
+        this._routeLeave = { ...(this._routeLeave || {}), opened: id };
         this._dashMode = 'device';
         this._applyDashMode();
         await this.switchDashDevice(id);
@@ -163,8 +168,6 @@ Object.assign(JanitzaMonitor.prototype, {
         try { localStorage.setItem('mbg-overview-pins', JSON.stringify(pins)); }
         catch (e) { /* private mode */ }
     },
-
-    _pinIndex(id) { return this._overviewPins().findIndex(p => p.id === id); },
 
     _toggleOverviewPin(id) {
         const pins = this._overviewPins();
@@ -386,19 +389,26 @@ Object.assign(JanitzaMonitor.prototype, {
         const hDot = { ok: 'var(--success)', degraded: 'var(--warning)',
                        stale: 'var(--warning)', down: 'var(--danger)' };
         const sev = (rank <= 1) ? 'sev-danger' : (rank < 50 ? 'sev-warning' : '');
+        const h = d.health || 'idle';
+        // UX-03: when acquisition has stopped (No answer / stale) the hero numbers
+        // are the LAST-KNOWN readings, not a current measurement. Label them locally
+        // and de-emphasise them (not colour alone), so a stale value is not mistaken
+        // for a fresh one. The age is carried by the fleet-health flag below.
+        const lastKnown = (h === 'down' || h === 'stale') && d.staleness_age_s != null && (d.hero || []).length > 0;
+        const lkWord = this.t('fleet.lastKnown', 'last known');
         const metrics = (d.hero || []).map(m => {
             const disp = this._displayValue(m.value, { unit: m.unit });
             const label = this._fleetMetricLabel(m);
             const tip = m.label && m.label !== m.name ? m.label : label;
-            return `<span class="fleet-metric" title="${this._esc(tip)}">
+            const sr = lastKnown ? `<span class="sr-only">${this._esc(lkWord)} </span>` : '';
+            return `<span class="fleet-metric" title="${this._esc(lastKnown ? lkWord + ': ' + tip : tip)}">
                 <span class="fm-l">${this._esc(label)}</span>
-                <span class="fm-v">${this._esc(disp.text)}</span><span class="fm-u">${this._esc(disp.unit)}</span>
+                ${sr}<span class="fm-v">${this._esc(disp.text)}</span><span class="fm-u">${this._esc(disp.unit)}</span>
             </span>`;
         }).join('');
         const flags = [];
         if (d.alarms && d.alarms.danger) flags.push(`<span class="fleet-badge fb-danger" title="${this._esc(this.t('fleet.dangerAlarms', 'Danger thresholds exceeded'))}">${d.alarms.danger}</span>`);
         if (d.alarms && d.alarms.warning) flags.push(`<span class="fleet-badge fb-warning" title="${this._esc(this.t('fleet.warningAlarms', 'Warning thresholds exceeded'))}">${d.alarms.warning}</span>`);
-        const h = d.health || 'idle';
         if (h !== 'ok') {
             const age = this._fleetAge(d.staleness_age_s);
             // the same words the device pages use (one vocabulary)
@@ -406,11 +416,11 @@ Object.assign(JanitzaMonitor.prototype, {
             flags.push(`<span class="fleet-health">${this._esc(word)}${age ? ' · ' + age : ''}</span>`);
         }
         const pinned = this._overviewPins().includes(d.id);
-        return `<button type="button" class="fleet-row ${sev}" data-id="${this._esc(d.id)}"
+        return `<button type="button" class="fleet-row ${sev}" data-id="${this._esc(d.id)}" data-key="row:${this._esc(d.id)}"
                         ${d.enabled === false ? 'data-disabled="1"' : ''}>
             <span class="fleet-dot" style="background:${hDot[h] || 'var(--text-tertiary)'}"></span>
             <span class="fleet-name" title="${this._esc(d.id)}">${this._esc(d.name || d.id)}</span>
-            <span class="fleet-metrics">${metrics}</span>
+            <span class="fleet-metrics${lastKnown ? ' fleet-metrics--last-known' : ''}">${lastKnown ? `<i class="bi bi-clock-history fleet-lk-icon" aria-hidden="true" title="${this._esc(lkWord)}"></i>` : ''}${metrics}</span>
             <span class="fleet-flags">${flags.join('')}</span>
             <span class="fleet-pin ${pinned ? 'active' : ''}" role="button" tabindex="0"
                   data-pin="${this._esc(d.id)}" aria-pressed="${pinned}"
@@ -447,7 +457,9 @@ Object.assign(JanitzaMonitor.prototype, {
         }
 
         if (!devices.length) {
-            view.innerHTML = `<div class="empty-state">${this._esc(this.t('fleet.noMatch', 'No devices match.'))}</div>`;
+            this._morph(view, this._stateBlock({ kind: 'search', live: true,
+                title: this.t('fleet.noMatch', 'No devices match.'),
+                reason: (this._fleetQuery || this._fleetProblems) ? this.t('fleet.noMatchHint', 'Clear the search or the filter to see every device.') : '' }));
             return;
         }
 
@@ -463,9 +475,35 @@ Object.assign(JanitzaMonitor.prototype, {
             byEp.get(d.endpoint_id).push(d);
         });
 
+        // UX-04: surface the unresolved incidents BEFORE the full census — an explicit
+        // "Needs attention" strip of the problem devices, each a shortcut to the device.
+        // Only when not filtering (a filtered view is already a focused subset).
         let html = '';
+        if (!this._fleetQuery && !this._fleetProblems) {
+            const attn = (this.fleetData.devices || []).filter(d => this._fleetRank(d) < 50 && d.enabled !== false).sort(bySev);
+            if (attn.length) {
+                const items = attn.slice(0, 6).map(d => {
+                    const color = this._fleetRank(d) <= 1 ? 'var(--danger)' : 'var(--warning)';
+                    // a device that reads fine but raises an alarm says so, not "Reading" (FLEET-ATTN-1)
+                    const al = d.alarms || {}, hOk = (d.health || 'idle') === 'ok';
+                    const word = hOk && al.danger > 0 ? this.tn('fleet.attnDanger', al.danger, '{n} alarm')
+                        : hOk && al.warning > 0 ? this.tn('fleet.attnWarning', al.warning, '{n} warning')
+                        : this._verdictWord({ enabled: d.enabled, data_health: d.health || 'idle', protocol: d.protocol });
+                    const age = this._fleetAge(d.staleness_age_s);
+                    return `<button type="button" class="fleet-attn-item" data-id="${this._esc(d.id)}">
+                        <span class="fleet-attn-dot" style="background:${color}" aria-hidden="true"></span>
+                        <span class="fleet-attn-name">${this._esc(d.name || d.id)}</span>
+                        <span class="fleet-attn-what">${this._esc(word)}${age ? ' · ' + age : ''}</span>
+                        <i class="bi bi-chevron-right" aria-hidden="true"></i></button>`;
+                }).join('');
+                const more = attn.length > 6 ? `<div class="fleet-attn-more field-hint">${this.tn('fleet.attnMore', attn.length - 6, '+{n} more below')}</div>` : '';
+                html += `<div class="fleet-attn" data-key="_attn" role="region" aria-label="${this._esc(this.t('fleet.attention', 'Needs attention'))}">
+                    <div class="fleet-attn-head">${this._esc(this.t('fleet.attention', 'Needs attention'))} · ${attn.length}</div>
+                    <div class="fleet-attn-list">${items}</div>${more}</div>`;
+            }
+        }
         if (standalone.length) {
-            html += `<div class="fleet-group"><div class="fleet-rows">${standalone.map(d => this._fleetRow(d)).join('')}</div></div>`;
+            html += `<div class="fleet-group" data-key="grp:_standalone"><div class="fleet-rows">${standalone.map(d => this._fleetRow(d)).join('')}</div></div>`;
         }
         // endpoint groups: the group with the worst unit first
         const groups = [...byEp.entries()].map(([pid, units]) => {
@@ -474,7 +512,7 @@ Object.assign(JanitzaMonitor.prototype, {
         }).sort((a, b) => a.rank - b.rank);
         groups.forEach(g => {
             const ok = g.units.filter(d => (d.health || '') === 'ok').length;
-            html += `<div class="fleet-group">
+            html += `<div class="fleet-group" data-key="grp:${this._esc(g.pid)}">
                 <div class="fleet-group-head"><i aria-hidden="true" class="bi bi-diagram-3"></i>
                     ${this._esc(epName[g.pid] || g.pid)}
                     <span class="fleet-group-count">${ok}/${g.units.length} ${this._esc(this.t('fleet.online', 'online'))}</span>
@@ -482,6 +520,8 @@ Object.assign(JanitzaMonitor.prototype, {
                 <div class="fleet-rows">${g.units.map(d => this._fleetRow(d)).join('')}</div>
             </div>`;
         });
-        view.innerHTML = html;
+        // UX-10: patch the keyed groups/rows in place (focus preserved) instead of
+        // replacing the whole subtree ~1/sec, which blurred a focused pin/row.
+        this._morph(view, html);
     },
 });

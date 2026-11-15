@@ -606,3 +606,22 @@ def test_a_device_whose_port_opened_late_reads_as_connected(monkeypatch):
     assert _wait(lambda: client.connected is True)
     client.disconnect()
     assert client.connected is False
+
+
+def test_a_monotonic_register_decodes_through_the_tap():
+    """DUP-19 (closed 2026-11-07): the tap's monotonic block imported a class that
+    never existed (`CounterFilter`), so the first `monotonic: true` row raised
+    inside the decode and the WHOLE window was dropped, every poll. The counter
+    row must decode like any other, through a MonotonicFilter."""
+    from multibus.codec.counter_filter import MonotonicFilter
+    got = []
+    _, client = make_pair('/dev/not-opened', registers=[reg(0, 'energy', monotonic=True),
+                                                         reg(1, 'power')])
+    client.publish_callback = lambda kind, data: got.append(data)
+    client._ingest_window(0, [100, 7], 1.0)
+    client._ingest_window(0, [120, 8], 2.0)
+    assert len(got) == 2, got                                   # both windows published
+    names = {r['register'].name: r['value'] for r in got[-1].values()}
+    assert names['energy'] == 120 and names['power'] == 8
+    assert all(isinstance(f, MonotonicFilter) for f in client._counter_filters.values()) \
+        and client._counter_filters

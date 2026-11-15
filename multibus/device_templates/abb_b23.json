@@ -10,8 +10,7 @@
   "kind": "meter",
   "source_document": "ABB B23/B24 User Manual 2CMC485003M0201 ch.9 (docs/vendor/meters/abb-b23-b24-user-manual.pdf) — register-for-register confirmed; also cross-checked vs steefan85/ABB_B23_Energy_Meter and roastedelectrons/ABBEnergyMeter",
   "protocol": {
-   "byte_order": "big",
-   "default_register_type": "holding"
+   "byte_order": "big"
   },
   "categories": {},
   "registers": [

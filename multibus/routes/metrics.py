@@ -28,8 +28,12 @@ from __future__ import annotations
 import re
 import time
 
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import PlainTextResponse
+
+from multibus.core.ip_allow import metrics_peer_allowed
+# a listen-only tap's bus counters: once per bus, not once per unit (TAP-METRIC-1)
+from multibus.transports.modbus.rtu_tap import BUS_ERROR_KINDS, bus_stats
 
 _LABEL_BAD = re.compile(r'["\\\n]')
 
@@ -70,13 +74,44 @@ class _Fmt:
 
 _HEALTH_NUM = {"ok": 1, "degraded": 0.5, "stale": 0.5, "down": 0, "idle": 0}
 
+# a tapped bus's own counters (rtu_tap.TapReader.stats): (key, metric, help)
+_BUS_SERIES = (
+    ("frames", "gateway_bus_frames_total", "Valid frames heard on a tapped bus"),
+    ("crc_errors", "gateway_bus_crc_errors_total", "Frames with a bad CRC on a tapped bus"),
+    ("orphan_frames", "gateway_bus_orphan_frames_total",
+     "Responses that could not be paired with their request (never decoded)"),
+    ("exception_responses", "gateway_bus_exception_responses_total",
+     "Modbus exception responses heard on a tapped bus"),
+    ("resync_dropped_bytes", "gateway_bus_resync_dropped_bytes_total",
+     "Bytes discarded while re-synchronizing on a tapped bus"),
+    ("inferred_windows", "gateway_bus_inferred_windows_total",
+     "Unsolicited master blocks decoded at a learned address"),
+    ("writes_seen", "gateway_bus_writes_seen_total", "Write requests observed on a tapped bus"),
+    ("paired_across_junk", "gateway_bus_paired_across_junk_total",
+     "Responses paired although resync dropped bytes between request and response"),
+    ("unpaired_responses", "gateway_bus_unpaired_responses_total",
+     "CRC-valid read responses with no strict request pairing"),
+)
+
 
 def build(ctx) -> APIRouter:
     r = APIRouter(tags=["metrics"])
     registry = ctx.registry
+    config = ctx.config
 
     @r.get("/metrics", response_class=PlainTextResponse)
-    async def metrics():
+    async def metrics(request: Request):
+        # /metrics is auth-open (a scraper can't hold a session) but it exposes
+        # operational inventory — device ids, health, stale ages, read/error
+        # rates. It is served to LOOPBACK, to security.metrics_allowlist (the
+        # scraper's IP/subnet, OBS-PROM-1 — it opens nothing else), and to a
+        # peer a configured security.allowlist admits; with both lists empty,
+        # loopback only (audit A-MED-5).
+        peer = request.client.host if request.client else ""
+        if not metrics_peer_allowed(config, peer):
+            raise HTTPException(status_code=403, detail=(
+                "metrics are restricted: configure security.metrics_allowlist with "
+                "the scraper's IP/subnet, or scrape /metrics from localhost"))
         f = _Fmt()
         now = time.time()
 
@@ -102,7 +137,12 @@ def build(ctx) -> APIRouter:
                   st.get("successful_reads"), {**lbl, "result": "ok"})
             f.add("gateway_device_reads_total", "Failed reads since start", "counter",
                   st.get("failed_reads"), {**lbl, "result": "error"})
+            # a listen-only tap repeats its BUS's counters on every unit; those
+            # are exported once per bus below (gateway_bus_*), not N times here
+            on_tap = str(st.get("mode") or "").startswith("rtu_tap")
             for kind, n in (st.get("error_counts") or {}).items():
+                if on_tap and kind in BUS_ERROR_KINDS:
+                    continue
                 f.add("gateway_device_errors_total",
                       "Failed attempts by kind (timeout/exception_N/connection)",
                       "counter", n, {**lbl, "kind": kind})
@@ -116,6 +156,15 @@ def build(ctx) -> APIRouter:
                       "gauge", _HEALTH_NUM.get(h), lbl)
             except Exception:  # noqa: BLE001
                 pass
+
+        # ── tapped buses (listen-only RTU readers): one series per bus ───────
+        try:
+            for b in bus_stats():
+                lbl = {"bus": b.get("port") or ""}
+                for key, name, help_ in _BUS_SERIES:
+                    f.add(name, help_, "counter", b.get(key), lbl)
+        except Exception:  # noqa: BLE001 — a sick reader must not cost the scrape
+            pass
 
         # ── sinks (read at scrape time — /api/config/apply may rebind them) ──
         mqtt = ctx.mqtt_publisher

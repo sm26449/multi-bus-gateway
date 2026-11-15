@@ -208,15 +208,45 @@
         if (c.port === 'serial' && c.reach !== 'bridge') return `modbus:${c.framing}`;
         return 'modbus';
     }
-    function protocolOptions(ctx, t) {
+    // a role is asked on a bus (serial, Ethernet, CAN); a web API or a broker has none
+    const hasRole = port => !!port && port !== 'http' && port !== 'mqtt';
+    // a cell (or an invalid one) of the port and reach asked, speaking key k;
+    // through a bridge whose framing is known, that framing only; on
+    // Ethernet, the transport (TCP or UDP) chosen
+    // (a bridge's framing not known yet: its RTU cells, never an ASCII one)
+    const sameKey = (ax, k) => c => c.port === ax.port && c.reach === ax.reach && protocolKey(c) === k
+        && (!(ax.reach === 'bridge' && c.protocol === 'modbus') || c.framing === (ax.framing || 'rtu'))
+        && (ax.port !== 'ethernet' || !!c.udp === !!ax.udp);
+    // a model read only in Modbus ASCII (every transport ASCII): its key is
+    // modbus:ascii — never Modbus RTU, nor an RTU tap
+    const asciiOnly = tpl => !!tpl && Array.isArray(tpl.transports) && tpl.transports.length > 0
+        && tpl.transports.every(x => /ascii/i.test(String(x)));
+    // the server's reason a role cannot speak key k here, in the page's words
+    // (L3.11c; the English is the fallback), or null
+    function invalidFor(ctx, k, mode, t) {
+        const inv = invalidOf(ctx).find(c => sameKey(ctx.axes || {}, k)(c) && c.mode === mode);
+        return inv ? off(k, inv.code, t(`cs.inv.${inv.code}`, inv.text)) : null;
+    }
+
+    // 2d comes after 2c (ADR-0031 §2): the role answered filters the
+    // protocols — Listen-only keeps those that can listen (an RTU tap, Seplos
+    // V2 listening, CAN), Master those that poll. One the role cannot take
+    // stays listed, off, with the matrix's reason.
+    function protocolOptions(ctx, t = T0) {
         const ax = ctx.axes || {};
         const fit = fitOf(ctx, t);
         const cells = cellsOf(ctx).filter(c => c.port === ax.port && c.reach === ax.reach);
+        const role = hasRole(ax.port) && ROLES.includes(ctx.role) ? ctx.role : null;
         const keys = [];
         for (const c of cells) if (!keys.includes(protocolKey(c))) keys.push(protocolKey(c));
         return keys.map(k => {
-            const why = judge(cells.filter(c => protocolKey(c) === k), fit, t);
-            return why ? off(k, why.code, why.reason) : ok(k);
+            const mine = cells.filter(c => protocolKey(c) === k);
+            const why = judge(mine, fit, t);
+            if (why) return off(k, why.code, why.reason);
+            if (!role) return ok(k);
+            const asRole = judge(cells.filter(c => sameKey(ax, k)(c) && c.mode === role), fit, t);
+            if (!asRole) return ok(k);
+            return invalidFor(ctx, k, role, t) || off(k, asRole.code, asRole.reason);
         });
     }
 
@@ -231,23 +261,43 @@
         const others = list => (list || []).filter(id => id !== self).map(name);
         return { listeners: others(bus.listeners), pollers: others(bus.pollers) };
     }
-    function roleOptions(ctx, t) {
+    // 2c is asked before 2d: a role is offered when one of the protocols
+    // still open here takes it. A protocol the user picked does not bind the
+    // role (the role filters the protocols, not the reverse); one the model
+    // or the bridge leaves as the only one does (a Seplos template, Modbus TCP,
+    // CAN, a bridge's framing).
+    function roleKeys(ctx, t) {
+        const ax = ctx.axes || {};
+        const listed = protocolOptions(Object.assign({}, ctx, { role: null }), t);
+        let open = listed.filter(o => o.state === 'ok').map(o => o.value);
+        if (asciiOnly(ctx.tpl) && open.includes('modbus:ascii')) open = open.filter(k => !k.startsWith('modbus:') || k === 'modbus:ascii');
+        const cur = ax.protocol ? protocolKey(ax) : null;
+        if (cur && !(open.length > 1 && open.includes(cur))) return [cur];
+        if (open.length) return open;
+        // none open: judged for those the model or a lock does not refuse
+        const lock = lockOf(ctx, 'connection.protocol');
+        return listed.filter(o => o.code !== 'tpl_speaks' && (!lock || o.code !== lock.code)).map(o => o.value);
+    }
+    function roleOptions(ctx, t = T0) {
         const ax = ctx.axes || {};
         const tpl = ctx.tpl || null;
-        if (!ax.port || ax.port === 'http' || ax.port === 'mqtt') return [];
-        const same = c => c.port === ax.port && c.reach === ax.reach && c.protocol === ax.protocol
-            && (ax.protocol !== 'modbus' || c.framing === ax.framing)
-            && (ax.port !== 'ethernet' || !!c.udp === !!ax.udp);
+        if (!hasRole(ax.port)) return [];
+        const keys = roleKeys(ctx, t);
         const { listeners, pollers } = claimsOf(ctx);
         const roleLock = ctx.context === 'edit' && ctx.sameBus !== false ? lockOf(ctx, 'connection.role') : null;
-        return ROLES.map(mode => {
-            const inv = invalidOf(ctx).find(c => same(c) && c.mode === mode);
-            // the server's reason, in the page's words (L3.11c; the English
-            // is the fallback)
-            if (inv) return off(mode, inv.code, t(`cs.inv.${inv.code}`, inv.text));
-            const cell = cellsOf(ctx).find(c => same(c) && c.mode === mode);
+        // the role as a protocol of key k takes it: the server's invalid cell
+        // first, then the matrix's own cell (absent, or not available yet)
+        const asKey = (k, mode) => {
+            const inv = invalidFor(ctx, k, mode, t);
+            if (inv) return off(mode, inv.code, inv.reason);
+            const cell = cellsOf(ctx).find(c => sameKey(ax, k)(c) && c.mode === mode);
             if (!cell) return off(mode, 'not_offered', t('cs.why.notOffered', 'Not offered for this connection.'));
             if (cell.status !== 'today') return off(mode, cell.status, cell.note || t('cs.why.notYet', 'Not available yet.'));
+            return null;
+        };
+        return ROLES.map(mode => {
+            const judged = keys.map(k => asKey(k, mode));
+            if (!judged.some(j => j === null)) return judged[0] || off(mode, 'not_offered', t('cs.why.notOffered', 'Not offered for this connection.'));
             if (mode === 'poll' && tpl && tpl.listen_only) {
                 return off(mode, 'template_listens', t('cs.why.tplListens', '{model} is only heard on a bus another master polls: the role is Listen-only.', { model: tplName(tpl) }));
             }
@@ -286,7 +336,8 @@
         const ax = ctx.axes || {};
         const tpl = ctx.tpl || null;
         // Seplos V2: never defaulted (M7) — the only role left is said, not chosen
-        const prefill = forced && ax.protocol !== 'seplos_v2' && !ctx.role ? forced : null;
+        const seplos = ax.protocol === 'seplos_v2' || (!ax.protocol && tpl && tpl.speaks === 'seplos_v2');
+        const prefill = forced && !seplos && !ctx.role ? forced : null;
         return {
             ports: portOptions(ctx, t), reaches: reachOptions(ctx, t), protocols: protocolOptions(ctx, t),
             roles, prefill, forced, hint: (tpl && tpl.master_hint) || '',
@@ -459,6 +510,12 @@
             const mine = roleOptions(ctx, t).find(r => r.value === ctx.role);
             if (mine && mine.state === 'off') e['connection.mode'] = mine.reason;
         }
+        // a protocol the role answered cannot take (the role filters it, 2c
+        // before 2d): never saved as another cell than the one shown
+        if (ax.port === 'serial' && ax.protocol && ROLES.includes(ctx.role)) {
+            const mine = protocolOptions(ctx, t).find(o => o.value === protocolKey(ax));
+            if (mine && mine.state === 'off' && !e['connection.role'] && !e['connection.mode']) e['connection.protocol'] = mine.reason;
+        }
         if (ax.port === 'can' && ctx.canChecked !== false) {
             const g = canGate(ctx.can || null, ctx.canName, ctx.canBitrate, t);
             if (!g.ok) e['connection.channel'] = `${g.text} ${g.command}`;
@@ -467,7 +524,7 @@
     }
 
     const api = { PORTS, REACHES, ROLES, AXES, DEFAULT_LINE, axesOf, applyAxes, options, portOptions, reachOptions,
-                  protocolOptions, roleOptions, protocolKey, roleAfterBusChange, pickerRole, lineInfo, lineText,
+                  protocolOptions, roleOptions, protocolKey, asciiOnly, roleAfterBusChange, pickerRole, lineInfo, lineText,
                   addressInfo, canGate, canCommand, httpUrl, httpParse, busFor, errors };
     if (typeof module !== 'undefined' && module.exports) module.exports = api;
     else root.ConnStepModel = api;

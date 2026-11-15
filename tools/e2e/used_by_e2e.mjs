@@ -80,6 +80,8 @@ async function open(role, opts = {}) {
   if (opts.slowCounts) await page.route('**/api/dependents', async r => { await new Promise(res => setTimeout(res, 2500)); r.continue(); });
   await page.goto(BASE + '/');
   await page.waitForLoadState('load');
+  // the app object is built after 'load' on a slow start: wait for it, not for luck
+  await page.waitForFunction(() => window.app && typeof window.app.openDeviceDetail === 'function');
   const later = page.locator('button:has-text("Later")');
   if (await later.count()) await later.first().click().catch(() => {});
   return page;

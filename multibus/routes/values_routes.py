@@ -125,7 +125,7 @@ def build(ctx) -> APIRouter:
         contribute (by the aggregator's own rules), the derived power factor,
         and the unit census. Derived from configuration, not from live values,
         so the picker is honest before the first reading of the day."""
-        from ..endpoint_aggregator import aggregation_rule, endpoint_totals
+        from ..devices.endpoint_aggregator import aggregation_rule, endpoint_totals
         seen = {}
         ops = {"sum": "total", "avg": "average", "min": "min", "max": "max",
                "spread": "spread"}

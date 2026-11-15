@@ -15,8 +15,7 @@
         "can"
       ],
       "bitrate": 500000,
-      "byte_order": "little",
-      "default_register_type": "input"
+      "byte_order": "little"
     },
     "poll_groups": {
       "realtime": {
@@ -103,7 +102,8 @@
           "influxdb": {
             "enabled": true
           }
-        }
+        },
+        "direction": "rx"
       },
       {
         "address": 810,

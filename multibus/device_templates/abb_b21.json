@@ -10,8 +10,7 @@
   "kind": "meter",
   "source_document": "ABB B-series Modbus (2CDC512084D0101); cross-checked vs steefan85/ABB_B23_Energy_Meter and roastedelectrons/ABBEnergyMeter",
   "protocol": {
-   "byte_order": "big",
-   "default_register_type": "holding"
+   "byte_order": "big"
   },
   "categories": {},
   "registers": [
