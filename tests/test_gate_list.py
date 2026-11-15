@@ -7,7 +7,11 @@ globs are exactly what this catches)."""
 import pathlib
 import subprocess
 
+import pytest
+
 _ROOT = pathlib.Path(__file__).resolve().parent.parent
+pytestmark = pytest.mark.skipif(not (_ROOT / "tools" / "gate.sh").exists(),
+                                reason="tools/gate.sh is a development-only tool, not in this tree")
 
 
 def _gate(*args):

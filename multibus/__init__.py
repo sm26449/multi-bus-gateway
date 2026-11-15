@@ -16,7 +16,7 @@
 #
 """Multi-Bus Gateway package."""
 
-__version__ = "3.101.0-rc2"
+__version__ = "3.101.0-rc3"
 __author__ = "sm26449"
 
 # No eager re-exports. Importing ``multibus`` (or any ``multibus.x``) must not

@@ -9,6 +9,8 @@ the end of a full run; this test says it at once, in the normal suite.
 import re
 from pathlib import Path
 
+import pytest
+
 E2E = Path(__file__).resolve().parent.parent / "tools" / "e2e"
 
 
@@ -27,6 +29,8 @@ def test_every_e2e_script_is_registered_in_run_all():
     assert not missing, f"not in tools/e2e/run_all.sh (add R with its fixture, or S with why): {missing}"
 
 
+@pytest.mark.skipif(not (Path(__file__).resolve().parents[1] / "tools" / "release").is_dir(),
+                    reason="run_all.sh also registers scripts only the development tree has")
 def test_run_all_names_no_script_that_does_not_exist():
     names = _registered((E2E / "run_all.sh").read_text())
     scripts = {p.stem for p in E2E.glob("*.mjs")} | {"cmd_dispatch_live", "can_vcan"}

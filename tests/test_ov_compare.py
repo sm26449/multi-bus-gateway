@@ -7,6 +7,12 @@ FAILURE, never as a match."""
 import importlib.util
 import pathlib
 
+import pytest
+
+_TOOL = pathlib.Path(__file__).resolve().parent.parent / "tools" / "ov" / "compare_day.py"
+if not _TOOL.exists():          # a development-only tool; the published tree does not carry it
+    pytest.skip("tools/ov/compare_day.py is not in this tree", allow_module_level=True)
+
 _SPEC = importlib.util.spec_from_file_location(
     "compare_day", pathlib.Path(__file__).resolve().parent.parent / "tools" / "ov" / "compare_day.py")
 cd = importlib.util.module_from_spec(_SPEC)
